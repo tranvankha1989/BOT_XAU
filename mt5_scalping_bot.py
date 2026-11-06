@@ -201,10 +201,18 @@ class KronosDesktopApp:
         self.cross_ohlc_text = None
         self._last_hover_xy = None
 
-        # Trạng thái hiển thị % trên nút Reload Pill góc phải trên
+        # Trạng thái hiển thị % trên nút Reload Pill góc phải trên & đồng bộ trạng thái Bot
         self._scan_pct = 100.0
         self._scan_target_pct = 100.0
         self._scan_anim_job = None
+        self._last_detail_prefix = None
+
+        # Trạng thái cửa sổ kiểu MacBook (Traffic Light Minimize / Maximize / Close + Kéo thanh tiêu đề)
+        self._win_maximized = False
+        self._win_normal_geom = "1450x880+60+40"
+        self._win_drag_offset = None
+        self._mac_ctrl_hover = False
+        self._minimizing_to_taskbar = False
 
         # Trạng thái màn hình Loading khởi động kiểu MacBook (Xoay tròn + % Real-Time)
         self._is_initial_loading = True
@@ -482,8 +490,9 @@ class KronosDesktopApp:
             self.root.after(220, lambda: self.loading_overlay.destroy() if hasattr(self, "loading_overlay") and self.loading_overlay.winfo_exists() else None)
 
     def _apply_window_and_taskbar_icon(self):
-        """Gán biểu tượng KhaTran và đồng bộ thanh tiêu đề Windows phía trên trùng màu nền tối của App."""
+        """Gán biểu tượng KhaTran và kích hoạt thanh tiêu đề MacBook không viền (vẫn giữ Icon dưới Taskbar Windows)."""
         try:
+            self.root.geometry("1450x880+60+40")
             if os.path.exists(ICON_ICO_FILE):
                 self.root.iconbitmap(default=ICON_ICO_FILE)
                 self.root.wm_iconbitmap(ICON_ICO_FILE)
@@ -493,38 +502,136 @@ class KronosDesktopApp:
         except Exception:
             pass
         self._apply_dark_titlebar()
-        self.root.after(100, self._apply_dark_titlebar)
+        self.root.after(120, self._apply_dark_titlebar)
+        self.root.bind("<Map>", self._on_window_map_restore)
 
     def _apply_dark_titlebar(self):
-        """Đổi thanh tiêu đề màu trắng phía trên của Windows sang màu nền tối (#10141d) đồng bộ với App."""
+        """Ẩn thanh tiêu đề vuông [— □ ✕] mặc định của Windows để dùng 3 nút tròn Traffic Light kiểu MacBook, đồng thời giữ nguyên Icon dưới Taskbar."""
         try:
+            self.root.overrideredirect(True)
             self.root.update_idletasks()
-            hwnds = set()
-            parent_hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-            if parent_hwnd:
-                hwnds.add(parent_hwnd)
-            try:
-                frame_hwnd = int(self.root.wm_frame(), 16)
-                if frame_hwnd:
-                    hwnds.add(frame_hwnd)
-            except Exception:
-                pass
-            hwnds.add(self.root.winfo_id())
-
-            dark_mode = ctypes.c_int(1)
-            # COLORREF chuẩn Windows (0x00BBGGRR): #10141d -> 0x001D1410, chữ #eaecef -> 0x00EFECEA
-            caption_color = ctypes.c_int(0x001D1410)
-            text_color = ctypes.c_int(0x00EFECEA)
-            border_color = ctypes.c_int(0x002C2019)
-
-            for hwnd in hwnds:
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border_color), ctypes.sizeof(border_color))
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            GWL_EXSTYLE = -20
+            WS_EX_APPWINDOW = 0x00040000
+            WS_EX_TOOLWINDOW = 0x00000080
+            ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            new_ex_style = (ex_style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+            if ex_style != new_ex_style:
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
+                ctypes.windll.user32.ShowWindow(hwnd, 0)
+                ctypes.windll.user32.ShowWindow(hwnd, 5)
         except Exception:
             pass
+
+    def _on_window_map_restore(self, event=None):
+        if getattr(self, "_minimizing_to_taskbar", False) and self.root.state() == "normal":
+            self._minimizing_to_taskbar = False
+            self.root.after(20, self._apply_dark_titlebar)
+
+    def _minimize_window(self):
+        """Thu nhỏ cửa sổ xuống thanh Taskbar Windows khi bấm nút tròn màu Vàng kiểu MacBook."""
+        try:
+            self._minimizing_to_taskbar = True
+            self.root.overrideredirect(False)
+            self.root.iconify()
+        except Exception:
+            pass
+
+    def _toggle_maximize_window(self, event=None):
+        """Phóng to toàn màn hình (chừa thanh Taskbar) hoặc thu hồi kích thước cũ khi bấm nút tròn màu Xanh lá kiểu MacBook."""
+        try:
+            if not getattr(self, "_win_maximized", False):
+                self._win_normal_geom = self.root.geometry()
+                rect = (ctypes.c_long * 4)()
+                if ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(rect), 0):
+                    x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
+                    self.root.geometry(f"{x1 - x0}x{y1 - y0}+{x0}+{y0}")
+                else:
+                    sw = self.root.winfo_screenwidth()
+                    sh = self.root.winfo_screenheight() - 42
+                    self.root.geometry(f"{sw}x{sh}+0+0")
+                self._win_maximized = True
+            else:
+                self.root.geometry(getattr(self, "_win_normal_geom", "1450x880+60+40"))
+                self._win_maximized = False
+            self._draw_mac_window_controls()
+        except Exception:
+            pass
+
+    def _start_win_drag(self, event):
+        if getattr(self, "_win_maximized", False):
+            return
+        self._win_drag_offset = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+
+    def _on_win_drag(self, event):
+        if getattr(self, "_win_maximized", False) or not getattr(self, "_win_drag_offset", None):
+            return
+        nx = event.x_root - self._win_drag_offset[0]
+        ny = max(0, event.y_root - self._win_drag_offset[1])
+        self.root.geometry(f"+{nx}+{ny}")
+
+    def _draw_mac_window_controls(self):
+        """Vẽ cụm 3 nút tròn Thu Phóng & Đóng chuẩn MacBook (Vàng: Thu nhỏ − | Xanh lá: Phóng to ⤢ | Đỏ: Đóng ×)."""
+        if not hasattr(self, "mac_win_ctrl_canvas") or not self.mac_win_ctrl_canvas.winfo_exists():
+            return
+        c = self.mac_win_ctrl_canvas
+        c.delete("all")
+        w, h = 92, 28
+        cy = h / 2.0
+        r = 7.5
+        hover = getattr(self, "_mac_ctrl_hover", False)
+
+        centers = [
+            (18.0, "#ffbd2e", "#dfa123", "MIN"),
+            (46.0, "#28c840", "#1aab29", "MAX"),
+            (74.0, "#ff5f57", "#e0443e", "CLOSE"),
+        ]
+        for cx, fill_col, border_col, kind in centers:
+            c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=fill_col, outline=border_col, width=1)
+            if hover:
+                if kind == "MIN":
+                    c.create_line(cx - 3.8, cy, cx + 3.8, cy, fill="#5a3e00", width=1.8, capstyle=tk.ROUND)
+                elif kind == "MAX":
+                    c.create_polygon(
+                        cx - 3.6, cy - 3.6, cx + 1.2, cy - 3.6, cx - 3.6, cy + 1.2,
+                        fill="#084d14", outline=""
+                    )
+                    c.create_polygon(
+                        cx + 3.6, cy + 3.6, cx - 1.2, cy + 3.6, cx + 3.6, cy - 1.2,
+                        fill="#084d14", outline=""
+                    )
+                elif kind == "CLOSE":
+                    c.create_line(cx - 3.2, cy - 3.2, cx + 3.2, cy + 3.2, fill="#5a0004", width=1.8, capstyle=tk.ROUND)
+                    c.create_line(cx - 3.2, cy + 3.2, cx + 3.2, cy - 3.2, fill="#5a0004", width=1.8, capstyle=tk.ROUND)
+
+    def _on_mac_win_ctrl_click(self, event):
+        x = event.x
+        if x < 32:
+            self._minimize_window()
+        elif x < 60:
+            self._toggle_maximize_window()
+        else:
+            self._on_close_window()
+
+    def _draw_mac_chart_zoom_bar(self, hover_idx: int = -1):
+        """Vẽ cụm nút Thu/Phóng biểu đồ (Độ rộng nến) bo tròn kiểu MacBook trên thanh công cụ biểu đồ."""
+        if not hasattr(self, "mac_zoom_canvas") or not self.mac_zoom_canvas.winfo_exists():
+            return
+        c = self.mac_zoom_canvas
+        c.delete("all")
+        w, h = 116, 24
+        self._draw_capsule(c, 1, 1, w - 1, h - 1, fill="#1b2333", outline="#32415c", width=1)
+
+        items = [
+            (20.0, "#ffbd2e", "−", "#4a3200", 0),
+            (58.0, "#28c840", "+", "#064010", 1),
+            (96.0, "#38bdf8", "⟲", "#062c43", 2),
+        ]
+        cy = h / 2.0
+        for cx, col, sym, fg_col, idx in items:
+            rad = 8.5 if hover_idx == idx else 7.5
+            c.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=col, outline="")
+            c.create_text(cx, cy - (0.5 if sym != "⟲" else 0), text=sym, fill=fg_col, font=("Segoe UI", 9, "bold"))
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -553,18 +660,40 @@ class KronosDesktopApp:
 
     def _build_ui(self):
         # =====================================================================
-        # 1. THANH TRÊN CÙNG: NÚT ☰ NỀN TRẮNG BÊN TRÁI & ĐỒNG HỒ ĐẾM GIỜ AI CĂN GIỮA
+        # 1. THANH TIÊU ĐỀ KIỂU MACBOOK: NÚT ☰ BÊN TRÁI, ĐỒNG HỒ GIỮA, 3 NÚT TRÒN THU PHÓNG MACBOOK BÊN PHẢI
         # =====================================================================
-        top_bar = tk.Frame(self.root, bg=PANEL_BG, pady=4, padx=10)
+        top_bar = tk.Frame(self.root, bg=PANEL_BG, pady=4, padx=10, highlightthickness=1, highlightbackground="#252f42")
         top_bar.pack(fill=tk.X, padx=8, pady=(6, 4))
+        top_bar.bind("<ButtonPress-1>", self._start_win_drag)
+        top_bar.bind("<B1-Motion>", self._on_win_drag)
+        top_bar.bind("<Double-Button-1>", self._toggle_maximize_window)
 
         self.menu_toggle_btn = tk.Button(
             top_bar, text="☰", bg="#252f42", fg="#ffffff",
             activebackground="#32415c", activeforeground="#ffffff",
-            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0,
+            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0, cursor="hand2",
             command=self.toggle_left_menu
         )
-        self.menu_toggle_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.menu_toggle_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        app_title_lbl = tk.Label(
+            top_bar, text="AI (KhaTran) — Scalping Vàng & Quản Lý Lệnh Real-Time",
+            bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold")
+        )
+        app_title_lbl.pack(side=tk.LEFT, padx=(0, 10))
+        app_title_lbl.bind("<ButtonPress-1>", self._start_win_drag)
+        app_title_lbl.bind("<B1-Motion>", self._on_win_drag)
+        app_title_lbl.bind("<Double-Button-1>", self._toggle_maximize_window)
+
+        # Cụm 3 nút tròn Thu Phóng & Đóng cửa sổ chuẩn MacBook ở góc trên bên phải (Thay cho — □ ✕ vuông của Windows)
+        self.mac_win_ctrl_canvas = tk.Canvas(
+            top_bar, width=92, height=28, bg=PANEL_BG, highlightthickness=0, cursor="hand2"
+        )
+        self.mac_win_ctrl_canvas.pack(side=tk.RIGHT, padx=(8, 0))
+        self.mac_win_ctrl_canvas.bind("<Enter>", lambda e: (setattr(self, "_mac_ctrl_hover", True), self._draw_mac_window_controls()))
+        self.mac_win_ctrl_canvas.bind("<Leave>", lambda e: (setattr(self, "_mac_ctrl_hover", False), self._draw_mac_window_controls()))
+        self.mac_win_ctrl_canvas.bind("<Button-1>", self._on_mac_win_ctrl_click)
+        self._draw_mac_window_controls()
 
         # Căn giữa thông số đếm giờ & giá Live ngay chính giữa thanh trên cùng
         self.live_clock_lbl = tk.Label(
@@ -572,6 +701,9 @@ class KronosDesktopApp:
             bg="#121722", fg=CYAN_LIVE, font=("Consolas", 9, "bold"), padx=14, pady=4
         )
         self.live_clock_lbl.pack(anchor="center")
+        self.live_clock_lbl.bind("<ButtonPress-1>", self._start_win_drag)
+        self.live_clock_lbl.bind("<B1-Motion>", self._on_win_drag)
+        self.live_clock_lbl.bind("<Double-Button-1>", self._toggle_maximize_window)
 
         # KHUNG CHÍNH (RIGHT PANEL CHIẾM TOÀN MÀN HÌNH)
         self.main_frame = tk.Frame(self.root, bg=BG_DARK)
@@ -825,30 +957,26 @@ class KronosDesktopApp:
             self.tf_quick_btns[tf_opt] = b
 
         tk.Label(
-            chart_toolbar, text="  |  ĐỘ RỘNG NẾN:", bg="#131822", fg=TEXT_MUTED,
+            chart_toolbar, text="  |  THU PHÓNG CHART:", bg="#131822", fg=TEXT_MUTED,
             font=("Segoe UI", 8, "bold")
         ).pack(side=tk.LEFT, padx=(8, 4))
 
-        tk.Button(
-            chart_toolbar, text="➖ Thu hẹp chart",
-            bg="#222c3c", fg=TEXT_MAIN, activebackground="#32415c", activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
-            command=lambda: self.adjust_chart_horizontal_scale(1.35)
-        ).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(
-            chart_toolbar, text="➕ Giãn rộng chart",
-            bg="#222c3c", fg=TEXT_MAIN, activebackground="#32415c", activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
-            command=lambda: self.adjust_chart_horizontal_scale(0.75)
-        ).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(
-            chart_toolbar, text="🔄 Reset View",
-            bg="#222c3c", fg=GOLD_ACCENT, activebackground="#32415c", activeforeground=GOLD_ACCENT,
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
-            command=self.reset_chart_view
-        ).pack(side=tk.LEFT, padx=4)
+        self.mac_zoom_canvas = tk.Canvas(
+            chart_toolbar, width=116, height=24, bg="#131822", highlightthickness=0, cursor="hand2"
+        )
+        self.mac_zoom_canvas.pack(side=tk.LEFT, padx=2)
+        self.mac_zoom_canvas.bind(
+            "<Motion>",
+            lambda e: self._draw_mac_chart_zoom_bar(0 if e.x < 39 else (1 if e.x < 77 else 2))
+        )
+        self.mac_zoom_canvas.bind("<Leave>", lambda e: self._draw_mac_chart_zoom_bar(-1))
+        self.mac_zoom_canvas.bind(
+            "<Button-1>",
+            lambda e: self.adjust_chart_horizontal_scale(1.35) if e.x < 39 else (
+                self.adjust_chart_horizontal_scale(0.75) if e.x < 77 else self.reset_chart_view()
+            )
+        )
+        self._draw_mac_chart_zoom_bar(-1)
 
         self.ohlc_hover_lbl = tk.Label(
             chart_toolbar, text="Rê chuột lên nến để xem giá OHLC & Thời gian",
@@ -1836,12 +1964,13 @@ class KronosDesktopApp:
 
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
         tf_display = f"{tf_str}" if ana_tf == tf_str else f"AI:{ana_tf} -> Scalp:{tf_str}"
+        bot_run_state = f"🟢 ĐANG CHẠY (Canh {tf_str})" if self.auto_loop_running else "⚪ ĐANG DỪNG (Tắt Auto)"
         if self._is_daily_limit_locked():
             cap_state = f"🔒 {self.daily_limit_reason}"
         elif self._is_cooldown_active():
             cap_state = self._get_cooldown_remaining_str()
         else:
-            cap_state = f"🟢 Đang chạy (Thua liên tiếp: {self.consec_loss_count})"
+            cap_state = f"Bình thường (Thua liên tiếp: {self.consec_loss_count})"
 
         pred_n = self.pred_len_var.get().strip() or "6"
         info_txt = (
@@ -1849,7 +1978,8 @@ class KronosDesktopApp:
             f"• Bid / Ask    : {bid_str} / {ask_str} ({spr_str})\n"
             f"• Lệnh đang mở : {pos_count} lệnh ({total_profit:+.2f}$)\n"
             f"• Lãi/Lỗ Ngày  : {self.cached_daily_pnl:+.2f} USD\n"
-            f"• Trạng thái Vốn: {cap_state}\n"
+            f"• Trạng thái Bot: {bot_run_state}\n"
+            f"• Quản lý Vốn  : {cap_state}\n"
             f"────────────────────────────\n"
             f"• Trạng thái AI: {ai_state}\n"
             f"• Tín hiệu AI  : {trend_str}\n"
@@ -2282,6 +2412,22 @@ class KronosDesktopApp:
             return
         threading.Thread(target=self._run_analysis_worker, daemon=True).start()
 
+    def _get_live_bot_status_text(self) -> str:
+        """Lấy chuỗi trạng thái thực tế của Bot để hiển thị đồng bộ trên thanh tín hiệu."""
+        if self._is_daily_limit_locked():
+            return f"🔒 Đã dừng giao dịch hết hôm nay ({self.daily_limit_reason})"
+        if self._is_cooldown_active():
+            return self._get_cooldown_remaining_str()
+        scalp_tf = self.tf_var.get().strip() or "M5"
+        if self.auto_loop_running:
+            return f"🟢 Bot ĐANG CHẠY (Đang canh nến {scalp_tf} tự động vào lệnh)"
+        return "⚪ Bot đang DỪNG (Gạt công tắc AUTO sang RUNNING để tự vào lệnh)"
+
+    def _sync_signal_detail_status(self):
+        """Cập nhật ngay lập tức dòng trạng thái Bot trên thanh tín hiệu khi người dùng gạt công tắc AUTO."""
+        if self._last_detail_prefix:
+            self.signal_detail_lbl.config(text=f"{self._last_detail_prefix}{self._get_live_bot_status_text()}")
+
     def toggle_bot_start_stop(self):
         """Gộp chung START và STOP trên 1 công tắc gạt thay đổi trạng thái (Bật/Tắt canh nến + Auto-Trade)."""
         if self.auto_loop_running:
@@ -2296,6 +2442,7 @@ class KronosDesktopApp:
         self.auto_trade_var.set(True)
         self.last_candle_time = None
         self._draw_toggle_switch()
+        self._sync_signal_detail_status()
         tf_val = self.tf_var.get().strip()
         self.log(f"▶️ Đã BẬT công tắc AUTO (Tự động canh nến {tf_val} & tự động vào lệnh)...")
         threading.Thread(target=self._auto_loop_worker, daemon=True).start()
@@ -2305,6 +2452,7 @@ class KronosDesktopApp:
         self.auto_trade_var.set(False)
         self.pending_pullback_order = None
         self._draw_toggle_switch()
+        self._sync_signal_detail_status()
         self.log("⏹️ Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
 
     def _auto_loop_worker(self):
@@ -2572,7 +2720,7 @@ class KronosDesktopApp:
             cur_sl_dist = abs(entry_ref - sl_price)
             limit_entry_price = round((sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price), 2) if max_sl_price > 0.0 else entry_ref
 
-            trade_msg = "Bot đang DỪNG (Gạt công tắc AUTO sang RUNNING để tự vào lệnh)"
+            trade_msg = self._get_live_bot_status_text()
             if action is not None:
                 if self._is_daily_limit_locked():
                     self.pending_pullback_order = None
@@ -2619,10 +2767,11 @@ class KronosDesktopApp:
                 self.log(f"Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
 
             max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
-            detail_text = (
+            self._last_detail_prefix = (
                 f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  SL AI (+{sl_buffer:.1f} giá): {cur_sl_dist:.2f} giá ({max_sl_str})\n"
-                f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   {trade_msg}"
+                f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   "
             )
+            detail_text = f"{self._last_detail_prefix}{trade_msg}"
 
             self._set_loading_stage(96.0, "Đang dựng biểu đồ nến Real-Time...")
             chart_bars = min(max(lookback, 300), 500)
