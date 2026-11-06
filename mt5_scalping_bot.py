@@ -1216,17 +1216,18 @@ class KronosDesktopApp:
                 btn.config(bg="#222c3c", fg=TEXT_MAIN)
 
     def switch_chart_timeframe_quick(self, tf_opt: str):
-        """Đổi nhanh khung thời gian M1 / M5 / M15 / H1 ngay trên thanh công cụ biểu đồ."""
-        if self.chart_mode == "AI_FORECAST":
-            self.analysis_tf_var.set(tf_opt)
-        else:
-            self.tf_var.set(tf_opt)
-        self._highlight_active_tf_btn(tf_opt)
+        """Đổi nhanh khung thời gian M1 / M5 / M15 / H1 ngay trên thanh công cụ biểu đồ và đồng bộ quét AI."""
+        self._loading_settings = True
         try:
-            symbol = self.symbol_var.get().strip()
-            self._refresh_realtime_chart(symbol, self.tf_var.get().strip())
-        except Exception:
-            pass
+            if self.chart_mode == "AI_FORECAST":
+                self.analysis_tf_var.set(tf_opt)
+            else:
+                self.tf_var.set(tf_opt)
+                self.analysis_tf_var.set(tf_opt)
+        finally:
+            self._loading_settings = False
+        self.save_user_settings()
+        self._on_timeframe_changed()
 
     def _on_timeframe_changed(self, *args):
         if self._loading_settings:
@@ -2377,6 +2378,11 @@ class KronosDesktopApp:
         x_stamp_np = calc_time_stamps(x_timestamp).values.astype(np.float32)
         y_stamp_np = calc_time_stamps(y_timestamp).values.astype(np.float32)
 
+        # Cố định Seed theo dữ liệu OHLC của nến cuối cùng để cùng 1 trạng thái nến luôn cho kết quả dự báo nhất quán (không nhảy ngẫu nhiên)
+        last_r = x_np[-1]
+        data_seed = int(abs(hash((len(df_in), round(float(last_r[0]), 2), round(float(last_r[1]), 2), round(float(last_r[2]), 2), round(float(last_r[3]), 2))))) % (2**31 - 1)
+        torch.manual_seed(data_seed)
+
         with torch.no_grad():
             x_t = torch.from_numpy(x_norm[np.newaxis, :]).to(device)
             x_st = torch.from_numpy(x_stamp_np[np.newaxis, :]).to(device)
@@ -2611,7 +2617,7 @@ class KronosDesktopApp:
                 pass
 
         try:
-            chart_bars = min(max(int(self.lookback_var.get() or 400), 300), 500)
+            chart_bars = min(max(int(self.lookback_var.get() or 400), 400), 500)
         except ValueError:
             chart_bars = 400
         df_live = self.fetch_mt5_candles(symbol, active_tf, chart_bars, include_forming=True)
@@ -2794,18 +2800,30 @@ class KronosDesktopApp:
             hf_space = self.hf_space_var.get().strip()
             hf_token = self.hf_token_var.get().strip()
 
-            # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf): luôn nạp tối thiểu 400 nến để vẽ biểu đồ đầy đặn,
-            # nhưng chỉ đưa lượng nến Lookback tối ưu (<= 220 nến) vào mô hình AI để tốc độ quét đạt ~0.8 giây!
+            # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf): luôn nạp tối thiểu 400 nến để vẽ biểu đồ đầy đặn.
+            # Đặc biệt: Lấy cả cây nến đang hình thành (include_forming=True) nếu cây nến đó đã chạy > 20 giây (hoặc khi chạy đa khung M15->M5 / bấm Reload)
+            # để AI luôn nhìn thấy giá thực tế hiện tại trên biểu đồ thay vì bị trễ 15-60 phút ở giá đóng nến cũ!
             self._set_loading_stage(28.0, f"Đang tải dữ liệu nến {symbol} ({analysis_tf}) từ MT5...")
             chart_bars = max(lookback, 400)
-            df = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=False)
+            df_with_forming = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars + 1, include_forming=True)
+            tick = mt5.symbol_info_tick(symbol)
+            server_now_ts = pd.to_datetime(int(tick.time), unit="s") if tick is not None else df_with_forming["timestamps"].iloc[-1]
+            forming_open_ts = df_with_forming["timestamps"].iloc[-1]
+            forming_age_sec = (server_now_ts - forming_open_ts).total_seconds()
+            # Nếu nến mới chỉ vừa mở < 15 giây (ngay thời điểm vừa đóng nến cũ), dùng nến vừa đóng làm mốc chuẩn;
+            # nếu nến hiện tại đã chạy >= 15 giây (hoặc khác khung M15->M5), đưa cả cây nến đang chạy vào để AI phân tích sát giá Live!
+            if forming_age_sec < 15.0 and len(df_with_forming) > 35:
+                df = df_with_forming.iloc[:-1].reset_index(drop=True)
+            else:
+                df = df_with_forming.iloc[-chart_bars:].reset_index(drop=True)
+
             ai_lookback = min(lookback, 220) if lookback >= 350 else lookback
             df_ai = df.iloc[-ai_lookback:].reset_index(drop=True)
             last_close = float(df["close"].iloc[-1])
 
             # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & kết hợp ATR đa khung
             if analysis_tf == scalp_tf:
-                df_scalp = df
+                df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
             else:
                 self._set_loading_stage(40.0, f"Đang đồng bộ khung vào lệnh Scalping ({scalp_tf})...")
                 df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
@@ -2816,7 +2834,6 @@ class KronosDesktopApp:
             atr_ana = self.calculate_atr(df, 14) if analysis_tf != scalp_tf else atr_scalp
             atr = max(atr_scalp, atr_ana * 0.65)
 
-            tick = mt5.symbol_info_tick(symbol)
             spread_usd = (tick.ask - tick.bid) if tick else 0.0
 
             x_timestamp = df_ai["timestamps"].reset_index(drop=True)
@@ -3063,7 +3080,7 @@ class KronosDesktopApp:
             detail_text = f"{self._last_detail_prefix}{trade_msg}"
 
             self._set_loading_stage(96.0, "Đang dựng biểu đồ nến Real-Time...")
-            chart_bars = min(max(lookback, 300), 500)
+            chart_bars = min(max(lookback, 400), 500)
             df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, chart_bars, include_forming=True)
             df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=True)
             self.cached_df_hist = df_live_scalp
@@ -3265,7 +3282,7 @@ class KronosDesktopApp:
         # 3. Cụm Dự báo Kronos AI (Chỉ hiển thị ở Tab 2 - AI_FORECAST, ẩn ở Tab 1 - Lệnh đang mở Real-Time)
         all_times = list(hist["timestamps"].dt.strftime("%H:%M"))
         if self.chart_mode == "AI_FORECAST" and scenarios is not None and mean_df is not None:
-            anchor_idx = (n_hist - 2) if (has_forming_candle and n_hist >= 2) else (n_hist - 1)
+            anchor_idx = n_hist - 1
             anchor_y = float(hist["close"].iloc[anchor_idx])
             x_pred = np.arange(n_hist, n_hist + n_pred)
 
