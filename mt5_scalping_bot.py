@@ -854,11 +854,7 @@ class KronosDesktopApp:
             pass
         self.toggle_left_menu()
 
-    def _update_tf_button_label(self):
-        pass
-
     def _on_timeframe_changed(self, *args):
-        self._update_tf_button_label()
         if self._loading_settings:
             return
         self.last_candle_time = None
@@ -1175,20 +1171,28 @@ class KronosDesktopApp:
         finally:
             self.root.after(1000, self._realtime_tick_loop)
 
-    def _get_today_deals_stats(self) -> tuple:
-        """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay."""
+    def _get_today_deals_stats(self, symbol: str = None, tick=None) -> tuple:
+        """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay theo đúng mã giao dịch & giờ Server MT5."""
         if not MT5_AVAILABLE:
             return 0.0, 0, None
         try:
-            now = datetime.now()
-            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            deals = mt5.history_deals_get(start_of_day, now + timedelta(hours=12))
+            ref_ts = int(tick.time) if tick is not None else int(time.time())
+            ref_date_str = datetime.fromtimestamp(ref_ts).strftime("%Y-%m-%d")
+            # Quét khoảng rộng ±36 giờ quanh thời điểm Server MT5 rồi lọc đúng ngày giao dịch của Server để không bị lệch múi giờ GMT+7 vs GMT+0
+            deals = mt5.history_deals_get(
+                datetime.fromtimestamp(ref_ts - 86400 * 2),
+                datetime.fromtimestamp(ref_ts + 86400)
+            )
             if deals is None:
                 return 0.0, 0, None
             realized = 0.0
             consec_losses = 0
             last_loss_deal = None
             for d in deals:
+                if symbol and d.symbol and d.symbol != symbol:
+                    continue
+                if datetime.fromtimestamp(int(d.time)).strftime("%Y-%m-%d") != ref_date_str:
+                    continue
                 if d.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL) and d.entry in (
                     mt5.DEAL_ENTRY_OUT,
                     mt5.DEAL_ENTRY_INOUT,
@@ -1209,7 +1213,8 @@ class KronosDesktopApp:
     def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None):
         """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp. Nếu = 0 thì tắt."""
         today_str = datetime.now().strftime("%Y-%m-%d")
-        realized_pnl, consec_losses, last_loss_deal = self._get_today_deals_stats()
+        symbol = self.symbol_var.get().strip()
+        realized_pnl, consec_losses, last_loss_deal = self._get_today_deals_stats(symbol=symbol, tick=tick)
         total_daily_pnl = realized_pnl + floating_profit
         self.cached_daily_pnl = total_daily_pnl
         self.consec_loss_count = consec_losses
@@ -1276,22 +1281,22 @@ class KronosDesktopApp:
             self.daily_limit_locked_date = today_str
             self.daily_limit_reason = f"Đạt Lãi ngày ({total_daily_pnl:+.2f}$ >= +{daily_tp:.1f}$)"
             self.pending_pullback_order = None
-            positions = mt5.positions_get()
+            positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
             if positions:
                 for pos in positions:
                     self._close_single_pos(pos)
-            self.log(f"🏆 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã chốt toàn bộ lệnh & DỪNG GIAO DỊCH hết hôm nay!")
+            self.log(f"🏆 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã chốt toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
 
         # Kiểm tra chạm mức Cắt lỗ ngày (nếu > 0)
         elif daily_sl > 0.0 and total_daily_pnl <= -daily_sl and self.daily_limit_locked_date != today_str:
             self.daily_limit_locked_date = today_str
             self.daily_limit_reason = f"Chạm Cắt lỗ ngày ({total_daily_pnl:+.2f}$ <= -{daily_sl:.1f}$)"
             self.pending_pullback_order = None
-            positions = mt5.positions_get()
+            positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
             if positions:
                 for pos in positions:
                     self._close_single_pos(pos)
-            self.log(f"🛑 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã đóng toàn bộ lệnh & DỪNG GIAO DỊCH hết hôm nay!")
+            self.log(f"🛑 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã đóng toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
 
     def _is_daily_limit_locked(self) -> bool:
         return self.daily_limit_locked_date == datetime.now().strftime("%Y-%m-%d")
@@ -1408,15 +1413,7 @@ class KronosDesktopApp:
         else:
             cap_state = f"🟢 Đang chạy (Thua liên tiếp: {self.consec_loss_count})"
 
-        ana_tf = self.analysis_tf_var.get().strip() or tf_str
-        tf_display = f"{tf_str}" if ana_tf == tf_str else f"AI:{ana_tf} -> Scalp:{tf_str}"
-        if self._is_daily_limit_locked():
-            cap_state = f"🔒 {self.daily_limit_reason}"
-        elif self._is_cooldown_active():
-            cap_state = self._get_cooldown_remaining_str()
-        else:
-            cap_state = f"🟢 Đang chạy (Thua liên tiếp: {self.consec_loss_count})"
-
+        pred_n = self.pred_len_var.get().strip() or "6"
         info_txt = (
             f"• Mã & Khung   : {symbol} ({tf_display})\n"
             f"• Bid / Ask    : {bid_str} / {ask_str} ({spr_str})\n"
@@ -1426,7 +1423,7 @@ class KronosDesktopApp:
             f"────────────────────────────\n"
             f"• Trạng thái AI: {ai_state}\n"
             f"• Tín hiệu AI  : {trend_str}\n"
-            f"• Dự báo 6 nến : {target_str}\n"
+            f"• Dự báo {pred_n} nến : {target_str}\n"
             f"• Gợi ý AI     : {sltp_str}"
         )
         self.quick_info_lbl.config(text=info_txt)
@@ -1457,12 +1454,20 @@ class KronosDesktopApp:
         if pos.ticket in self.initial_r_cache:
             return self.initial_r_cache[pos.ticket]
 
+        # Nếu cài R:R = 0 (TP Theo AI), ưu tiên lấy khoảng cách SL gần nhất do AI tính toán
+        try:
+            raw_rr = float(self.rr_var.get())
+        except ValueError:
+            raw_rr = 1.5
+
+        if raw_rr <= 0.0 and self.last_recommendation and self.last_recommendation.get("sl_dist", 0) > 0.5:
+            one_r = float(self.last_recommendation["sl_dist"])
+            self.initial_r_cache[pos.ticket] = one_r
+            return one_r
+
         # Nếu lệnh đã dời SL về Entry trước khi mở App, suy ra 1R từ khoảng cách TP / RR
         if pos.tp > 0:
-            try:
-                rr_val = max(float(self.rr_var.get()), 0.5)
-            except ValueError:
-                rr_val = 1.5
+            rr_val = raw_rr if raw_rr > 0.0 else 1.8
             one_r = abs(pos.tp - pos.price_open) / rr_val
             if one_r > 0.2:
                 self.initial_r_cache[pos.ticket] = one_r
@@ -1470,7 +1475,7 @@ class KronosDesktopApp:
         return 5.0
 
     def _update_open_positions_and_manage(self, symbol: str):
-        positions = mt5.positions_get()
+        positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
         if positions is None:
             positions = []
 
@@ -1627,10 +1632,11 @@ class KronosDesktopApp:
         return True, f"✅ Đã đóng lệnh #{pos.ticket} ({pos.symbol}) | Lãi/Lỗ: {pos.profit:+.2f}$"
 
     def breakeven_all_positions(self):
-        """Dời SL về đúng giá Entry (pos.price_open) cho các lệnh đang có lãi."""
-        positions = mt5.positions_get()
+        """Dời SL về đúng giá Entry (pos.price_open) cho các lệnh đang có lãi của mã giao dịch."""
+        symbol = self.symbol_var.get().strip()
+        positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
         if not positions:
-            messagebox.showinfo("Thông báo", "Hiện không có lệnh nào đang mở trên MT5.")
+            messagebox.showinfo("Thông báo", f"Hiện không có lệnh {symbol} nào đang mở trên MT5.")
             return
         count = 0
         for pos in positions:
@@ -1641,7 +1647,7 @@ class KronosDesktopApp:
             elif (not is_buy) and pos.price_current < pos.price_open - 0.30:
                 if self._modify_position_sltp(pos, pos.price_open, pos.tp):
                     count += 1
-        self.log(f"🛡️ Đã dời SL về đúng giá Entry cho {count} lệnh đang có lãi.")
+        self.log(f"🛡️ Đã dời SL về đúng giá Entry cho {count} lệnh {symbol} đang có lãi.")
 
     def close_selected_position(self):
         sel = self.pos_tree.selection()
@@ -1655,9 +1661,10 @@ class KronosDesktopApp:
             self.log(msg)
 
     def close_all_positions(self):
-        positions = mt5.positions_get()
+        symbol = self.symbol_var.get().strip()
+        positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
         if not positions:
-            messagebox.showinfo("Thông báo", "Hiện không có lệnh nào đang mở.")
+            messagebox.showinfo("Thông báo", f"Hiện không có lệnh {symbol} nào đang mở.")
             return
         closed = 0
         for pos in positions:
@@ -1665,7 +1672,7 @@ class KronosDesktopApp:
             self.log(msg)
             if ok:
                 closed += 1
-        self.log(f"🔥 Đã đóng toàn bộ {closed}/{len(positions)} lệnh trên MT5.")
+        self.log(f"🔥 Đã đóng toàn bộ {closed}/{len(positions)} lệnh {symbol} trên MT5.")
 
     def check_mt5_connection(self):
         if not MT5_AVAILABLE:
@@ -1836,62 +1843,6 @@ class KronosDesktopApp:
 
         return True, f"✅ ĐÃ KHỚP LỆNH {action} {lot} lot {symbol} @ {price:.2f} | SL: {sl_price:.2f} (-{actual_sl_dist:.2f} giá) | TP: {tp_price:.2f}"
 
-    def manual_order(self, action: str):
-        if self.last_recommendation is None:
-            messagebox.showwarning("Chưa có thông số AI", "Hãy bấm 'QUÉT & PHÂN TÍCH AI NGAY' trước để AI tính mức SL/TP hợp lý!")
-            return
-        symbol = self.symbol_var.get().strip()
-        lot = float(self.lot_var.get())
-        max_pos = int(self.max_pos_var.get())
-        try:
-            sl_buffer = max(float(self.sl_buffer_var.get()), 0.0)
-            max_sl_price = max(float(self.max_sl_price_var.get()), 0.5)
-            rr = float(self.rr_var.get())
-        except ValueError:
-            sl_buffer, max_sl_price, rr = 0.5, 5.0, 1.5
-
-        tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
-            messagebox.showerror("Lỗi MT5", f"Không lấy được giá của {symbol} trên MT5.")
-            return
-
-        # Nếu đang có đúng mức SL của AI cùng chiều thì ưu tiên lấy SL của AI (+ đệm an toàn)
-        if self.cached_action == action and self.cached_sl is not None:
-            sl = float(self.cached_sl)
-        else:
-            sl_ai_dist = self.last_recommendation["sl_dist"] + sl_buffer
-            sl = round((tick.ask - sl_ai_dist) if action == "BUY" else (tick.bid + sl_ai_dist), 2)
-
-        cur_price = tick.ask if action == "BUY" else tick.bid
-        cur_sl_dist = (cur_price - sl) if action == "BUY" else (sl - cur_price)
-
-        # Nếu khoảng cách SL vượt quá SL tối đa người dùng cài -> Chuyển sang chế độ Chờ giá hồi về <= SL tối đa
-        if cur_sl_dist > max_sl_price + 0.05:
-            limit_entry = round((sl + max_sl_price) if action == "BUY" else (sl - max_sl_price), 2)
-            self.pending_pullback_order = {
-                "symbol": symbol,
-                "action": action,
-                "sl_price": sl,
-                "manual_queued": True,
-            }
-            wait_msg = (
-                f"⏳ Khoảng cách từ giá hiện tại ({cur_price:.2f}) đến SL ({sl:.2f}) là {cur_sl_dist:.2f} giá, "
-                f"vượt quá SL tối đa cho phép ({max_sl_price:.2f} giá).\n\n"
-                f"Hệ thống đã kích hoạt CHỜ GIÁ HỒI về {'<=' if action == 'BUY' else '>='} {limit_entry:.2f} "
-                f"(cách SL <= {max_sl_price:.2f} giá) sẽ tự động vào lệnh {action}!"
-            )
-            self.log(f"⏳ [Đăng ký Chờ Hồi {action}] Chờ giá về {'<=' if action == 'BUY' else '>='} {limit_entry:.2f} (SL: {sl:.2f}, SL Max: {max_sl_price:.2f} giá)")
-            messagebox.showinfo("Đã bật Chờ Giá Hồi (Bảo vệ SL Max)", wait_msg)
-            return
-
-        tp = round((cur_price + cur_sl_dist * rr) if action == "BUY" else (cur_price - cur_sl_dist * rr), 2)
-        ok, msg = self.execute_mt5_order(symbol, action, lot, sl, tp, max_pos)
-        self.log(msg)
-        if ok:
-            messagebox.showinfo("Đặt lệnh thành công", msg)
-        else:
-            messagebox.showerror("Không thể đặt lệnh", msg)
-
     def trigger_single_scan(self):
         if self.is_analyzing:
             return
@@ -1973,7 +1924,7 @@ class KronosDesktopApp:
             df = self.fetch_mt5_candles(symbol, analysis_tf, lookback, include_forming=False)
             last_close = float(df["close"].iloc[-1])
 
-            # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & tính ATR(14) SL/TP sát nhịp Scalping
+            # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & kết hợp ATR đa khung
             if analysis_tf == scalp_tf:
                 df_scalp = df
             else:
@@ -1982,7 +1933,9 @@ class KronosDesktopApp:
 
             last_time = df_scalp["timestamps"].iloc[-1]
             self.last_candle_time = last_time
-            atr = self.calculate_atr(df_scalp, 14)
+            atr_scalp = self.calculate_atr(df_scalp, 14)
+            atr_ana = self.calculate_atr(df, 14) if analysis_tf != scalp_tf else atr_scalp
+            atr = max(atr_scalp, atr_ana * 0.65)
 
             tick = mt5.symbol_info_tick(symbol)
             spread_usd = (tick.ask - tick.bid) if tick else 0.0
@@ -2059,24 +2012,25 @@ class KronosDesktopApp:
             mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy()
 
             expected_move = avg_end_close - last_close
-            # Khoảng cách SL gốc của AI (tính theo đơn vị Giá vàng, 1 giá = 10 pip) + khoảng giá an toàn do người dùng cài
-            sl_ai_raw_dist = max(atr * sl_atr, 1.0)
-            total_sl_dist = sl_ai_raw_dist + sl_buffer
-            eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
             ai_pred_high = float(mean_df["high"].max())
             ai_pred_low = float(mean_df["low"].min())
+            ai_swing_low_dist = max(last_close - ai_pred_low, 0.0)
+            ai_swing_high_dist = max(ai_pred_high - last_close, 0.0)
+            base_atr_sl = max(atr * sl_atr, 1.0)
+
             ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), 1.5)
             ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), 1.5)
-            tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else max(abs(expected_move), 1.5)
-            self.last_recommendation = {"sl_dist": sl_ai_raw_dist, "tp_dist": tp_dist}
 
             action = None
             sig_color = GOLD_ACCENT
+            ref_tag = ""
             if bull_pct >= min_consensus and expected_move >= min_move:
                 action = "BUY"
                 sig_color = GREEN_UP
                 entry_ref = tick.ask if tick else last_close
-                # SL lấy theo SL của AI đưa ra và cộng thêm khoảng giá an toàn (lùi xuống thêm sl_buffer giá)
+                sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
+                total_sl_dist = sl_ai_raw_dist + sl_buffer
+                # SL lấy theo vùng Đáy dự báo của AI kết hợp ATR và cộng thêm khoảng giá an toàn (lùi xuống thêm sl_buffer giá)
                 sl_price = round(entry_ref - total_sl_dist, 2)
                 eff_entry = min(entry_ref, round(sl_price + max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
                 if rr > 0.0:
@@ -2089,7 +2043,9 @@ class KronosDesktopApp:
                 action = "SELL"
                 sig_color = RED_DOWN
                 entry_ref = tick.bid if tick else last_close
-                # SL lấy theo SL của AI đưa ra và cộng thêm khoảng giá an toàn (nâng lên thêm sl_buffer giá)
+                sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
+                total_sl_dist = sl_ai_raw_dist + sl_buffer
+                # SL lấy theo vùng Đỉnh dự báo của AI kết hợp ATR và cộng thêm khoảng giá an toàn (nâng lên thêm sl_buffer giá)
                 sl_price = round(entry_ref + total_sl_dist, 2)
                 eff_entry = max(entry_ref, round(sl_price - max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
                 if rr > 0.0:
@@ -2100,9 +2056,28 @@ class KronosDesktopApp:
                 sig_title = f"🔴 TÍN HIỆU: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total} kịch bản)"
             else:
                 entry_ref = last_close
-                sl_price = round(last_close - total_sl_dist, 2)
-                tp_price = round(last_close + tp_dist, 2)
+                is_bear_bias = (bear_pct > bull_pct) or (bear_pct == bull_pct and expected_move < 0)
+                if is_bear_bias:
+                    ref_tag = " (Tham khảo SELL)"
+                    sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
+                    total_sl_dist = sl_ai_raw_dist + sl_buffer
+                    eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
+                    tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_down
+                    sl_price = round(last_close + total_sl_dist, 2)
+                    tp_price = round(last_close - tp_dist, 2)
+                else:
+                    ref_tag = " (Tham khảo BUY)"
+                    sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
+                    total_sl_dist = sl_ai_raw_dist + sl_buffer
+                    eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
+                    tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_up
+                    sl_price = round(last_close - total_sl_dist, 2)
+                    tp_price = round(last_close + tp_dist, 2)
                 sig_title = f"⚪ ĐỨNG NGOÀI ({tf_label}) — Tăng: {bull_pct:.0f}% | Giảm: {bear_pct:.0f}% | Biên độ dự kiến: {expected_move:+.2f}$"
+
+            eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
+            tp_dist = abs(tp_price - entry_ref)
+            self.last_recommendation = {"sl_dist": sl_ai_raw_dist, "tp_dist": tp_dist}
 
             self.cached_scenarios = scenarios
             self.cached_mean_df = mean_df
@@ -2201,7 +2176,7 @@ class KronosDesktopApp:
             max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
             detail_text = (
                 f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  SL AI (+{sl_buffer:.1f} giá): {cur_sl_dist:.2f} giá ({max_sl_str})\n"
-                f"Gợi ý AI    ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   {trade_msg}"
+                f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   {trade_msg}"
             )
 
             self._set_loading_stage(96.0, "Đang dựng biểu đồ nến Real-Time...")
@@ -2460,7 +2435,10 @@ def run_first_time_setup():
     os.makedirs(weights_root, exist_ok=True)
     for repo_id, cls in [
         ("NeoQuasar/Kronos-Tokenizer-base", KronosTokenizer),
+        ("NeoQuasar/Kronos-Tokenizer-2k", KronosTokenizer),
         ("NeoQuasar/Kronos-base", Kronos),
+        ("NeoQuasar/Kronos-small", Kronos),
+        ("NeoQuasar/Kronos-mini", Kronos),
     ]:
         w_name = repo_id.split("/")[-1]
         w_dir = os.path.join(weights_root, w_name)
