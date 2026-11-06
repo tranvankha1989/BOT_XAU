@@ -1,0 +1,2508 @@
+import os
+import sys
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+import json
+import math
+import time
+import shutil
+import ctypes
+import threading
+from datetime import datetime, timedelta
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+import numpy as np
+import pandas as pd
+import torch
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.patches import Rectangle
+
+from model import Kronos, KronosTokenizer, KronosPredictor
+
+# Thử import MetaTrader5
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
+
+# Thử import gradio_client
+try:
+    from gradio_client import Client
+    HF_CLIENT_AVAILABLE = True
+except ImportError:
+    HF_CLIENT_AVAILABLE = False
+
+# Đường dẫn lưu cấu hình người dùng & Icon trong AppData (không tạo file phụ trong thư mục dự án)
+SETTINGS_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Kronos_MT5_Bot")
+SETTINGS_FILE = os.path.join(SETTINGS_DIR, "user_settings.json")
+ICON_ICO_FILE = os.path.join(SETTINGS_DIR, "khatran_icon.ico")
+ICON_PNG_FILE = os.path.join(SETTINGS_DIR, "khatran_icon.png")
+
+try:
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("KhaTran.Kronos.ScalpingBot.M5.v2")
+except Exception:
+    pass
+
+MODEL_CONFIGS = {
+    "AI-base (102.3M - Mạnh nhất)": {
+        "model": "NeoQuasar/Kronos-base",
+        "tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
+        "max_context": 512
+    },
+    "AI-small (24.7M - Nhanh)": {
+        "model": "NeoQuasar/Kronos-small",
+        "tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
+        "max_context": 512
+    },
+    "AI-mini (4.1M - Siêu nhẹ)": {
+        "model": "NeoQuasar/Kronos-mini",
+        "tokenizer": "NeoQuasar/Kronos-Tokenizer-2k",
+        "max_context": 2048
+    }
+}
+
+BG_DARK = "#10141d"
+PANEL_BG = "#19202c"
+SECTION_HEADER_BG = "#232d3f"
+TEXT_MAIN = "#eaecef"
+GOLD_ACCENT = "#f0b90b"
+GREEN_UP = "#0ecb81"
+RED_DOWN = "#f6465d"
+CYAN_LIVE = "#00e5ff"
+
+
+class CollapsibleSection(tk.Frame):
+    """Mục giao diện có thể thu gọn / sổ xuống theo kiểu Accordion (mặc định thu gọn)."""
+    def __init__(self, parent, title: str, initially_open: bool = False, group_list: list = None):
+        super().__init__(parent, bg=PANEL_BG)
+        self.pack(fill=tk.X, pady=2)
+        self.title = title
+        self.is_open = initially_open
+        self.group_list = group_list
+        if self.group_list is not None:
+            self.group_list.append(self)
+
+        self.header_btn = tk.Button(
+            self,
+            text=self._get_header_text(),
+            bg=SECTION_HEADER_BG,
+            fg=GOLD_ACCENT,
+            activebackground="#2d3a52",
+            activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            relief=tk.FLAT,
+            anchor="w",
+            padx=8,
+            pady=4,
+            command=self.toggle
+        )
+        self.header_btn.pack(fill=tk.X)
+
+        self.content = tk.Frame(self, bg=PANEL_BG, padx=6, pady=3)
+        if self.is_open:
+            self.content.pack(fill=tk.X)
+
+    def _get_header_text(self) -> str:
+        arrow = "▾" if self.is_open else "▸"
+        return f"{arrow}  {self.title}"
+
+    def close_section(self):
+        if self.is_open:
+            self.is_open = False
+            self.header_btn.config(text=self._get_header_text())
+            self.content.pack_forget()
+
+    def toggle(self):
+        if not self.is_open and self.group_list is not None:
+            for other in self.group_list:
+                if other is not self:
+                    other.close_section()
+        self.is_open = not self.is_open
+        self.header_btn.config(text=self._get_header_text())
+        if self.is_open:
+            self.content.pack(fill=tk.X)
+        else:
+            self.content.pack_forget()
+
+
+class KronosDesktopApp:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("AI (KhaTran) - Phần Mềm Scalping Vàng & Quản Lý Lệnh Real-Time (MT5 Exness)")
+        self.root.geometry("1450x880")
+        self.root.configure(bg=BG_DARK)
+        self._apply_window_and_taskbar_icon()
+
+        self.local_cache = {}
+        self.initial_r_cache = {}  # Lưu khoảng cách 1R (|Entry - SL ban đầu|) theo từng ticket
+        self.pending_be_exit_tickets = set()  # Lưu các ticket đang âm bị AI báo đảo chiều -> chờ hồi về Entry thoát
+        self.pending_pullback_order = None  # Lưu tín hiệu chờ giá hồi về <= SL tối đa (1 giá = 10 pip) mới vào lệnh
+        self.daily_limit_locked_date = None  # Ngày (YYYY-MM-DD) đã chạm mục tiêu Lãi/Lỗ ngày -> Dừng giao dịch hết ngày
+        self.daily_limit_reason = ""
+        self.cached_daily_pnl = 0.0
+        self.consec_loss_count = 0  # Chuỗi lệnh thua liên tiếp hiện tại trong ngày
+        self.cooldown_until = None  # Thời điểm hết hạn tạm ngừng sau chuỗi thua
+        self.last_cooldown_deal_ticket = None
+        self.left_menu_visible = False  # Mặc định thu gọn vào
+        self.drawer_width = 345
+        self.drawer_x = -350
+        self._drawer_anim_job = None
+        self.auto_loop_running = False
+        self.is_analyzing = False
+        self.last_candle_time = None
+        self.last_recommendation = None
+        self.heartbeat_toggle = False
+        self._loading_settings = False
+
+        # Chế độ hiển thị biểu đồ: "LIVE_POSITIONS" (Tab 1) hoặc "AI_FORECAST" (Tab 2)
+        self.chart_mode = "LIVE_POSITIONS"
+
+        # Lưu trữ dữ liệu dự báo gần nhất
+        self.cached_scenarios = None
+        self.cached_mean_df = None
+        self.cached_action = None
+        self.cached_sl = None
+        self.cached_tp = None
+        self.cached_df_hist = None
+        self.cached_df_analysis = None
+
+        # Trạng thái tương tác biểu đồ kiểu TradingView (Zoom / Pan / Kéo thanh giá Y-Scale / Chuột phải Reset)
+        self.user_zoomed = False
+        self.saved_xlim = None
+        self.saved_ylim = None
+        self._drag_start_px = None
+        self._drag_start_xlim = None
+        self._drag_start_ylim = None
+        self._drag_mode = None  # "PAN" hoặc "Y_SCALE"
+
+        # Trạng thái màn hình Loading khởi động kiểu MacBook (Xoay tròn + % Real-Time)
+        self._is_initial_loading = True
+        self._loading_cur_pct = 0.0
+        self._loading_target_pct = 12.0
+        self._spinner_step = 0
+        self._spinner_lines = []
+        self._loading_anim_job = None
+
+        self._cleanup_workspace_junk()
+        self._setup_styles()
+        self._build_ui()
+        self.load_user_settings()
+        self._bind_auto_save_settings()
+        self._build_startup_loading_overlay()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+
+        # Khởi động kết nối, chạy phân tích AI lần đầu tự động và bật luồng Real-Time
+        self.root.after(150, self.check_mt5_connection)
+        self.root.after(350, self.trigger_single_scan)
+        self.root.after(1000, self._realtime_tick_loop)
+
+    def _cleanup_workspace_junk(self):
+        """Tự động dọn dẹp mọi thư mục đệm (__pycache__, .pytest_cache, file .pyc/.tmp/.log) nếu có phát sinh."""
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            for root_dir, dirs, files in os.walk(base_dir):
+                if ".git" in root_dir:
+                    continue
+                for d in list(dirs):
+                    if d in ("__pycache__", ".pytest_cache", ".mypy_cache"):
+                        shutil.rmtree(os.path.join(root_dir, d), ignore_errors=True)
+                for f in files:
+                    if f.endswith((".pyc", ".pyo", ".tmp", ".log")):
+                        try:
+                            os.remove(os.path.join(root_dir, f))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def _build_startup_loading_overlay(self):
+        """Màn hình khởi động 'Đang tải dữ liệu' với vòng xoay kiểu MacBook và phần trăm Real-Time (0% -> 100%)."""
+        self.loading_overlay = tk.Frame(self.root, bg="#0d1119")
+        self.loading_overlay.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        self.loading_overlay.lift()
+
+        center_box = tk.Frame(self.loading_overlay, bg="#0d1119", padx=40, pady=35)
+        center_box.place(relx=0.5, rely=0.47, anchor="center")
+
+        # Vòng xoay 12 nan hoa kiểu MacBook / macOS Activity Indicator
+        self.spinner_canvas = tk.Canvas(center_box, width=116, height=116, bg="#0d1119", highlightthickness=0)
+        self.spinner_canvas.pack(pady=(0, 14))
+
+        cx, cy = 58, 58
+        r_in, r_out = 26, 48
+        self._spinner_lines = []
+        for i in range(12):
+            angle_rad = math.radians(i * 30 - 90)
+            x1 = cx + r_in * math.cos(angle_rad)
+            y1 = cy + r_in * math.sin(angle_rad)
+            x2 = cx + r_out * math.cos(angle_rad)
+            y2 = cy + r_out * math.sin(angle_rad)
+            line_id = self.spinner_canvas.create_line(
+                x1, y1, x2, y2, width=5, capstyle=tk.ROUND, fill="#252f42"
+            )
+            self._spinner_lines.append(line_id)
+
+        # Hiển thị Phần trăm Real-Time ngay chính giữa bên dưới vòng xoay
+        self.loading_pct_lbl = tk.Label(
+            center_box, text="0%", bg="#0d1119", fg=GOLD_ACCENT,
+            font=("Segoe UI", 22, "bold")
+        )
+        self.loading_pct_lbl.pack(pady=(0, 4))
+
+        self.loading_title_lbl = tk.Label(
+            center_box, text="Đang tải dữ liệu...", bg="#0d1119", fg=TEXT_MAIN,
+            font=("Segoe UI", 13, "bold")
+        )
+        self.loading_title_lbl.pack(pady=(0, 6))
+
+        self.loading_sub_lbl = tk.Label(
+            center_box, text="Đang khởi tạo kết nối MetaTrader 5 & Mô hình AI...",
+            bg="#0d1119", fg="#8b98a9", font=("Segoe UI", 9)
+        )
+        self.loading_sub_lbl.pack(pady=(0, 14))
+
+        # Thanh tiến trình mượt mà bên dưới
+        self.loading_bar_canvas = tk.Canvas(
+            center_box, width=320, height=6, bg="#1b2333", highlightthickness=0
+        )
+        self.loading_bar_canvas.pack()
+        self.loading_bar_fill = self.loading_bar_canvas.create_rectangle(
+            0, 0, 0, 6, fill=GOLD_ACCENT, outline=""
+        )
+
+        self._animate_startup_loader()
+
+    def _set_loading_stage(self, target_pct: float, sub_text: str):
+        if not self._is_initial_loading:
+            return
+        self._loading_target_pct = max(self._loading_target_pct, float(target_pct))
+        if hasattr(self, "loading_sub_lbl") and self.loading_sub_lbl.winfo_exists():
+            self.root.after(0, lambda: self.loading_sub_lbl.config(text=sub_text) if self.loading_sub_lbl.winfo_exists() else None)
+
+    def _animate_startup_loader(self):
+        if not self._is_initial_loading or not hasattr(self, "loading_overlay") or not self.loading_overlay.winfo_exists():
+            return
+
+        # 1. Cập nhật hiệu ứng xoay tròn 12 nan hoa kiểu MacBook
+        palette = [
+            "#ffffff", "#ffe082", "#f0b90b", "#d4a10a",
+            "#b3860b", "#8f6b0d", "#6e5310", "#523f14",
+            "#3c3018", "#2d261c", "#23201d", "#1c1b1b"
+        ]
+        for idx, line_id in enumerate(self._spinner_lines):
+            color_idx = (self._spinner_step - idx) % 12
+            self.spinner_canvas.itemconfig(line_id, fill=palette[color_idx])
+        self._spinner_step = (self._spinner_step + 1) % 12
+
+        # 2. Tăng phần trăm Real-Time mượt mà hướng tới _loading_target_pct
+        if self._loading_cur_pct < self._loading_target_pct:
+            diff = self._loading_target_pct - self._loading_cur_pct
+            step = max(0.7, diff * 0.18) if diff > 3.0 else 0.45
+            self._loading_cur_pct = min(self._loading_target_pct, self._loading_cur_pct + step)
+        elif self._loading_cur_pct < 95.0:
+            # Nhích nhẹ khi đang đợi mô hình AI tính toán kịch bản
+            self._loading_cur_pct = min(95.0, self._loading_cur_pct + 0.15)
+
+        pct_int = int(round(self._loading_cur_pct))
+        self.loading_pct_lbl.config(text=f"{pct_int}%")
+        bar_w = int(320 * (min(max(self._loading_cur_pct, 0.0), 100.0) / 100.0))
+        self.loading_bar_canvas.coords(self.loading_bar_fill, 0, 0, bar_w, 6)
+
+        self._loading_anim_job = self.root.after(50, self._animate_startup_loader)
+
+    def _finish_startup_loading(self):
+        """Đưa phần trăm lên 100% và đóng màn hình Loading để vào thẳng giao diện chính."""
+        if not self._is_initial_loading:
+            return
+        self._is_initial_loading = False
+        if self._loading_anim_job is not None:
+            try:
+                self.root.after_cancel(self._loading_anim_job)
+            except Exception:
+                pass
+            self._loading_anim_job = None
+
+        if hasattr(self, "loading_overlay") and self.loading_overlay.winfo_exists():
+            try:
+                self.loading_pct_lbl.config(text="100%")
+                self.loading_title_lbl.config(text="Hoàn tất dữ liệu!")
+                self.loading_sub_lbl.config(text="Đang mở giao diện biểu đồ Real-Time...")
+                self.loading_bar_canvas.coords(self.loading_bar_fill, 0, 0, 320, 6)
+            except Exception:
+                pass
+            self.root.after(220, lambda: self.loading_overlay.destroy() if hasattr(self, "loading_overlay") and self.loading_overlay.winfo_exists() else None)
+
+    def _apply_window_and_taskbar_icon(self):
+        """Gán biểu tượng KhaTran và đồng bộ thanh tiêu đề Windows phía trên trùng màu nền tối của App."""
+        try:
+            if os.path.exists(ICON_ICO_FILE):
+                self.root.iconbitmap(default=ICON_ICO_FILE)
+                self.root.wm_iconbitmap(ICON_ICO_FILE)
+            if os.path.exists(ICON_PNG_FILE):
+                self._app_icon_img = tk.PhotoImage(file=ICON_PNG_FILE)
+                self.root.iconphoto(True, self._app_icon_img)
+        except Exception:
+            pass
+        self._apply_dark_titlebar()
+        self.root.after(100, self._apply_dark_titlebar)
+
+    def _apply_dark_titlebar(self):
+        """Đổi thanh tiêu đề màu trắng phía trên của Windows sang màu nền tối (#10141d) đồng bộ với App."""
+        try:
+            self.root.update_idletasks()
+            hwnds = set()
+            parent_hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            if parent_hwnd:
+                hwnds.add(parent_hwnd)
+            try:
+                frame_hwnd = int(self.root.wm_frame(), 16)
+                if frame_hwnd:
+                    hwnds.add(frame_hwnd)
+            except Exception:
+                pass
+            hwnds.add(self.root.winfo_id())
+
+            dark_mode = ctypes.c_int(1)
+            # COLORREF chuẩn Windows (0x00BBGGRR): #10141d -> 0x001D1410, chữ #eaecef -> 0x00EFECEA
+            caption_color = ctypes.c_int(0x001D1410)
+            text_color = ctypes.c_int(0x00EFECEA)
+            border_color = ctypes.c_int(0x002C2019)
+
+            for hwnd in hwnds:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border_color), ctypes.sizeof(border_color))
+        except Exception:
+            pass
+
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TFrame", background=BG_DARK)
+        style.configure("Panel.TFrame", background=PANEL_BG)
+        style.configure("TLabel", background=PANEL_BG, foreground=TEXT_MAIN, font=("Segoe UI", 9))
+        style.configure("Treeview", background="#131822", foreground=TEXT_MAIN, fieldbackground="#131822", rowheight=23, font=("Consolas", 9))
+        style.configure("Treeview.Heading", background="#252f42", foreground=GOLD_ACCENT, font=("Segoe UI", 9, "bold"))
+        style.configure("TNotebook", background=BG_DARK, borderwidth=0, tabmargins=[2, 2, 2, 0])
+        style.configure(
+            "TNotebook.Tab",
+            background="#1a2230",
+            foreground="#8b98a9",
+            padding=[14, 5],
+            font=("Segoe UI", 9, "bold"),
+            borderwidth=1
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#0284c7"), ("active", "#28354a")],
+            foreground=[("selected", "#ffffff"), ("active", "#ffffff")],
+            padding=[("selected", [14, 5]), ("!selected", [14, 5])],
+            expand=[("selected", [0, 0, 0, 0]), ("!selected", [0, 0, 0, 0])]
+        )
+
+    def _build_ui(self):
+        # =====================================================================
+        # 1. THANH TRÊN CÙNG: NÚT ☰ NỀN TRẮNG BÊN TRÁI & ĐỒNG HỒ ĐẾM GIỜ AI CĂN GIỮA
+        # =====================================================================
+        top_bar = tk.Frame(self.root, bg=PANEL_BG, pady=4, padx=10)
+        top_bar.pack(fill=tk.X, padx=8, pady=(6, 4))
+
+        self.menu_toggle_btn = tk.Button(
+            top_bar, text="☰", bg="#252f42", fg="#ffffff",
+            activebackground="#32415c", activeforeground="#ffffff",
+            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0,
+            command=self.toggle_left_menu
+        )
+        self.menu_toggle_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Căn giữa thông số đếm giờ & giá Live ngay chính giữa thanh trên cùng
+        self.live_clock_lbl = tk.Label(
+            top_bar, text="LIVE | Bid: --- | Ask: --- | Đóng nến: --:--",
+            bg="#121722", fg=CYAN_LIVE, font=("Consolas", 9, "bold"), padx=14, pady=4
+        )
+        self.live_clock_lbl.pack(anchor="center")
+
+        # KHUNG CHÍNH (RIGHT PANEL CHIẾM TOÀN MÀN HÌNH)
+        self.main_frame = tk.Frame(self.root, bg=BG_DARK)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=2)
+        main_frame = self.main_frame
+
+        # =====================================================================
+        # 2. CỘT PHẢI (HIỂN THỊ CỐ ĐỊNH 100% KHÔNG BỊ CO GIÃN KHI ĐÓNG/MỞ MENU)
+        # =====================================================================
+        self.right_panel = tk.Frame(main_frame, bg=BG_DARK)
+        self.right_panel.pack(fill=tk.BOTH, expand=True)
+        right_panel = self.right_panel
+
+        # =====================================================================
+        # 3. NGĂN KÉO MENU TRÁI (CHIỀU CAO BẰNG 100% CHIỀU CAO APP, NÚT ☰ NẰM TRONG TAB MENU)
+        # =====================================================================
+        self.left_panel = tk.Frame(
+            self.root, bg=PANEL_BG, width=self.drawer_width, padx=10, pady=8,
+            highlightthickness=1, highlightbackground="#384661"
+        )
+        self.left_panel.pack_propagate(False)
+        # Đặt trực tiếp trên self.root với y=0, relheight=1.0 để chiều cao bằng đúng 100% chiều cao App!
+        self.left_panel.place(x=self.drawer_x, y=0, relheight=1.0, width=self.drawer_width)
+        left_panel = self.left_panel
+
+        # THANH TIÊU ĐỀ TRÊN CÙNG CỦA MENU: CHỨA NÚT 3 GẠCH (☰) NẰM CHUNG TRONG TAB MENU
+        drawer_header = tk.Frame(left_panel, bg=PANEL_BG)
+        drawer_header.pack(fill=tk.X, pady=(0, 6))
+
+        self.drawer_close_btn = tk.Button(
+            drawer_header, text="☰", bg="#252f42", fg="#ffffff",
+            activebackground="#32415c", activeforeground="#ffffff",
+            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0,
+            command=self.toggle_left_menu
+        )
+        self.drawer_close_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Label(
+            drawer_header, text="BẢNG ĐIỀU KHIỂN & CÀI ĐẶT",
+            bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold"), anchor="w"
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # KHỐI ĐẦU MENU: KẾT NỐI MT5, CHART REAL-TIME & DÒNG HIỂN THỊ SỐ DƯ BÊN DƯỚI
+        menu_top_card = tk.Frame(left_panel, bg="#121722", padx=8, pady=6, highlightthickness=1, highlightbackground="#263147")
+        menu_top_card.pack(fill=tk.X, pady=(0, 6))
+
+        mt5_row = tk.Frame(menu_top_card, bg="#121722")
+        mt5_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Button(
+            mt5_row, text="Kết nối MT5", bg="#2b3548", fg=TEXT_MAIN,
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=2,
+            command=self.check_mt5_connection
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.auto_trade_var = tk.BooleanVar(value=False)
+        self.realtime_chart_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            mt5_row, text="Chart Real-Time",
+            variable=self.realtime_chart_var, bg="#121722", fg=CYAN_LIVE, selectcolor=BG_DARK,
+            activebackground="#121722", activeforeground=CYAN_LIVE,
+            font=("Segoe UI", 8, "bold")
+        ).pack(side=tk.RIGHT)
+
+        # Dòng thông tin Số dư nằm riêng bên dưới chữ Kết nối MT5 (không có ô tick)
+        self.mt5_status_lbl = tk.Label(
+            menu_top_card, text="Đang kết nối MT5...", bg="#121722", fg=GOLD_ACCENT,
+            font=("Segoe UI", 8, "bold"), anchor="w"
+        )
+        self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 0))
+
+        self.accordion_sections = []
+
+        # Mục 1: 1. Cài đặt (Mặc định thu gọn)
+        sec1 = CollapsibleSection(left_panel, "1. Cài đặt", initially_open=False, group_list=self.accordion_sections)
+        self.symbol_var = self._add_labeled_entry(sec1.content, "Mã Vàng MT5:", "XAUUSDm")
+        self.analysis_tf_var = self._add_labeled_combo(sec1.content, "Khung phân tích AI:", ["M1", "M5", "M15", "H1"], "M15")
+        self.tf_var = self._add_labeled_combo(sec1.content, "Khung vào lệnh (Scalp):", ["M1", "M5", "M15", "H1"], "M5")
+        self.lot_var = self._add_labeled_entry(sec1.content, "Khối lượng (Lot):", "0.01")
+        self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "5")
+
+        # Mục 2: 2. Bộ lọc entry (Mặc định thu gọn)
+        sec2 = CollapsibleSection(left_panel, "2. Bộ lọc entry", initially_open=False, group_list=self.accordion_sections)
+        self.scenarios_var = self._add_labeled_entry(sec2.content, "Số kịch bản AI (Ensemble):", "8")
+        self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75")
+        self.min_move_var = self._add_labeled_entry(sec2.content, "Biên độ tối thiểu (Giá):", "1.2")
+        self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35")
+        self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5")
+        self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5")
+        self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "6.0")
+        self.rr_var = self._add_labeled_entry(sec2.content, "Tỷ lệ R:R (0=TP Theo AI):", "2.0")
+
+        # Mục 3: 3. Quản lý lệnh (Mặc định thu gọn)
+        sec3 = CollapsibleSection(left_panel, "3. Quản lý lệnh", initially_open=False, group_list=self.accordion_sections)
+        self.auto_be_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            sec3.content, text="Tự dời SL về đúng Entry theo R:R:",
+            variable=self.auto_be_var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
+            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(fill=tk.X)
+        self.be_trigger_r_var = self._add_labeled_entry(sec3.content, "   Mức kích hoạt (R, VD 1.0 = 1R):", "1.0")
+
+        self.auto_trail_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            sec3.content, text="Tự trượt SL khóa lãi (Trailing Stop):",
+            variable=self.auto_trail_var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
+            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(fill=tk.X)
+        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R):", "0.8")
+
+        self.auto_rev_close_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            sec3.content, text="Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry)",
+            variable=self.auto_rev_close_var, bg=PANEL_BG, fg=GOLD_ACCENT, selectcolor=BG_DARK,
+            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(fill=tk.X, pady=(2, 2))
+
+        self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0")
+        self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0")
+        self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0")
+        self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30")
+
+        # Mục 4: 4. Phân tích AI (Mặc định thu gọn)
+        sec4 = CollapsibleSection(left_panel, "4. Phân tích AI", initially_open=False, group_list=self.accordion_sections)
+        self.engine_var = self._add_labeled_combo(
+            sec4.content, "Chế độ chạy:",
+            ["Ưu tiên Hugging Face -> GTX 1650", "Chạy trực tiếp máy nhà"],
+            "Chạy trực tiếp máy nhà"
+        )
+        self.model_var = self._add_labeled_combo(
+            sec4.content, "Mô hình:",
+            list(MODEL_CONFIGS.keys()),
+            "AI-base (102.3M - Mạnh nhất)"
+        )
+        self.hf_space_var = self._add_labeled_entry(sec4.content, "HF Space ID:", "tranvankha2807/Kronos_Xau")
+        self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*")
+        self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử (Lookback):", "400")
+        self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6")
+
+        # CÁC NÚT ĐIỀU KHIỂN NẰM DƯỚI CÙNG CỦA MENU: NÚT REFRESH (🔄) & NÚT GỘP START/STOP
+        btn_frame = tk.Frame(left_panel, bg=PANEL_BG, pady=2)
+        btn_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(4, 0))
+
+        self.scan_btn = tk.Button(
+            btn_frame, text="🔄",
+            bg="#2b3548", fg="#ffffff",
+            activebackground="#3b4963", activeforeground="#ffffff",
+            font=("Segoe UI Symbol", 12, "bold"),
+            relief=tk.FLAT, pady=3, command=self.trigger_single_scan
+        )
+        self.scan_btn.pack(fill=tk.X, pady=(0, 4))
+
+        self.start_stop_btn = tk.Button(
+            btn_frame, text="▶️ START", bg=GREEN_UP, fg="#000000",
+            activebackground="#0bb572", activeforeground="#000000",
+            font=("Segoe UI", 10, "bold"), relief=tk.FLAT, pady=6,
+            command=self.toggle_bot_start_stop
+        )
+        self.start_stop_btn.pack(fill=tk.X, pady=(0, 2))
+
+        # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM NGAY TRÊN CỤM NÚT DƯỚI CÙNG
+        info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
+        info_card.pack(fill=tk.BOTH, expand=True, pady=(6, 4))
+
+        tk.Label(
+            info_card, text="THÔNG TIN PHIÊN & TÓM TẮT AI",
+            bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold"), anchor="w"
+        ).pack(fill=tk.X, pady=(0, 6))
+
+        self.quick_info_lbl = tk.Label(
+            info_card,
+            text=(
+                "• Mã giao dịch: XAUUSDm (M5)\n"
+                "• Giá Live: Đang tải...\n"
+                "• Lệnh đang mở: 0 lệnh\n"
+                "• Lãi/Lỗ nổi: 0.00 USD\n"
+                "──────────────────────────\n"
+                "• Trạng thái AI: Đang khởi tạo...\n"
+                "• Xu hướng AI: ---\n"
+                "• Mục tiêu 6 nến: ---\n"
+                "• SL / TP gợi ý: ---"
+            ),
+            bg="#131822", fg=TEXT_MAIN, font=("Consolas", 8), justify=tk.LEFT, anchor="nw"
+        )
+        self.quick_info_lbl.pack(fill=tk.BOTH, expand=True)
+
+        # Hộp Tín hiệu bên Cột phải
+        sig_box = tk.Frame(right_panel, bg=PANEL_BG, padx=12, pady=5)
+        sig_box.pack(fill=tk.X, pady=(0, 4))
+
+        self.signal_title_lbl = tk.Label(
+            sig_box, text="⏳ ĐANG TỰ ĐỘNG CHẠY PHÂN TÍCH AI LẦN ĐẦU...",
+            bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 11, "bold"), anchor="w"
+        )
+        self.signal_title_lbl.pack(fill=tk.X)
+
+        self.signal_detail_lbl = tk.Label(
+            sig_box,
+            text="💡 Lăn chuột: Zoom | Kéo trong biểu đồ: Di chuyển | Kéo thanh giá (phải/trái): Tăng giảm chiều cao nến | Chuột phải: Reset biểu đồ.",
+            bg=PANEL_BG, fg=TEXT_MAIN, font=("Consolas", 8), justify=tk.LEFT, anchor="w"
+        )
+        self.signal_detail_lbl.pack(fill=tk.X, pady=(2, 0))
+
+        # Menu chuột phải trên biểu đồ kiểu TradingView
+        self.chart_context_menu = tk.Menu(
+            self.root, tearoff=0, bg="#19202c", fg=TEXT_MAIN,
+            activebackground=GOLD_ACCENT, activeforeground="#000000",
+            font=("Segoe UI", 9, "bold")
+        )
+        self.chart_context_menu.add_command(label="🔄 Reset biểu đồ (Auto-Fit)", command=self.reset_chart_view)
+
+        # Biểu đồ Nến tương tác trực tiếp bằng chuột
+        chart_frame = tk.Frame(right_panel, bg=PANEL_BG)
+        chart_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+
+        self.fig = Figure(figsize=(9, 4.4), dpi=100, facecolor=PANEL_BG)
+        self.ax = self.fig.add_subplot(111)
+        self._style_axes()
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas.mpl_connect("scroll_event", self._on_mouse_scroll)
+        self.canvas.mpl_connect("button_press_event", self._on_mouse_press)
+        self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
+        self.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
+
+        # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB (CHUYỂN TAB SẼ CHUYỂN CHẾ ĐỘ BIỂU ĐỒ)
+        self.bottom_notebook = ttk.Notebook(right_panel, height=200)
+        self.bottom_notebook.pack(fill=tk.X)
+
+        # TAB 1: QUẢN LÝ LỆNH ĐANG MỞ REAL-TIME
+        pos_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+        self.bottom_notebook.add(pos_tab, text="⚡ LỆNH ĐANG MỞ REAL-TIME (BIỂU ĐỒ LỆNH)")
+
+        pos_top_bar = tk.Frame(pos_tab, bg=PANEL_BG, pady=4, padx=6)
+        pos_top_bar.pack(fill=tk.X)
+
+        tk.Button(
+            pos_top_bar, text="🔥 ĐÓNG TẤT CẢ (CLOSE ALL)", bg=RED_DOWN, fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            command=self.close_all_positions
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            pos_top_bar, text="❌ Đóng Lệnh Chọn", bg="#8c2d3b", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            command=self.close_selected_position
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            pos_top_bar, text="🛡️ Dời SL về Entry", bg="#235c46", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            command=self.breakeven_all_positions
+        ).pack(side=tk.RIGHT, padx=3)
+
+        self.pos_summary_lbl = tk.Label(
+            pos_top_bar, text="Đang tải danh sách lệnh từ MT5...",
+            bg=PANEL_BG, fg=CYAN_LIVE, font=("Consolas", 9, "bold")
+        )
+        self.pos_summary_lbl.pack(side=tk.LEFT)
+
+        pos_cols = ("ticket", "time", "symbol", "type", "volume", "open_price", "current_price", "sl", "tp", "profit", "status")
+        self.pos_tree = ttk.Treeview(pos_tab, columns=pos_cols, show="headings", height=5)
+        pos_headers = {
+            "ticket": "Mã Lệnh (Ticket)",
+            "time": "Giờ mở",
+            "symbol": "Mã",
+            "type": "Loại",
+            "volume": "Lot",
+            "open_price": "Giá Vào (Entry)",
+            "current_price": "Giá Hiện Tại",
+            "sl": "SL (Cắt lỗ)",
+            "tp": "TP (Chốt lời)",
+            "profit": "Lãi / Lỗ (USD)",
+            "status": "Trạng thái Bảo vệ"
+        }
+        pos_widths = {
+            "ticket": 95, "time": 90, "symbol": 75, "type": 55, "volume": 50,
+            "open_price": 90, "current_price": 85, "sl": 85, "tp": 85, "profit": 95, "status": 160
+        }
+        for c in pos_cols:
+            self.pos_tree.heading(c, text=pos_headers[c])
+            self.pos_tree.column(c, width=pos_widths[c], anchor=tk.CENTER)
+        self.pos_tree.tag_configure("profit_pos", foreground=GREEN_UP)
+        self.pos_tree.tag_configure("profit_neg", foreground=RED_DOWN)
+        self.pos_tree.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+
+        # TAB 2: CHI TIẾT 6 CÂY NẾN DỰ BÁO KRONOS AI & NHẬT KÝ LOG
+        pred_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+        self.bottom_notebook.add(pred_tab, text="📊 BẢNG GIÁ DỰ BÁO AI & NHẬT KÝ (BIỂU ĐỒ PHÂN TÍCH AI)")
+
+        pred_left = tk.Frame(pred_tab, bg=PANEL_BG)
+        pred_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 4), pady=4)
+
+        cols = ("timestamps", "open", "high", "low", "close")
+        self.tree = ttk.Treeview(pred_left, columns=cols, show="headings", height=6)
+        headers = {
+            "timestamps": "Thời gian dự báo",
+            "open": "Open",
+            "high": "High (Đỉnh)",
+            "low": "Low (Đáy)",
+            "close": "Close (Đóng)"
+        }
+        for c in cols:
+            self.tree.heading(c, text=headers[c])
+            self.tree.column(c, width=125 if c == "timestamps" else 80, anchor=tk.CENTER)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+
+        log_right = tk.Frame(pred_tab, bg=PANEL_BG, width=520)
+        log_right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(0, 4), pady=4)
+        log_right.pack_propagate(False)
+
+        self.log_text = tk.Text(log_right, bg="#131822", fg="#b7bdc6", font=("Consolas", 8), relief=tk.FLAT)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+
+        self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    # =========================================================================
+    # TỰ ĐỘNG LƯU & KHÔI PHỤC CÀI ĐẶT NGƯỜI DÙNG (MỤC 1, 2, 3, 4)
+    # =========================================================================
+    def _get_settings_vars_map(self) -> dict:
+        return {
+            "symbol": self.symbol_var,
+            "analysis_tf": self.analysis_tf_var,
+            "tf": self.tf_var,
+            "lot": self.lot_var,
+            "max_pos": self.max_pos_var,
+            "scenarios": self.scenarios_var,
+            "consensus": self.consensus_var,
+            "min_move": self.min_move_var,
+            "max_spread": self.max_spread_var,
+            "sl_atr": self.sl_atr_var,
+            "sl_buffer": self.sl_buffer_var,
+            "max_sl_price": self.max_sl_price_var,
+            "rr": self.rr_var,
+            "auto_be": self.auto_be_var,
+            "be_trigger_r": self.be_trigger_r_var,
+            "auto_trail": self.auto_trail_var,
+            "trail_dist_r": self.trail_dist_r_var,
+            "auto_rev_close": self.auto_rev_close_var,
+            "daily_tp_usd": self.daily_tp_usd_var,
+            "daily_sl_usd": self.daily_sl_usd_var,
+            "max_consec_loss": self.max_consec_loss_var,
+            "cooldown_mins": self.cooldown_mins_var,
+            "engine": self.engine_var,
+            "model": self.model_var,
+            "hf_space": self.hf_space_var,
+            "hf_token": self.hf_token_var,
+            "lookback": self.lookback_var,
+            "pred_len": self.pred_len_var,
+            "realtime_chart": self.realtime_chart_var,
+        }
+
+    def save_user_settings(self, *args):
+        if self._loading_settings:
+            return
+        try:
+            os.makedirs(SETTINGS_DIR, exist_ok=True)
+            data = {k: v.get() for k, v in self._get_settings_vars_map().items()}
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def load_user_settings(self):
+        if not os.path.exists(SETTINGS_FILE):
+            return
+        try:
+            self._loading_settings = True
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            vmap = self._get_settings_vars_map()
+            for k, val in data.items():
+                if k in vmap:
+                    if k == "model" and isinstance(val, str) and val.startswith("Kronos-"):
+                        val = val.replace("Kronos-", "AI-", 1)
+                    vmap[k].set(val)
+            self.log("Đã khôi phục thông số cài đặt của bạn từ lần dùng trước.")
+        except Exception:
+            pass
+        finally:
+            self._loading_settings = False
+
+    def _bind_auto_save_settings(self):
+        for var in self._get_settings_vars_map().values():
+            var.trace_add("write", self.save_user_settings)
+        self.tf_var.trace_add("write", self._on_timeframe_changed)
+        self.analysis_tf_var.trace_add("write", self._on_timeframe_changed)
+        self.root.bind_all("<Button-1>", self._on_global_click_outside_menu, add="+")
+        self.root.bind_all("<Button-3>", self._on_global_click_outside_menu, add="+")
+
+    def _on_global_click_outside_menu(self, event):
+        """Khi Menu đang sổ ra, nếu click chuột ở bất kỳ chỗ nào bên ngoài Menu thì tự động thu Menu vào."""
+        if not self.left_menu_visible or self._drawer_anim_job is not None:
+            return
+        w = getattr(event, "widget", None)
+        if w is self.menu_toggle_btn or w is self.drawer_close_btn:
+            return
+        w_str = str(w).lower()
+        if "popdown" in w_str or "combobox" in w_str:
+            return
+        curr = w
+        while curr is not None:
+            if curr is self.left_panel:
+                return
+            curr = getattr(curr, "master", None)
+        try:
+            lx = self.left_panel.winfo_rootx()
+            ly = self.left_panel.winfo_rooty()
+            lw = self.left_panel.winfo_width()
+            lh = self.left_panel.winfo_height()
+            if lx <= event.x_root <= lx + lw and ly <= event.y_root <= ly + lh:
+                return
+        except Exception:
+            pass
+        self.toggle_left_menu()
+
+    def _update_tf_button_label(self):
+        pass
+
+    def _on_timeframe_changed(self, *args):
+        self._update_tf_button_label()
+        if self._loading_settings:
+            return
+        self.last_candle_time = None
+        self.user_zoomed = False
+        self.saved_xlim = None
+        self.saved_ylim = None
+        scalp_tf = self.tf_var.get().strip()
+        ana_tf = self.analysis_tf_var.get().strip()
+        if ana_tf == scalp_tf:
+            self.log(f"🔄 Đã chọn cùng khung {scalp_tf} (Soi {scalp_tf} -> Trade {scalp_tf}). Đang quét lại...")
+        else:
+            self.log(f"🔄 Chế độ Đa Khung: Phân tích AI trên [{ana_tf}] -> Vào lệnh Scalping trên [{scalp_tf}]. Đang quét lại...")
+        self.trigger_single_scan()
+
+    def toggle_left_menu(self):
+        """Trượt mượt mà (Slide-Over Animation) cột Menu bên trái mà không làm giật hay vẽ lại biểu đồ."""
+        if self._drawer_anim_job is not None:
+            try:
+                self.root.after_cancel(self._drawer_anim_job)
+            except Exception:
+                pass
+            self._drawer_anim_job = None
+
+        self.left_menu_visible = not self.left_menu_visible
+        if self.left_menu_visible:
+            self.left_panel.lift()
+            self.menu_toggle_btn.config(bg="#32415c", fg="#ffffff")
+            target_x = 0
+        else:
+            self.menu_toggle_btn.config(bg="#252f42", fg="#ffffff")
+            target_x = -self.drawer_width - 5
+
+        self._animate_drawer_step(target_x)
+
+    def _animate_drawer_step(self, target_x: int):
+        diff = target_x - self.drawer_x
+        if abs(diff) <= 4:
+            self.drawer_x = target_x
+            self.left_panel.place(x=self.drawer_x, y=0, relheight=1.0, width=self.drawer_width)
+            self._drawer_anim_job = None
+            return
+        # Nội suy mượt kiểu Ease-Out (nhanh lúc đầu, êm dần lúc cuối)
+        step = int(diff * 0.42)
+        if step == 0:
+            step = 4 if diff > 0 else -4
+        self.drawer_x += step
+        self.left_panel.place(x=self.drawer_x, y=0, relheight=1.0, width=self.drawer_width)
+        self._drawer_anim_job = self.root.after(12, self._animate_drawer_step, target_x)
+
+    def _on_close_window(self):
+        self.save_user_settings()
+        self.auto_loop_running = False
+        self._cleanup_workspace_junk()
+        self.root.destroy()
+
+    def _on_tab_changed(self, event):
+        selected_idx = self.bottom_notebook.index(self.bottom_notebook.select())
+        if selected_idx == 0:
+            self.chart_mode = "LIVE_POSITIONS"
+        else:
+            self.chart_mode = "AI_FORECAST"
+            if self.cached_mean_df is None and not self.is_analyzing:
+                self.trigger_single_scan()
+
+        self.user_zoomed = False
+        self.saved_xlim = None
+        self.saved_ylim = None
+        active_df = (
+            self.cached_df_analysis
+            if (self.chart_mode == "AI_FORECAST" and self.cached_df_analysis is not None)
+            else self.cached_df_hist
+        )
+        active_tf = (
+            self.analysis_tf_var.get().strip()
+            if self.chart_mode == "AI_FORECAST"
+            else self.tf_var.get().strip()
+        )
+        if active_df is not None:
+            self._draw_candlestick_chart(
+                active_df, self.cached_scenarios, self.cached_mean_df,
+                self.cached_action, self.cached_sl, self.cached_tp,
+                self.symbol_var.get().strip(), active_tf, has_forming_candle=True
+            )
+
+    # =========================================================================
+    # TƯƠNG TÁC BIỂU ĐỒ KIỂU TRADINGVIEW (LĂN CHUỘT ZOOM / KÉO CHUỘT PAN)
+    # =========================================================================
+    def reset_chart_view(self):
+        self.user_zoomed = False
+        self.saved_xlim = None
+        self.saved_ylim = None
+        active_df = (
+            self.cached_df_analysis
+            if (self.chart_mode == "AI_FORECAST" and self.cached_df_analysis is not None)
+            else self.cached_df_hist
+        )
+        active_tf = (
+            self.analysis_tf_var.get().strip()
+            if self.chart_mode == "AI_FORECAST"
+            else self.tf_var.get().strip()
+        )
+        if active_df is not None:
+            self._draw_candlestick_chart(
+                active_df, self.cached_scenarios, self.cached_mean_df,
+                self.cached_action, self.cached_sl, self.cached_tp,
+                self.symbol_var.get().strip(), active_tf, has_forming_candle=True
+            )
+
+    def _on_mouse_scroll(self, event):
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
+            return
+        scale_factor = 0.82 if event.button == "up" else 1.22
+        cur_xlim = self.ax.get_xlim()
+        cur_ylim = self.ax.get_ylim()
+
+        xdata = event.xdata
+        ydata = event.ydata
+
+        new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
+        new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
+
+        rel_x = (cur_xlim[1] - xdata) / (cur_xlim[1] - cur_xlim[0] + 1e-9)
+        rel_y = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0] + 1e-9)
+
+        self.saved_xlim = (xdata - new_width * (1 - rel_x), xdata + new_width * rel_x)
+        self.saved_ylim = (ydata - new_height * (1 - rel_y), ydata + new_height * rel_y)
+        self.user_zoomed = True
+
+        self.ax.set_xlim(self.saved_xlim)
+        self.ax.set_ylim(self.saved_ylim)
+        self.canvas.draw_idle()
+
+    def _is_on_price_axis(self, event) -> bool:
+        """Kiểm tra xem con trỏ chuột có đang nằm trên vùng Thanh Giá (cột số giá bên phải hoặc bên trái) không."""
+        if event.x is None or event.y is None:
+            return False
+        bbox = self.ax.bbox
+        if bbox.width <= 0 or bbox.height <= 0:
+            return False
+        if not (bbox.y0 - 15 <= event.y <= bbox.y1 + 15):
+            return False
+        # Bao phủ toàn bộ cột số giá bên phải (từ mép phải đồ thị ra hết lề phải) và cột số giá bên trái
+        return (event.x >= bbox.x1 - 18) or (event.x <= bbox.x0 + 18)
+
+    def _on_mouse_press(self, event):
+        # Nếu Menu đang mở mà click chuột vào biểu đồ (ngoài vùng Menu) -> Tự động thu Menu vào
+        if self.left_menu_visible and self._drawer_anim_job is None:
+            try:
+                px = self.root.winfo_pointerx()
+                lx = self.left_panel.winfo_rootx()
+                lw = self.left_panel.winfo_width()
+                if px > lx + lw:
+                    self.toggle_left_menu()
+            except Exception:
+                self.toggle_left_menu()
+
+        # Click chuột phải (Button 3) -> Hiển thị menu "Reset biểu đồ" như TradingView
+        if event.button == 3:
+            try:
+                self.chart_context_menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+            finally:
+                self.chart_context_menu.grab_release()
+            return
+
+        if event.dblclick:
+            self.reset_chart_view()
+            return
+
+        if event.button == 1 and event.x is not None and event.y is not None:
+            self._drag_start_px = (event.x, event.y)
+            self._drag_start_xlim = self.ax.get_xlim()
+            self._drag_start_ylim = self.ax.get_ylim()
+            if self._is_on_price_axis(event):
+                self._drag_mode = "Y_SCALE"
+                self.canvas_widget.config(cursor="sb_v_double_arrow")
+            elif event.inaxes == self.ax:
+                self._drag_mode = "PAN"
+                self.canvas_widget.config(cursor="fleur")
+            else:
+                self._drag_start_px = None
+                self._drag_mode = None
+
+    def _on_mouse_release(self, event):
+        self._drag_start_px = None
+        self._drag_mode = None
+        self.canvas_widget.config(cursor="sb_v_double_arrow" if self._is_on_price_axis(event) else "")
+
+    def _on_mouse_motion(self, event):
+        if self._drag_start_px is None:
+            # Đổi biểu tượng con trỏ chuột thành mũi tên 2 đầu dọc (↕) khi rê vào Thanh Giá như TradingView
+            self.canvas_widget.config(cursor="sb_v_double_arrow" if self._is_on_price_axis(event) else "")
+            return
+
+        if event.x is None or event.y is None:
+            return
+
+        dx_px = event.x - self._drag_start_px[0]
+        dy_px = event.y - self._drag_start_px[1]
+
+        bbox = self.ax.bbox
+        if bbox.width <= 0 or bbox.height <= 0:
+            return
+
+        if self._drag_mode == "Y_SCALE":
+            # Kéo chuột lên/xuống trên Thanh Giá để tăng/giảm chiều cao nến (Scale trục Y như TradingView)
+            y0, y1 = self._drag_start_ylim
+            y_center = (y0 + y1) * 0.5
+            y_span = max(y1 - y0, 0.2)
+            # Kéo lên (dy_px > 0) -> Phóng to chiều cao nến (giảm y_span); Kéo xuống (dy_px < 0) -> Thu nhỏ chiều cao nến
+            scale_factor = float(np.clip(1.006 ** (-dy_px), 0.15, 8.0))
+            new_half = (y_span * scale_factor) * 0.5
+            self.saved_xlim = self._drag_start_xlim
+            self.saved_ylim = (y_center - new_half, y_center + new_half)
+            self.user_zoomed = True
+            self.ax.set_ylim(self.saved_ylim)
+            self.canvas.draw_idle()
+        elif self._drag_mode == "PAN":
+            x_span = self._drag_start_xlim[1] - self._drag_start_xlim[0]
+            y_span = self._drag_start_ylim[1] - self._drag_start_ylim[0]
+
+            dx_data = -(dx_px / bbox.width) * x_span
+            dy_data = -(dy_px / bbox.height) * y_span
+
+            self.saved_xlim = (self._drag_start_xlim[0] + dx_data, self._drag_start_xlim[1] + dx_data)
+            self.saved_ylim = (self._drag_start_ylim[0] + dy_data, self._drag_start_ylim[1] + dy_data)
+            self.user_zoomed = True
+
+            self.ax.set_xlim(self.saved_xlim)
+            self.ax.set_ylim(self.saved_ylim)
+            self.canvas.draw_idle()
+
+    def _add_labeled_entry(self, parent, label_text, default_val, show=None):
+        row = tk.Frame(parent, bg=PANEL_BG)
+        row.pack(fill=tk.X, pady=2)
+        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), width=23, anchor="w").pack(side=tk.LEFT)
+        var = tk.StringVar(value=default_val)
+        entry = tk.Entry(row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief=tk.FLAT, font=("Consolas", 8), show=show)
+        entry.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        return var
+
+    def _add_labeled_combo(self, parent, label_text, values, default_val):
+        row = tk.Frame(parent, bg=PANEL_BG)
+        row.pack(fill=tk.X, pady=2)
+        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), width=23, anchor="w").pack(side=tk.LEFT)
+        var = tk.StringVar(value=default_val)
+        cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8))
+        cb.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        return var
+
+    def _style_axes(self):
+        self.ax.set_facecolor("#131822")
+        self.ax.yaxis.set_ticks_position("both")
+        self.ax.tick_params(axis="y", labelright=True, labelleft=True, colors=TEXT_MAIN, labelsize=8)
+        self.ax.tick_params(axis="x", colors=TEXT_MAIN, labelsize=8)
+        for spine in self.ax.spines.values():
+            spine.set_color("#2b3548")
+        self.ax.grid(True, linestyle="--", alpha=0.2, color="#4a5568")
+
+    def log(self, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        line = f"[{ts}] {msg}\n"
+        self.root.after(0, self._append_log, line)
+
+    def _append_log(self, line: str):
+        self.log_text.insert("1.0", line)
+        self.log_text.delete("120.0", tk.END)
+
+    # =========================================================================
+    # LUỒNG REAL-TIME 1 GIÂY: CẬP NHẬT GIÁ, ĐẾM NGƯỢC, QUẢN LÝ LỆNH, CHART LIVE
+    # =========================================================================
+    def _realtime_tick_loop(self):
+        try:
+            if MT5_AVAILABLE and mt5.initialize():
+                symbol = self.symbol_var.get().strip()
+                tf_str = self.tf_var.get().strip()
+                mt5.symbol_select(symbol, True)
+
+                acc = mt5.account_info()
+                tick = mt5.symbol_info_tick(symbol)
+
+                self.heartbeat_toggle = not self.heartbeat_toggle
+                dot = "🟢" if self.heartbeat_toggle else "🔵"
+                now_str = datetime.now().strftime("%H:%M:%S")
+
+                tf_sec_map = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
+                tf_sec = tf_sec_map.get(tf_str, 300)
+
+                if tick is not None:
+                    spread = tick.ask - tick.bid
+                    rem_sec = tf_sec - (int(tick.time) % tf_sec)
+                    mins, secs = divmod(rem_sec, 60)
+                    scan_state = "ĐANG CANH" if self.auto_loop_running else "CHỜ"
+                    self.live_clock_lbl.config(
+                        text=f"{dot} {now_str} | Bid:{tick.bid:.2f} Ask:{tick.ask:.2f} (Spr:{spread:.2f}$) | ⏳Nến {tf_str}: {mins:02d}p:{secs:02d}s [{scan_state}]"
+                    )
+
+                if acc is not None:
+                    algo_str = "Algo:BẬT" if acc.trade_expert else "Algo:TẮT"
+                    self.mt5_status_lbl.config(
+                        text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
+                        fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
+                    )
+
+                pos_count, total_profit = self._update_open_positions_and_manage(symbol)
+                self._check_daily_profit_loss_limits(total_profit, tick)
+                if tick is not None:
+                    self._check_pending_pullback_order(symbol, tick)
+                self._update_left_quick_info(symbol, tf_str, tick, pos_count, total_profit)
+
+                if self.realtime_chart_var.get() and self.heartbeat_toggle and not self.is_analyzing and self._drag_start_px is None:
+                    self._refresh_realtime_chart(symbol, tf_str)
+        except Exception:
+            pass
+        finally:
+            self.root.after(1000, self._realtime_tick_loop)
+
+    def _get_today_deals_stats(self) -> tuple:
+        """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay."""
+        if not MT5_AVAILABLE:
+            return 0.0, 0, None
+        try:
+            now = datetime.now()
+            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            deals = mt5.history_deals_get(start_of_day, now + timedelta(hours=12))
+            if deals is None:
+                return 0.0, 0, None
+            realized = 0.0
+            consec_losses = 0
+            last_loss_deal = None
+            for d in deals:
+                if d.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL) and d.entry in (
+                    mt5.DEAL_ENTRY_OUT,
+                    mt5.DEAL_ENTRY_INOUT,
+                    getattr(mt5, "DEAL_ENTRY_OUT_BY", 3),
+                ):
+                    net_pnl = float(d.profit + d.swap + d.commission + getattr(d, "fee", 0.0))
+                    realized += net_pnl
+                    if net_pnl < -0.05:
+                        consec_losses += 1
+                        last_loss_deal = d
+                    elif net_pnl > 0.05:
+                        consec_losses = 0
+                        last_loss_deal = None
+            return realized, consec_losses, last_loss_deal
+        except Exception:
+            return 0.0, 0, None
+
+    def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None):
+        """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp. Nếu = 0 thì tắt."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        realized_pnl, consec_losses, last_loss_deal = self._get_today_deals_stats()
+        total_daily_pnl = realized_pnl + floating_profit
+        self.cached_daily_pnl = total_daily_pnl
+        self.consec_loss_count = consec_losses
+
+        try:
+            daily_tp = max(float(self.daily_tp_usd_var.get()), 0.0)
+        except ValueError:
+            daily_tp = 0.0
+        try:
+            daily_sl = max(abs(float(self.daily_sl_usd_var.get())), 0.0)
+        except ValueError:
+            daily_sl = 0.0
+        try:
+            max_consec_loss = max(int(float(self.max_consec_loss_var.get())), 0)
+        except ValueError:
+            max_consec_loss = 0
+        try:
+            cooldown_mins = max(float(self.cooldown_mins_var.get()), 0.0)
+        except ValueError:
+            cooldown_mins = 0.0
+
+        # 1. Xử lý Tạm ngừng sau chuỗi lệnh thua liên tiếp (= 0 là tắt)
+        if max_consec_loss == 0 or cooldown_mins == 0.0:
+            if self.cooldown_until is not None:
+                self.cooldown_until = None
+                self.log("🔓 Đã tắt bộ đếm tạm ngừng sau chuỗi thua (do thông số cài = 0).")
+        else:
+            if self.cooldown_until is not None and datetime.now() >= self.cooldown_until:
+                self.cooldown_until = None
+                self.log("▶️ Đã hết thời gian tạm ngừng sau chuỗi lệnh thua! Bot tiếp tục canh lệnh.")
+
+            if consec_losses >= max_consec_loss and last_loss_deal is not None:
+                if self.last_cooldown_deal_ticket != last_loss_deal.ticket:
+                    server_now = int(tick.time) if tick is not None else int(last_loss_deal.time)
+                    elapsed_sec = max(0, server_now - int(last_loss_deal.time))
+                    total_cd_sec = cooldown_mins * 60.0
+                    self.last_cooldown_deal_ticket = last_loss_deal.ticket
+                    if elapsed_sec < total_cd_sec:
+                        rem_sec = total_cd_sec - elapsed_sec
+                        self.cooldown_until = datetime.now() + timedelta(seconds=rem_sec)
+                        self.pending_pullback_order = None
+                        self.log(
+                            f"⏸️ [Tạm Ngừng Chuỗi Thua] Đã thua liên tiếp {consec_losses} lệnh (>= {max_consec_loss} lệnh) -> "
+                            f"Tạm ngừng vào lệnh {cooldown_mins:.0f} phút (đến {self.cooldown_until.strftime('%H:%M:%S')})!"
+                        )
+
+        # 2. Sang ngày mới -> Tự động mở khóa giao dịch
+        if self.daily_limit_locked_date is not None and self.daily_limit_locked_date != today_str:
+            self.daily_limit_locked_date = None
+            self.daily_limit_reason = ""
+            self.log("🌅 Đã sang ngày giao dịch mới! Mở khóa bộ giới hạn Lãi/Lỗ ngày.")
+
+        # Nếu người dùng chỉnh về 0 (chạy tẹt ga) hoặc nâng hạn mức cao hơn hiện tại -> Mở khóa ngay
+        if self.daily_limit_locked_date == today_str:
+            tp_still_hit = (daily_tp > 0.0 and total_daily_pnl >= daily_tp)
+            sl_still_hit = (daily_sl > 0.0 and total_daily_pnl <= -daily_sl)
+            if not tp_still_hit and not sl_still_hit:
+                self.daily_limit_locked_date = None
+                self.daily_limit_reason = ""
+                self.log("🔓 Đã mở khóa giao dịch trong ngày (theo thông số Lãi/Lỗ ngày mới cài đặt).")
+
+        # Kiểm tra chạm mức Chốt lời ngày (nếu > 0)
+        if daily_tp > 0.0 and total_daily_pnl >= daily_tp and self.daily_limit_locked_date != today_str:
+            self.daily_limit_locked_date = today_str
+            self.daily_limit_reason = f"Đạt Lãi ngày ({total_daily_pnl:+.2f}$ >= +{daily_tp:.1f}$)"
+            self.pending_pullback_order = None
+            positions = mt5.positions_get()
+            if positions:
+                for pos in positions:
+                    self._close_single_pos(pos)
+            self.log(f"🏆 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã chốt toàn bộ lệnh & DỪNG GIAO DỊCH hết hôm nay!")
+
+        # Kiểm tra chạm mức Cắt lỗ ngày (nếu > 0)
+        elif daily_sl > 0.0 and total_daily_pnl <= -daily_sl and self.daily_limit_locked_date != today_str:
+            self.daily_limit_locked_date = today_str
+            self.daily_limit_reason = f"Chạm Cắt lỗ ngày ({total_daily_pnl:+.2f}$ <= -{daily_sl:.1f}$)"
+            self.pending_pullback_order = None
+            positions = mt5.positions_get()
+            if positions:
+                for pos in positions:
+                    self._close_single_pos(pos)
+            self.log(f"🛑 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã đóng toàn bộ lệnh & DỪNG GIAO DỊCH hết hôm nay!")
+
+    def _is_daily_limit_locked(self) -> bool:
+        return self.daily_limit_locked_date == datetime.now().strftime("%Y-%m-%d")
+
+    def _is_cooldown_active(self) -> bool:
+        return self.cooldown_until is not None and datetime.now() < self.cooldown_until
+
+    def _get_cooldown_remaining_str(self) -> str:
+        if not self._is_cooldown_active():
+            return ""
+        rem = max(0, int((self.cooldown_until - datetime.now()).total_seconds()))
+        m, s = divmod(rem, 60)
+        return f"⏸️ Tạm nghỉ sau {self.consec_loss_count} lệnh thua ({m:02d}p:{s:02d}s)"
+
+    def _check_pending_pullback_order(self, symbol: str, tick):
+        """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa (1 giá = 10 pip) thì khớp lệnh ngay khi đạt."""
+        if self.pending_pullback_order is None:
+            return
+        if self._is_daily_limit_locked() or self._is_cooldown_active():
+            self.pending_pullback_order = None
+            return
+
+        p = self.pending_pullback_order
+        if p.get("symbol") != symbol:
+            return
+
+        try:
+            max_sl_price = max(float(self.max_sl_price_var.get()), 0.0)
+            max_spread = float(self.max_spread_var.get())
+            lot = float(self.lot_var.get())
+            max_pos = int(self.max_pos_var.get())
+            rr = max(float(self.rr_var.get()), 0.0)
+        except ValueError:
+            max_sl_price, max_spread, lot, max_pos, rr = 5.0, 0.35, 0.01, 2, 1.5
+
+        action = p["action"]
+        sl_price = float(p["sl_price"])
+        cur_price = tick.ask if action == "BUY" else tick.bid
+        spread_usd = tick.ask - tick.bid
+
+        # Khoảng cách từ giá hiện tại đến SL của AI (+ đệm an toàn), đơn vị: Giá vàng (1 giá = 10 pip)
+        cur_sl_dist = (cur_price - sl_price) if action == "BUY" else (sl_price - cur_price)
+
+        # 1. Nếu giá chạy ngược xuyên qua luôn mức SL của AI -> Hủy lệnh chờ hồi vì kịch bản đã gãy
+        if cur_sl_dist <= 0.25:
+            self.log(f"❌ [Hủy Lệnh Chờ Hồi {action}] Giá ({cur_price:.2f}) đã chạm/phá qua mức SL AI ({sl_price:.2f}).")
+            self.pending_pullback_order = None
+            return
+
+        # 2. Nếu giá đã hồi về vùng cho phép: Khoảng cách SL hiện tại <= SL tối đa (hoặc max_sl_price == 0 là theo AI)
+        if max_sl_price <= 0.0 or cur_sl_dist <= max_sl_price:
+            should_execute = self.auto_trade_var.get() or p.get("manual_queued", False)
+            if not should_execute:
+                return
+
+            # Kiểm tra xem có lệnh ngược chiều đang âm chờ thoát hòa vốn không
+            open_positions = mt5.positions_get(symbol=symbol)
+            if open_positions:
+                for pos in open_positions:
+                    is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
+                    if ((action == "BUY" and not is_buy_pos) or (action == "SELL" and is_buy_pos)) and pos.profit <= 0:
+                        return
+
+            if spread_usd > max_spread:
+                return
+
+            if rr > 0.0:
+                tp_dist = cur_sl_dist * rr
+                tp_price = round(cur_price + tp_dist, 2) if action == "BUY" else round(cur_price - tp_dist, 2)
+            elif self.cached_tp is not None:
+                tp_price = float(self.cached_tp)
+            else:
+                tp_price = round(cur_price + cur_sl_dist * 1.5, 2) if action == "BUY" else round(cur_price - cur_sl_dist * 1.5, 2)
+            self.cached_tp = tp_price
+
+            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos)
+            self.pending_pullback_order = None
+            self.log(f"🎯 [Khớp Lệnh Chờ Hồi SL <= {max_sl_price:.1f} giá] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f} giá) -> {ord_msg}")
+
+    def _update_left_quick_info(self, symbol, tf_str, tick, pos_count, total_profit):
+        bid_str = f"{tick.bid:.2f}" if tick else "---"
+        ask_str = f"{tick.ask:.2f}" if tick else "---"
+        spr_str = f"{(tick.ask - tick.bid):.2f}$" if tick else "---"
+
+        if self.cached_mean_df is not None:
+            end_pred = float(self.cached_mean_df["close"].iloc[-1])
+            hi_pred = float(self.cached_mean_df["high"].max())
+            lo_pred = float(self.cached_mean_df["low"].min())
+            if self.pending_pullback_order is not None:
+                p = self.pending_pullback_order
+                try:
+                    max_sl_p = max(float(self.max_sl_price_var.get()), 0.5)
+                except ValueError:
+                    max_sl_p = 5.0
+                lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+                ai_state = f"⏳ Chờ hồi {p['action']} @ {lim_entry:.2f}"
+            else:
+                ai_state = "Đã có dự báo AI"
+            trend_str = self.cached_action if self.cached_action else "ĐỨNG NGOÀI (WAIT)"
+            target_str = f"{end_pred:.2f} (Đỉnh:{hi_pred:.2f} / Đáy:{lo_pred:.2f})"
+            sltp_str = f"SL: {self.cached_sl:.2f} | TP: {self.cached_tp:.2f}" if self.cached_sl else "---"
+        else:
+            ai_state = "Đang phân tích AI..." if self.is_analyzing else "Chưa quét"
+            trend_str = "---"
+            target_str = "---"
+            sltp_str = "---"
+
+        ana_tf = self.analysis_tf_var.get().strip() or tf_str
+        tf_display = f"{tf_str}" if ana_tf == tf_str else f"AI:{ana_tf} -> Scalp:{tf_str}"
+        if self._is_daily_limit_locked():
+            cap_state = f"🔒 {self.daily_limit_reason}"
+        elif self._is_cooldown_active():
+            cap_state = self._get_cooldown_remaining_str()
+        else:
+            cap_state = f"🟢 Đang chạy (Thua liên tiếp: {self.consec_loss_count})"
+
+        ana_tf = self.analysis_tf_var.get().strip() or tf_str
+        tf_display = f"{tf_str}" if ana_tf == tf_str else f"AI:{ana_tf} -> Scalp:{tf_str}"
+        if self._is_daily_limit_locked():
+            cap_state = f"🔒 {self.daily_limit_reason}"
+        elif self._is_cooldown_active():
+            cap_state = self._get_cooldown_remaining_str()
+        else:
+            cap_state = f"🟢 Đang chạy (Thua liên tiếp: {self.consec_loss_count})"
+
+        info_txt = (
+            f"• Mã & Khung   : {symbol} ({tf_display})\n"
+            f"• Bid / Ask    : {bid_str} / {ask_str} ({spr_str})\n"
+            f"• Lệnh đang mở : {pos_count} lệnh ({total_profit:+.2f}$)\n"
+            f"• Lãi/Lỗ Ngày  : {self.cached_daily_pnl:+.2f} USD\n"
+            f"• Trạng thái Vốn: {cap_state}\n"
+            f"────────────────────────────\n"
+            f"• Trạng thái AI: {ai_state}\n"
+            f"• Tín hiệu AI  : {trend_str}\n"
+            f"• Dự báo 6 nến : {target_str}\n"
+            f"• Gợi ý AI     : {sltp_str}"
+        )
+        self.quick_info_lbl.config(text=info_txt)
+
+    def _calc_target_pnl(self, pos, target_price: float) -> float:
+        """Tính số tiền Lãi/Lỗ (USD) khi giá chạm SL hoặc TP."""
+        if target_price <= 0:
+            return 0.0
+        try:
+            pnl = mt5.order_calc_profit(pos.type, pos.symbol, pos.volume, pos.price_open, target_price)
+            if pnl is not None:
+                return float(pnl)
+        except Exception:
+            pass
+        # Dự phòng tính theo chuẩn XAUUSD (1 lot = 100 oz)
+        diff = (target_price - pos.price_open) if pos.type == mt5.POSITION_TYPE_BUY else (pos.price_open - target_price)
+        return float(diff * pos.volume * 100.0)
+
+    def _get_pos_one_r_dist(self, pos) -> float:
+        """Tính khoảng cách 1R (|Entry - SL ban đầu|) của lệnh."""
+        is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
+        # Nếu SL đang nằm ở vùng cắt lỗ ban đầu thì ghi nhận chính xác 1R = |Entry - SL|
+        if is_buy and 0 < pos.sl < pos.price_open - 0.1:
+            self.initial_r_cache[pos.ticket] = abs(pos.price_open - pos.sl)
+        elif (not is_buy) and pos.sl > pos.price_open + 0.1:
+            self.initial_r_cache[pos.ticket] = abs(pos.sl - pos.price_open)
+
+        if pos.ticket in self.initial_r_cache:
+            return self.initial_r_cache[pos.ticket]
+
+        # Nếu lệnh đã dời SL về Entry trước khi mở App, suy ra 1R từ khoảng cách TP / RR
+        if pos.tp > 0:
+            try:
+                rr_val = max(float(self.rr_var.get()), 0.5)
+            except ValueError:
+                rr_val = 1.5
+            one_r = abs(pos.tp - pos.price_open) / rr_val
+            if one_r > 0.2:
+                self.initial_r_cache[pos.ticket] = one_r
+                return one_r
+        return 5.0
+
+    def _update_open_positions_and_manage(self, symbol: str):
+        positions = mt5.positions_get()
+        if positions is None:
+            positions = []
+
+        selected_tickets = [self.pos_tree.item(item, "values")[0] for item in self.pos_tree.selection()]
+        for row in self.pos_tree.get_children():
+            self.pos_tree.delete(row)
+
+        total_profit = 0.0
+        auto_be = self.auto_be_var.get()
+        auto_trail = self.auto_trail_var.get()
+        try:
+            be_trigger_r = float(self.be_trigger_r_var.get())
+            trail_dist_r = float(self.trail_dist_r_var.get())
+        except ValueError:
+            be_trigger_r, trail_dist_r = 1.0, 0.8
+
+        for pos in positions:
+            total_profit += pos.profit
+            is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
+            type_str = "BUY" if is_buy else "SELL"
+            open_time = datetime.fromtimestamp(pos.time).strftime("%H:%M:%S")
+            price_move = (pos.price_current - pos.price_open) if is_buy else (pos.price_open - pos.price_current)
+
+            one_r = self._get_pos_one_r_dist(pos)
+            current_r = price_move / max(one_r, 0.1)
+            trail_dist_price = one_r * trail_dist_r
+
+            status_str = f"Đang chạy ({current_r:+.2f}R)"
+            sym_info = mt5.symbol_info(pos.symbol)
+            digits = sym_info.digits if sym_info else 2
+            entry_exact = round(pos.price_open, digits)
+
+            # Kiểm tra nếu lệnh đang ở chế độ "Quy tắc 3: Chờ giá hồi về Entry (Hòa vốn) để thoát"
+            is_waiting_be_exit = (
+                pos.ticket in self.pending_be_exit_tickets
+                or (pos.tp > 0 and abs(pos.tp - entry_exact) < 0.05)
+            )
+            if is_waiting_be_exit:
+                status_str = f"⏳ Chờ về Entry thoát ({current_r:+.2f}R)"
+                # Nếu giá đã hồi về Hòa vốn (profit >= 0 hoặc chạm Entry) mà sàn chưa khớp TP -> Đóng ngay lập tức
+                if pos.profit >= 0.0 or price_move >= 0.0:
+                    ok_be, msg_be = self._close_single_pos(pos)
+                    if ok_be:
+                        self.pending_be_exit_tickets.discard(pos.ticket)
+                        self.log(f"🛡️ [Quy tắc 3 - Thoát Hòa Vốn] Giá đã hồi về Entry ({entry_exact:.2f}) -> {msg_be}")
+                        continue
+                # Nếu TP chưa được đặt về Entry (do lúc trước giá quá sát Entry), tự động đặt TP = Entry khi đủ khoảng cách
+                elif abs(pos.tp - entry_exact) >= 0.05 and abs(pos.price_current - entry_exact) > 0.40:
+                    if self._modify_position_sltp(pos, pos.sl, entry_exact):
+                        self.log(f"🎯 [Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về đúng Entry ({entry_exact:.2f}) để tự thoát hòa vốn")
+
+            if is_buy:
+                if abs(pos.sl - entry_exact) < 0.05:
+                    status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
+                elif pos.sl > entry_exact:
+                    status_str = f"📈 Trailing ({current_r:+.2f}R)"
+
+                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < entry_exact - 0.02):
+                    if entry_exact < pos.price_current - 0.50:
+                        if self._modify_position_sltp(pos, entry_exact, pos.tp):
+                            self.log(f"🛡️ [Auto-Hòa Vốn {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} về Entry ({entry_exact:.2f})")
+                            status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
+
+                if auto_trail and current_r >= (be_trigger_r + 0.3):
+                    desired_sl = round(pos.price_current - trail_dist_price, digits)
+                    if desired_sl > entry_exact and desired_sl > pos.sl + 0.40:
+                        if self._modify_position_sltp(pos, desired_sl, pos.tp):
+                            self.log(f"📈 [Trailing {current_r:.2f}R] Đã nâng SL lệnh BUY #{pos.ticket} lên {desired_sl:.2f}")
+                            status_str = f"📈 Trailing ({current_r:+.2f}R)"
+            else:
+                if pos.sl > 0 and abs(pos.sl - entry_exact) < 0.05:
+                    status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
+                elif 0 < pos.sl < entry_exact:
+                    status_str = f"📉 Trailing ({current_r:+.2f}R)"
+
+                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > entry_exact + 0.02):
+                    if entry_exact > pos.price_current + 0.50:
+                        if self._modify_position_sltp(pos, entry_exact, pos.tp):
+                            self.log(f"🛡️ [Auto-Hòa Vốn {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} về Entry ({entry_exact:.2f})")
+                            status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
+
+                if auto_trail and current_r >= (be_trigger_r + 0.3):
+                    desired_sl = round(pos.price_current + trail_dist_price, digits)
+                    if desired_sl < entry_exact and (pos.sl == 0 or desired_sl < pos.sl - 0.40):
+                        if self._modify_position_sltp(pos, desired_sl, pos.tp):
+                            self.log(f"📉 [Trailing {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {desired_sl:.2f}")
+                            status_str = f"📉 Trailing ({current_r:+.2f}R)"
+
+            tag = "profit_pos" if pos.profit >= 0 else "profit_neg"
+            item_id = self.pos_tree.insert(
+                "", tk.END,
+                values=(
+                    str(pos.ticket), open_time, pos.symbol, type_str, f"{pos.volume:.2f}",
+                    f"{pos.price_open:.2f}", f"{pos.price_current:.2f}",
+                    f"{pos.sl:.2f}" if pos.sl > 0 else "---",
+                    f"{pos.tp:.2f}" if pos.tp > 0 else "---",
+                    f"{pos.profit:+.2f} $", status_str
+                ),
+                tags=(tag,)
+            )
+            if str(pos.ticket) in selected_tickets:
+                self.pos_tree.selection_add(item_id)
+
+        pnl_color = GREEN_UP if total_profit >= 0 else RED_DOWN
+        daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({self.daily_limit_reason})" if self._is_daily_limit_locked() else ""
+        self.pos_summary_lbl.config(
+            text=f"Đang mở: {len(positions)} lệnh  |  PnL nổi: {total_profit:+.2f}$  |  Lãi/Lỗ Hôm Nay: {self.cached_daily_pnl:+.2f}${daily_lock_tag}",
+            fg=GOLD_ACCENT if self._is_daily_limit_locked() else (pnl_color if len(positions) > 0 else CYAN_LIVE)
+        )
+        return len(positions), total_profit
+
+    def _modify_position_sltp(self, pos, new_sl: float, new_tp: float) -> bool:
+        sym_info = mt5.symbol_info(pos.symbol)
+        digits = sym_info.digits if sym_info else 2
+        req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "position": pos.ticket,
+            "symbol": pos.symbol,
+            "sl": round(new_sl, digits),
+            "tp": round(new_tp, digits) if new_tp > 0 else 0.0
+        }
+        res = mt5.order_send(req)
+        return res is not None and res.retcode == mt5.TRADE_RETCODE_DONE
+
+    def _close_single_pos(self, pos) -> tuple:
+        tick = mt5.symbol_info_tick(pos.symbol)
+        sym_info = mt5.symbol_info(pos.symbol)
+        if tick is None or sym_info is None:
+            return False, f"Không lấy được giá đóng cho #{pos.ticket}"
+        digits = sym_info.digits
+        is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
+        close_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+        price = tick.bid if is_buy else tick.ask
+
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": pos.ticket,
+            "symbol": pos.symbol,
+            "volume": pos.volume,
+            "type": close_type,
+            "price": round(price, digits),
+            "deviation": 20,
+            "magic": pos.magic,
+            "comment": "AI_Close",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        res = mt5.order_send(req)
+        if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
+            req["type_filling"] = mt5.ORDER_FILLING_FOK
+            res = mt5.order_send(req)
+            if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
+                return False, f"Không đóng được #{pos.ticket} ({getattr(res, 'comment', '')})"
+        return True, f"✅ Đã đóng lệnh #{pos.ticket} ({pos.symbol}) | Lãi/Lỗ: {pos.profit:+.2f}$"
+
+    def breakeven_all_positions(self):
+        """Dời SL về đúng giá Entry (pos.price_open) cho các lệnh đang có lãi."""
+        positions = mt5.positions_get()
+        if not positions:
+            messagebox.showinfo("Thông báo", "Hiện không có lệnh nào đang mở trên MT5.")
+            return
+        count = 0
+        for pos in positions:
+            is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
+            if is_buy and pos.price_current > pos.price_open + 0.30:
+                if self._modify_position_sltp(pos, pos.price_open, pos.tp):
+                    count += 1
+            elif (not is_buy) and pos.price_current < pos.price_open - 0.30:
+                if self._modify_position_sltp(pos, pos.price_open, pos.tp):
+                    count += 1
+        self.log(f"🛡️ Đã dời SL về đúng giá Entry cho {count} lệnh đang có lãi.")
+
+    def close_selected_position(self):
+        sel = self.pos_tree.selection()
+        if not sel:
+            messagebox.showwarning("Chưa chọn lệnh", "Hãy bấm chọn 1 dòng lệnh trong bảng bên dưới trước khi bấm Đóng!")
+            return
+        ticket_str = self.pos_tree.item(sel[0], "values")[0]
+        positions = mt5.positions_get(ticket=int(ticket_str))
+        if positions:
+            ok, msg = self._close_single_pos(positions[0])
+            self.log(msg)
+
+    def close_all_positions(self):
+        positions = mt5.positions_get()
+        if not positions:
+            messagebox.showinfo("Thông báo", "Hiện không có lệnh nào đang mở.")
+            return
+        closed = 0
+        for pos in positions:
+            ok, msg = self._close_single_pos(pos)
+            self.log(msg)
+            if ok:
+                closed += 1
+        self.log(f"🔥 Đã đóng toàn bộ {closed}/{len(positions)} lệnh trên MT5.")
+
+    def check_mt5_connection(self):
+        if not MT5_AVAILABLE:
+            self.mt5_status_lbl.config(text="Chưa cài MetaTrader5", fg=RED_DOWN)
+            return False
+        if not mt5.initialize():
+            self.mt5_status_lbl.config(text=f"Chưa mở MT5 Exness ({mt5.last_error()})", fg=RED_DOWN)
+            return False
+        acc = mt5.account_info()
+        if acc is None:
+            self.mt5_status_lbl.config(text="Chưa đăng nhập TK Exness", fg=RED_DOWN)
+            return False
+        algo_str = "Algo:BẬT" if acc.trade_expert else "Algo:TẮT"
+        self.mt5_status_lbl.config(
+            text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
+            fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
+        )
+        self.log(f"Kết nối MT5 thành công: TK {acc.login} ({acc.server}) | Số dư {acc.balance:.2f} {acc.currency}")
+        return True
+
+    def get_local_predictor(self, model_choice: str):
+        norm_choice = model_choice.replace("Kronos-", "AI-", 1) if model_choice.startswith("Kronos-") else model_choice
+        cfg = MODEL_CONFIGS.get(norm_choice, list(MODEL_CONFIGS.values())[0])
+        key = cfg["model"]
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        if key not in self.local_cache:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            weights_root = os.path.join(base_dir, "model", "weights")
+            os.makedirs(weights_root, exist_ok=True)
+
+            tok_name = cfg["tokenizer"].split("/")[-1]
+            mod_name = cfg["model"].split("/")[-1]
+            local_tok_dir = os.path.join(weights_root, tok_name)
+            local_mod_dir = os.path.join(weights_root, mod_name)
+
+            self.log(f"Đang nạp mô hình {norm_choice} vào {device.upper()}...")
+            if os.path.exists(os.path.join(local_tok_dir, "model.safetensors")):
+                tokenizer = KronosTokenizer.from_pretrained(local_tok_dir)
+            else:
+                tokenizer = KronosTokenizer.from_pretrained(cfg["tokenizer"])
+                try:
+                    tokenizer.save_pretrained(local_tok_dir)
+                except Exception:
+                    pass
+
+            if os.path.exists(os.path.join(local_mod_dir, "model.safetensors")):
+                model = Kronos.from_pretrained(local_mod_dir)
+            else:
+                model = Kronos.from_pretrained(cfg["model"])
+                try:
+                    model.save_pretrained(local_mod_dir)
+                except Exception:
+                    pass
+
+            tokenizer.eval()
+            model.eval()
+            self.local_cache[key] = KronosPredictor(model, tokenizer, device=device, max_context=cfg["max_context"])
+            self.log(f"Đã nạp xong mô hình AI trực tiếp từ thư mục máy ({device.upper()}).")
+        return self.local_cache[key]
+
+    def fetch_mt5_candles(self, symbol: str, timeframe_str: str, count: int, include_forming: bool = False):
+        if not mt5.initialize():
+            raise RuntimeError("Không kết nối được phần mềm MT5 Exness.")
+        tf_map = {
+            "M1": mt5.TIMEFRAME_M1,
+            "M5": mt5.TIMEFRAME_M5,
+            "M15": mt5.TIMEFRAME_M15,
+            "H1": mt5.TIMEFRAME_H1
+        }
+        tf = tf_map.get(timeframe_str, mt5.TIMEFRAME_M5)
+        if not mt5.symbol_select(symbol, True):
+            raise RuntimeError(f"Không tìm thấy mã '{symbol}' trên MT5.")
+
+        start_pos = 0 if include_forming else 1
+        rates = mt5.copy_rates_from_pos(symbol, tf, start_pos, count)
+        if rates is None or len(rates) == 0:
+            raise RuntimeError(f"Không lấy được nến {symbol} ({timeframe_str}) từ MT5.")
+
+        df = pd.DataFrame(rates)
+        df["timestamps"] = pd.to_datetime(df["time"], unit="s")
+        df["volume"] = df["tick_volume"].astype(float)
+        return df[["timestamps", "open", "high", "low", "close", "volume"]].dropna().reset_index(drop=True)
+
+    def _refresh_realtime_chart(self, symbol: str, tf_str: str):
+        ana_tf = self.analysis_tf_var.get().strip() or tf_str
+        active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else tf_str
+        df_live = self.fetch_mt5_candles(symbol, active_tf, 85, include_forming=True)
+        if self.chart_mode == "AI_FORECAST":
+            self.cached_df_analysis = df_live
+        else:
+            self.cached_df_hist = df_live
+        self._draw_candlestick_chart(
+            df_hist=df_live,
+            scenarios=self.cached_scenarios,
+            mean_df=self.cached_mean_df,
+            action=self.cached_action,
+            sl_price=self.cached_sl,
+            tp_price=self.cached_tp,
+            symbol=symbol,
+            tf=active_tf,
+            has_forming_candle=True
+        )
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        high = df["high"]
+        low = df["low"]
+        close = df["close"].shift(1)
+        tr = pd.concat([high - low, (high - close).abs(), (low - close).abs()], axis=1).max(axis=1)
+        return float(tr.iloc[-period:].mean())
+
+    def execute_mt5_order(self, symbol: str, action: str, lot: float, sl_price: float, tp_price: float, max_positions: int):
+        if not mt5.initialize():
+            return False, "Chưa kết nối MT5."
+        if self._is_daily_limit_locked():
+            return False, f"🔒 Đã tự động dừng giao dịch hết hôm nay ({self.daily_limit_reason})."
+        if self._is_cooldown_active():
+            return False, f"{self._get_cooldown_remaining_str()} — Chưa được phép vào lệnh mới."
+        positions = mt5.positions_get(symbol=symbol)
+        if positions is not None and len(positions) >= max_positions:
+            return False, f"Đã có {len(positions)}/{max_positions} lệnh đang mở. Bỏ qua lệnh mới."
+
+        tick = mt5.symbol_info_tick(symbol)
+        sym_info = mt5.symbol_info(symbol)
+        if tick is None or sym_info is None:
+            return False, f"Không đọc được giá Bid/Ask của {symbol}."
+
+        digits = sym_info.digits
+        order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+        price = tick.ask if action == "BUY" else tick.bid
+
+        # Kiểm tra cứng điều kiện khoảng cách SL tối đa (1 giá = 10 pip):
+        # Nếu cài > 0 thì không cho phép vào lệnh khi khoảng cách SL vượt quá SL tối đa; nếu = 0 là lấy 100% theo SL AI!
+        try:
+            max_sl_price = max(float(self.max_sl_price_var.get()), 0.0)
+        except ValueError:
+            max_sl_price = 5.0
+
+        actual_sl_dist = (price - sl_price) if action == "BUY" else (sl_price - price)
+        if max_sl_price > 0.0 and actual_sl_dist > max_sl_price + 0.05:
+            limit_entry = (sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price)
+            return (
+                False,
+                f"⏳ SL hiện tại cách {actual_sl_dist:.2f} giá > SL tối đa ({max_sl_price:.2f} giá). "
+                f"Phải chờ giá hồi về {'<=' if action == 'BUY' else '>='} {limit_entry:.2f} mới vào lệnh!"
+            )
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(lot),
+            "type": order_type,
+            "price": round(price, digits),
+            "sl": round(sl_price, digits),
+            "tp": round(tp_price, digits),
+            "deviation": 20,
+            "magic": 202605,
+            "comment": "AI_Scalping_M5",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        result = mt5.order_send(request)
+        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+            request["type_filling"] = mt5.ORDER_FILLING_FOK
+            result = mt5.order_send(request)
+            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                code = result.retcode if result else "None"
+                return False, f"MT5 từ chối lệnh (Mã lỗi: {code} - {getattr(result, 'comment', '')})"
+
+        return True, f"✅ ĐÃ KHỚP LỆNH {action} {lot} lot {symbol} @ {price:.2f} | SL: {sl_price:.2f} (-{actual_sl_dist:.2f} giá) | TP: {tp_price:.2f}"
+
+    def manual_order(self, action: str):
+        if self.last_recommendation is None:
+            messagebox.showwarning("Chưa có thông số AI", "Hãy bấm 'QUÉT & PHÂN TÍCH AI NGAY' trước để AI tính mức SL/TP hợp lý!")
+            return
+        symbol = self.symbol_var.get().strip()
+        lot = float(self.lot_var.get())
+        max_pos = int(self.max_pos_var.get())
+        try:
+            sl_buffer = max(float(self.sl_buffer_var.get()), 0.0)
+            max_sl_price = max(float(self.max_sl_price_var.get()), 0.5)
+            rr = float(self.rr_var.get())
+        except ValueError:
+            sl_buffer, max_sl_price, rr = 0.5, 5.0, 1.5
+
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            messagebox.showerror("Lỗi MT5", f"Không lấy được giá của {symbol} trên MT5.")
+            return
+
+        # Nếu đang có đúng mức SL của AI cùng chiều thì ưu tiên lấy SL của AI (+ đệm an toàn)
+        if self.cached_action == action and self.cached_sl is not None:
+            sl = float(self.cached_sl)
+        else:
+            sl_ai_dist = self.last_recommendation["sl_dist"] + sl_buffer
+            sl = round((tick.ask - sl_ai_dist) if action == "BUY" else (tick.bid + sl_ai_dist), 2)
+
+        cur_price = tick.ask if action == "BUY" else tick.bid
+        cur_sl_dist = (cur_price - sl) if action == "BUY" else (sl - cur_price)
+
+        # Nếu khoảng cách SL vượt quá SL tối đa người dùng cài -> Chuyển sang chế độ Chờ giá hồi về <= SL tối đa
+        if cur_sl_dist > max_sl_price + 0.05:
+            limit_entry = round((sl + max_sl_price) if action == "BUY" else (sl - max_sl_price), 2)
+            self.pending_pullback_order = {
+                "symbol": symbol,
+                "action": action,
+                "sl_price": sl,
+                "manual_queued": True,
+            }
+            wait_msg = (
+                f"⏳ Khoảng cách từ giá hiện tại ({cur_price:.2f}) đến SL ({sl:.2f}) là {cur_sl_dist:.2f} giá, "
+                f"vượt quá SL tối đa cho phép ({max_sl_price:.2f} giá).\n\n"
+                f"Hệ thống đã kích hoạt CHỜ GIÁ HỒI về {'<=' if action == 'BUY' else '>='} {limit_entry:.2f} "
+                f"(cách SL <= {max_sl_price:.2f} giá) sẽ tự động vào lệnh {action}!"
+            )
+            self.log(f"⏳ [Đăng ký Chờ Hồi {action}] Chờ giá về {'<=' if action == 'BUY' else '>='} {limit_entry:.2f} (SL: {sl:.2f}, SL Max: {max_sl_price:.2f} giá)")
+            messagebox.showinfo("Đã bật Chờ Giá Hồi (Bảo vệ SL Max)", wait_msg)
+            return
+
+        tp = round((cur_price + cur_sl_dist * rr) if action == "BUY" else (cur_price - cur_sl_dist * rr), 2)
+        ok, msg = self.execute_mt5_order(symbol, action, lot, sl, tp, max_pos)
+        self.log(msg)
+        if ok:
+            messagebox.showinfo("Đặt lệnh thành công", msg)
+        else:
+            messagebox.showerror("Không thể đặt lệnh", msg)
+
+    def trigger_single_scan(self):
+        if self.is_analyzing:
+            return
+        threading.Thread(target=self._run_analysis_worker, daemon=True).start()
+
+    def toggle_bot_start_stop(self):
+        """Gộp chung START và STOP trên 1 nút nhấn thay đổi trạng thái (Bật/Tắt canh nến + Auto-Trade)."""
+        if self.auto_loop_running:
+            self.stop_auto_scan()
+        else:
+            self.start_auto_scan()
+
+    def start_auto_scan(self):
+        if self.auto_loop_running:
+            return
+        self.auto_loop_running = True
+        self.auto_trade_var.set(True)
+        self.last_candle_time = None
+        self.start_stop_btn.config(
+            text="⏹️ STOP", bg=RED_DOWN, fg="#ffffff",
+            activebackground="#d32f2f", activeforeground="#ffffff"
+        )
+        tf_val = self.tf_var.get().strip()
+        self.log(f"▶️ Đã BẬT Bot (Tự động canh nến {tf_val} & tự động vào lệnh)...")
+        threading.Thread(target=self._auto_loop_worker, daemon=True).start()
+
+    def stop_auto_scan(self):
+        self.auto_loop_running = False
+        self.auto_trade_var.set(False)
+        self.pending_pullback_order = None
+        self.start_stop_btn.config(
+            text="▶️ START", bg=GREEN_UP, fg="#000000",
+            activebackground="#0bb572", activeforeground="#000000"
+        )
+        self.log("⏹️ Đã DỪNG Bot (Ngừng canh nến & tắt tự động vào lệnh).")
+
+    def _auto_loop_worker(self):
+        while self.auto_loop_running:
+            try:
+                symbol = self.symbol_var.get().strip()
+                tf = self.tf_var.get().strip()
+                df_check = self.fetch_mt5_candles(symbol, tf, 3, include_forming=False)
+                latest_time = df_check["timestamps"].iloc[-1]
+                if self.last_candle_time != latest_time and not self.is_analyzing:
+                    self.log(f"🔔 Nến {tf} mới vừa đóng ({latest_time}). Đang chạy phân tích AI...")
+                    self._run_analysis_worker()
+            except Exception as e:
+                self.log(f"⚠️ Lỗi canh nến: {e}")
+            time.sleep(2)
+
+    def _run_analysis_worker(self):
+        self.is_analyzing = True
+        self.root.after(0, lambda: self.scan_btn.config(state=tk.DISABLED, text="⏳"))
+        try:
+            symbol = self.symbol_var.get().strip()
+            scalp_tf = self.tf_var.get().strip()
+            analysis_tf = self.analysis_tf_var.get().strip() or scalp_tf
+            tf = scalp_tf
+            tf_label = scalp_tf if analysis_tf == scalp_tf else f"AI:{analysis_tf} -> Scalp:{scalp_tf}"
+            lookback = int(self.lookback_var.get())
+            pred_len = int(self.pred_len_var.get())
+            num_scenarios = int(self.scenarios_var.get())
+            min_consensus = float(self.consensus_var.get())
+            min_move = float(self.min_move_var.get())
+            max_spread = float(self.max_spread_var.get())
+            lot = float(self.lot_var.get())
+            sl_atr = float(self.sl_atr_var.get())
+            sl_buffer = max(float(self.sl_buffer_var.get()), 0.0)
+            max_sl_price = max(float(self.max_sl_price_var.get()), 0.0)
+            rr = max(float(self.rr_var.get()), 0.0)
+            max_pos = int(self.max_pos_var.get())
+            model_choice = self.model_var.get()
+            engine_mode = self.engine_var.get()
+            hf_space = self.hf_space_var.get().strip()
+            hf_token = self.hf_token_var.get().strip()
+
+            # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf) để Kronos AI dự báo xu hướng
+            self._set_loading_stage(28.0, f"Đang tải dữ liệu nến {symbol} ({analysis_tf}) từ MT5...")
+            df = self.fetch_mt5_candles(symbol, analysis_tf, lookback, include_forming=False)
+            last_close = float(df["close"].iloc[-1])
+
+            # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & tính ATR(14) SL/TP sát nhịp Scalping
+            if analysis_tf == scalp_tf:
+                df_scalp = df
+            else:
+                self._set_loading_stage(40.0, f"Đang đồng bộ khung vào lệnh Scalping ({scalp_tf})...")
+                df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
+
+            last_time = df_scalp["timestamps"].iloc[-1]
+            self.last_candle_time = last_time
+            atr = self.calculate_atr(df_scalp, 14)
+
+            tick = mt5.symbol_info_tick(symbol)
+            spread_usd = (tick.ask - tick.bid) if tick else 0.0
+
+            x_timestamp = df["timestamps"].reset_index(drop=True)
+            delta = x_timestamp.iloc[-1] - x_timestamp.iloc[-2] if len(x_timestamp) >= 2 else pd.Timedelta(minutes=5)
+            future_dates = [x_timestamp.iloc[-1] + delta * (i + 1) for i in range(pred_len)]
+            y_timestamp = pd.Series(pd.to_datetime(future_dates))
+
+            scenarios = None
+            used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local"
+
+            if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
+                try:
+                    self.log(f"Đang gọi Hugging Face Space ({hf_space})...")
+                    client = Client(hf_space, hf_token=hf_token if hf_token else None)
+                    payload = df.copy()
+                    payload["timestamps"] = payload["timestamps"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                    hf_model_arg = model_choice.replace("AI-", "Kronos-", 1) if model_choice.startswith("AI-") else model_choice
+                    res_json = client.predict(
+                        candles_json=payload.to_json(orient="records"),
+                        model_choice=hf_model_arg,
+                        pred_len=pred_len,
+                        num_scenarios=num_scenarios,
+                        temperature=1.0,
+                        top_p=0.9,
+                        api_name="/scalping_m5"
+                    )
+                    data = json.loads(res_json)
+                    scenarios = []
+                    for s_rec in data["scenarios"]:
+                        s_df = pd.DataFrame(s_rec)
+                        s_df["timestamps"] = pd.to_datetime(s_df["timestamps"])
+                        scenarios.append(s_df)
+                    used_engine = "Hugging Face A100"
+                except Exception as e:
+                    self.log(f"⚠️ Chuyển sang chạy trực tiếp trên máy nhà ({e})")
+
+            if scenarios is None:
+                self._set_loading_stage(62.0, f"Đang nạp mô hình {model_choice}...")
+                predictor = self.get_local_predictor(model_choice)
+                self._set_loading_stage(82.0, f"Đang phân tích {num_scenarios} kịch bản xu hướng AI...")
+                feat_df = df[["open", "high", "low", "close", "volume"]].reset_index(drop=True)
+                with torch.no_grad():
+                    pred_dfs = predictor.predict_batch(
+                        df_list=[feat_df for _ in range(num_scenarios)],
+                        x_timestamp_list=[x_timestamp for _ in range(num_scenarios)],
+                        y_timestamp_list=[y_timestamp for _ in range(num_scenarios)],
+                        pred_len=pred_len,
+                        T=1.0,
+                        top_p=0.9,
+                        sample_count=1,
+                        verbose=False
+                    )
+                scenarios = []
+                for p_df in pred_dfs:
+                    p_df = p_df.reset_index()
+                    p_df.rename(columns={p_df.columns[0]: "timestamps"}, inplace=True)
+                    scenarios.append(p_df)
+
+            bull_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_close)
+            bear_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) < last_close)
+            total = len(scenarios)
+            bull_pct = (bull_count / total) * 100.0
+            bear_pct = (bear_count / total) * 100.0
+
+            # Tính đường giá đóng cửa trung bình của cả 8 kịch bản
+            mean_closes = np.mean([s["close"].values for s in scenarios], axis=0)
+            avg_end_close = float(mean_closes[-1])
+
+            # Chọn Kịch bản Đại diện Chuẩn nhất (Medoid - kịch bản có đường đi sát với trung tâm đám đông nhất)
+            # Giúp giữ nguyên hình thái thân nến thực tế của Kronos AI thay vì cộng trung bình làm thân nến bị triệt tiêu thành Doji!
+            best_idx = int(np.argmin([np.mean(np.abs(s["close"].values - mean_closes)) for s in scenarios]))
+            mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy()
+
+            expected_move = avg_end_close - last_close
+            # Khoảng cách SL gốc của AI (tính theo đơn vị Giá vàng, 1 giá = 10 pip) + khoảng giá an toàn do người dùng cài
+            sl_ai_raw_dist = max(atr * sl_atr, 1.0)
+            total_sl_dist = sl_ai_raw_dist + sl_buffer
+            eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
+            ai_pred_high = float(mean_df["high"].max())
+            ai_pred_low = float(mean_df["low"].min())
+            ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), 1.5)
+            ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), 1.5)
+            tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else max(abs(expected_move), 1.5)
+            self.last_recommendation = {"sl_dist": sl_ai_raw_dist, "tp_dist": tp_dist}
+
+            action = None
+            sig_color = GOLD_ACCENT
+            if bull_pct >= min_consensus and expected_move >= min_move:
+                action = "BUY"
+                sig_color = GREEN_UP
+                entry_ref = tick.ask if tick else last_close
+                # SL lấy theo SL của AI đưa ra và cộng thêm khoảng giá an toàn (lùi xuống thêm sl_buffer giá)
+                sl_price = round(entry_ref - total_sl_dist, 2)
+                eff_entry = min(entry_ref, round(sl_price + max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
+                if rr > 0.0:
+                    tp_price = round(eff_entry + (eff_entry - sl_price) * rr, 2)
+                else:
+                    # R:R = 0 -> Lấy TP trực tiếp theo mục tiêu đỉnh/giá dự báo của AI
+                    tp_price = round(max(ai_pred_high, eff_entry + ai_tp_dist_up), 2)
+                sig_title = f"🟢 TÍN HIỆU: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total} kịch bản)"
+            elif bear_pct >= min_consensus and (-expected_move) >= min_move:
+                action = "SELL"
+                sig_color = RED_DOWN
+                entry_ref = tick.bid if tick else last_close
+                # SL lấy theo SL của AI đưa ra và cộng thêm khoảng giá an toàn (nâng lên thêm sl_buffer giá)
+                sl_price = round(entry_ref + total_sl_dist, 2)
+                eff_entry = max(entry_ref, round(sl_price - max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
+                if rr > 0.0:
+                    tp_price = round(eff_entry - (sl_price - eff_entry) * rr, 2)
+                else:
+                    # R:R = 0 -> Lấy TP trực tiếp theo mục tiêu đáy/giá dự báo của AI
+                    tp_price = round(min(ai_pred_low, eff_entry - ai_tp_dist_down), 2)
+                sig_title = f"🔴 TÍN HIỆU: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total} kịch bản)"
+            else:
+                entry_ref = last_close
+                sl_price = round(last_close - total_sl_dist, 2)
+                tp_price = round(last_close + tp_dist, 2)
+                sig_title = f"⚪ ĐỨNG NGOÀI ({tf_label}) — Tăng: {bull_pct:.0f}% | Giảm: {bear_pct:.0f}% | Biên độ dự kiến: {expected_move:+.2f}$"
+
+            self.cached_scenarios = scenarios
+            self.cached_mean_df = mean_df
+            self.cached_action = action
+            self.cached_sl = sl_price
+            self.cached_tp = tp_price
+
+            # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
+            has_losing_opposite_pos = False
+            if action is not None:
+                open_positions = mt5.positions_get(symbol=symbol)
+                if open_positions:
+                    sym_info = mt5.symbol_info(symbol)
+                    digits = sym_info.digits if sym_info else 2
+                    for pos in open_positions:
+                        is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
+                        is_opposite = (action == "BUY" and not is_buy_pos) or (action == "SELL" and is_buy_pos)
+                        if not is_opposite:
+                            continue
+
+                        # QUY TẮC 1: Lệnh ngược chiều đang CÓ LÃI (> 0$) -> Chốt lời ngay để đảo chiều
+                        if pos.profit > 0.0:
+                            if self.auto_rev_close_var.get():
+                                ok_c, msg_c = self._close_single_pos(pos)
+                                self.pending_be_exit_tickets.discard(pos.ticket)
+                                self.log(f"🔄 [Quy tắc 1 - AI Đảo Chiều] Lệnh cũ đang lãi -> {msg_c}")
+                        else:
+                            # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$)
+                            # -> KHÔNG cắt lỗ non, KHÔNG mở lệnh ngược chiều mới, và kéo TP về đúng Entry để chờ hồi hòa vốn thoát!
+                            has_losing_opposite_pos = True
+                            if self.auto_rev_close_var.get():
+                                entry_exact = round(pos.price_open, digits)
+                                self.pending_be_exit_tickets.add(pos.ticket)
+                                if abs(pos.tp - entry_exact) >= 0.05:
+                                    if self._modify_position_sltp(pos, pos.sl, entry_exact):
+                                        self.log(
+                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
+                                            f"đã kéo TP về đúng Entry ({entry_exact:.2f}) chờ hồi Hòa Vốn thoát!"
+                                        )
+                                    else:
+                                        self.log(
+                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
+                                            f"tự động thoát ngay khi giá hồi về Entry ({entry_exact:.2f})!"
+                                        )
+
+            # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL (1 GIÁ = 10 PIP; NẾU = 0 LÀ THEO AI)
+            cur_sl_dist = abs(entry_ref - sl_price)
+            limit_entry_price = round((sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price), 2) if max_sl_price > 0.0 else entry_ref
+
+            trade_msg = "Bot đang DỪNG (Bấm ▶️ START để tự vào lệnh)"
+            if action is not None:
+                if self._is_daily_limit_locked():
+                    self.pending_pullback_order = None
+                    trade_msg = f"🔒 Đã dừng giao dịch hết hôm nay ({self.daily_limit_reason})"
+                    self.log(trade_msg)
+                elif self._is_cooldown_active():
+                    self.pending_pullback_order = None
+                    trade_msg = self._get_cooldown_remaining_str()
+                    self.log(trade_msg)
+                elif has_losing_opposite_pos:
+                    self.pending_pullback_order = None
+                    trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Không mở {action} đè)"
+                    self.log(f"⏳ [Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
+                elif max_sl_price > 0.0 and cur_sl_dist > max_sl_price + 0.05:
+                    # SL vượt quá số giá tối đa người dùng cài -> Bắt buộc chờ giá hồi về <= max_sl_price mới vào lệnh!
+                    self.pending_pullback_order = {
+                        "symbol": symbol,
+                        "action": action,
+                        "sl_price": sl_price,
+                        "manual_queued": False,
+                    }
+                    cond_op = "<=" if action == "BUY" else ">="
+                    trade_msg = (
+                        f"⏳ SL = {cur_sl_dist:.2f} giá > Max ({max_sl_price:.1f} giá) -> "
+                        f"Đang chờ giá hồi về {cond_op} {limit_entry_price:.2f} mới vào {action}"
+                    )
+                    self.log(
+                        f"⏳ [Chờ Giá Hồi <= SL Max] AI báo {action} (SL AI+{sl_buffer:.1f} = {sl_price:.2f}, cách {cur_sl_dist:.2f} giá > SL Max {max_sl_price:.2f} giá). "
+                        f"Đang canh giá hồi về {cond_op} {limit_entry_price:.2f} mới vào lệnh!"
+                    )
+                elif spread_usd > max_spread:
+                    trade_msg = f"⚠️ Khóa lệnh do Spread cao ({spread_usd:.2f}$ > {max_spread}$)"
+                    self.log(trade_msg)
+                elif self.auto_trade_var.get():
+                    self.pending_pullback_order = None
+                    ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos)
+                    trade_msg = ord_msg
+                    self.log(ord_msg)
+                else:
+                    self.pending_pullback_order = None
+                    self.log(f"Có tín hiệu {action} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Bấm ▶️ START để Bot tự vào lệnh.")
+            else:
+                self.pending_pullback_order = None
+                self.log(f"Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
+
+            max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
+            detail_text = (
+                f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  SL AI (+{sl_buffer:.1f} giá): {cur_sl_dist:.2f} giá ({max_sl_str})\n"
+                f"Gợi ý AI    ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   {trade_msg}"
+            )
+
+            self._set_loading_stage(96.0, "Đang dựng biểu đồ nến Real-Time...")
+            df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 85, include_forming=True)
+            df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, 85, include_forming=True)
+            self.cached_df_hist = df_live_scalp
+            self.cached_df_analysis = df_live_ana
+            chart_df = df_live_ana if self.chart_mode == "AI_FORECAST" else df_live_scalp
+            chart_tf = analysis_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
+            self.root.after(0, self._update_ui_results, chart_df, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, chart_tf)
+        except Exception as e:
+            self.log(f"❌ Lỗi phân tích: {e}")
+            if self._is_initial_loading:
+                self.root.after(0, self._finish_startup_loading)
+        finally:
+            self.is_analyzing = False
+            self.root.after(0, lambda: self.scan_btn.config(state=tk.NORMAL, text="🔄"))
+
+    def _update_ui_results(self, df_live, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, tf):
+        self.signal_title_lbl.config(text=sig_title, fg=sig_color)
+        self.signal_detail_lbl.config(text=detail_text)
+
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for _, r in mean_df.iterrows():
+            ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
+            self.tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
+
+        self._draw_candlestick_chart(df_live, scenarios, mean_df, action, sl_price, tp_price, symbol, tf, has_forming_candle=True)
+        if self._is_initial_loading:
+            self._finish_startup_loading()
+
+    # =========================================================================
+    # VẼ BIỂU ĐỒ THEO 2 CHẾ ĐỘ TAB (NHÃN ENTRY/SL/TP NGẮN GỌN KÈM SỐ LÃI/LỖ)
+    # =========================================================================
+    def _draw_candlestick_chart(self, df_hist, scenarios, mean_df, action, sl_price, tp_price, symbol, tf, has_forming_candle=True):
+        self.ax.clear()
+        self._style_axes()
+
+        num_bars = 45 if self.chart_mode == "AI_FORECAST" else 80
+        hist = df_hist.iloc[-num_bars:].reset_index(drop=True)
+        n_hist = len(hist)
+        # Chỉ tính và vẽ phần nến dự báo AI khi đang ở Tab 2 (AI_FORECAST); ẩn hoàn toàn khi ở Tab 1 (LIVE_POSITIONS)
+        n_pred = (len(mean_df) if mean_df is not None else 0) if self.chart_mode == "AI_FORECAST" else 0
+        total_x = n_hist + n_pred
+
+        # 1. Vẽ nến lịch sử + nến đang nhảy
+        for i in range(n_hist):
+            o, h, l, c = hist.loc[i, ["open", "high", "low", "close"]]
+            is_forming = (has_forming_candle and i == n_hist - 1)
+            if is_forming:
+                color = CYAN_LIVE if c >= o else "#ff4081"
+            else:
+                color = GREEN_UP if c >= o else RED_DOWN
+            self.ax.plot([i, i], [l, h], color=color, linewidth=1.1 if is_forming else 0.9)
+            bottom = min(o, c)
+            height = max(abs(c - o), 0.05)
+            self.ax.add_patch(Rectangle((i - 0.32, bottom), 0.64, height, facecolor=color, edgecolor=color))
+
+        live_price = float(hist["close"].iloc[-1])
+        self.ax.axhline(y=live_price, color=CYAN_LIVE, linestyle="-.", linewidth=0.9, alpha=0.85, label=f"Giá Live ({live_price:.2f})")
+
+        # Hiển thị Nhãn Mức Giá Hiện Tại trực tiếp trên Thanh Giá bên phải (như TradingView)
+        self.ax.annotate(
+            f" {live_price:.2f} ",
+            xy=(1.0, live_price),
+            xycoords=("axes fraction", "data"),
+            xytext=(2, 0),
+            textcoords="offset points",
+            color="#000000",
+            fontsize=8.5,
+            fontweight="bold",
+            va="center",
+            ha="left",
+            bbox=dict(boxstyle="square,pad=0.22", facecolor=CYAN_LIVE, edgecolor="#00b8d4", lw=1),
+            annotation_clip=False,
+            zorder=15
+        )
+
+        # 2. Nếu đang ở Tab 1 (LIVE_POSITIONS): Hiển thị nhãn Entry, SL, TP kèm cả Mức Giá & Số Lãi/Lỗ ($)
+        if self.chart_mode == "LIVE_POSITIONS" and MT5_AVAILABLE:
+            open_positions = mt5.positions_get(symbol=symbol)
+            if open_positions:
+                label_x = (self.saved_xlim[0] + 1.2) if (self.user_zoomed and self.saved_xlim) else 1.2
+                for idx_p, pos in enumerate(open_positions):
+                    is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
+                    # Màu sắc Entry phân biệt trực tiếp BUY (Xanh lá) và SELL (Đỏ)
+                    entry_col = "#00e676" if is_buy else "#ff5252"
+                    text_fg = "#000000" if is_buy else "#ffffff"
+                    is_sl_at_entry = (pos.sl > 0 and abs(pos.sl - pos.price_open) < 0.05)
+                    is_tp_at_entry = (pos.tp > 0 and abs(pos.tp - pos.price_open) < 0.05)
+                    be_tag = " [SL=0]" if is_sl_at_entry else (" [Chờ Hòa Vốn]" if is_tp_at_entry else "")
+                    offset_x = label_x + (idx_p * 16)
+
+                    # Đường Entry kèm mức giá & số lãi/lỗ hiện tại
+                    self.ax.axhline(y=pos.price_open, color=entry_col, linestyle="--", linewidth=1.2, alpha=0.9)
+                    self.ax.text(
+                        offset_x, pos.price_open,
+                        f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} ",
+                        color=text_fg, backgroundcolor=entry_col,
+                        fontsize=7.5, fontweight="bold", va="center"
+                    )
+
+                    # Đường SL kèm mức giá SL & số lỗ/lãi dự kiến (VD: SL: 4077.35 | -6.7$)
+                    if pos.sl > 0 and not is_sl_at_entry:
+                        sl_pnl = self._calc_target_pnl(pos, pos.sl)
+                        is_profit_sl = (sl_pnl >= 0)
+                        sl_col = GOLD_ACCENT if is_profit_sl else "#ff5252"
+                        self.ax.axhline(y=pos.sl, color=sl_col, linestyle=":", linewidth=1.1, alpha=0.85)
+                        self.ax.text(
+                            offset_x, pos.sl,
+                            f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) ",
+                            color="#000000" if is_profit_sl else "#ffffff",
+                            backgroundcolor=sl_col if is_profit_sl else "#6e1b26",
+                            fontsize=7.5, fontweight="bold", va="center"
+                        )
+
+                    # Đường TP kèm mức giá TP & số lãi dự kiến (VD: TP: 4057.15 | +13.5$)
+                    if pos.tp > 0 and not is_tp_at_entry:
+                        tp_pnl = self._calc_target_pnl(pos, pos.tp)
+                        self.ax.axhline(y=pos.tp, color="#69f0ae", linestyle=":", linewidth=1.1, alpha=0.85)
+                        self.ax.text(
+                            offset_x, pos.tp,
+                            f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) ",
+                            color="#000000", backgroundcolor="#69f0ae",
+                            fontsize=7.5, fontweight="bold", va="center"
+                        )
+
+        # Vẽ đường Chờ Giá Hồi về <= SL Tối Đa (nếu đang có tín hiệu chờ hồi)
+        if self.pending_pullback_order is not None:
+            p = self.pending_pullback_order
+            try:
+                max_sl_p = max(float(self.max_sl_price_var.get()), 0.5)
+            except ValueError:
+                max_sl_p = 5.0
+            lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+            self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=1.2, alpha=0.9)
+            lbl_x = (self.saved_xlim[0] + 1.2) if (self.user_zoomed and self.saved_xlim) else 1.2
+            self.ax.text(
+                lbl_x, lim_entry,
+                f" ⏳ Chờ {p['action']} <= {max_sl_p:.1f} giá (@ {lim_entry:.2f}) ",
+                color="#000000", backgroundcolor=GOLD_ACCENT,
+                fontsize=7.5, fontweight="bold", va="center"
+            )
+
+        # 3. Cụm Dự báo Kronos AI (Chỉ hiển thị ở Tab 2 - AI_FORECAST, ẩn ở Tab 1 - Lệnh đang mở Real-Time)
+        all_times = list(hist["timestamps"].dt.strftime("%H:%M"))
+        if self.chart_mode == "AI_FORECAST" and scenarios is not None and mean_df is not None:
+            anchor_idx = (n_hist - 2) if (has_forming_candle and n_hist >= 2) else (n_hist - 1)
+            anchor_y = float(hist["close"].iloc[anchor_idx])
+            x_pred = np.arange(n_hist, n_hist + n_pred)
+
+            alpha_line = 0.45 if self.chart_mode == "AI_FORECAST" else 0.25
+            for idx, s_df in enumerate(scenarios):
+                xs = np.concatenate([[anchor_idx], x_pred])
+                ys = np.concatenate([[anchor_y], s_df["close"].values])
+                self.ax.plot(xs, ys, color="#ffd54f", alpha=alpha_line, linewidth=1.1, label="8 Kịch bản AI" if idx == 0 else "")
+
+            for j in range(n_pred):
+                idx_x = n_hist + j
+                o, h, l, c = mean_df.loc[j, ["open", "high", "low", "close"]]
+                color = "#ffd54f" if c >= o else "#ff8a65"
+                self.ax.plot([idx_x, idx_x], [l, h], color=color, linewidth=1.4)
+                bottom = min(o, c)
+                height = max(abs(c - o), 0.05)
+                self.ax.add_patch(Rectangle((idx_x - 0.34, bottom), 0.68, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
+
+            self.ax.axvline(x=n_hist - 0.5, color=GOLD_ACCENT, linestyle="--", linewidth=1.1, alpha=0.8)
+            all_times += list(mean_df["timestamps"].dt.strftime("%H:%M"))
+
+            if self.chart_mode == "AI_FORECAST" and sl_price is not None and tp_price is not None:
+                try:
+                    lot_val = float(self.lot_var.get())
+                except ValueError:
+                    lot_val = 0.01
+                est_sl_usd = -abs(live_price - sl_price) * lot_val * 100.0
+                est_tp_usd = abs(tp_price - live_price) * lot_val * 100.0
+                self.ax.axhline(y=sl_price, color=RED_DOWN, linestyle=":", linewidth=1.3, label=f"SL: {sl_price:.2f} ({est_sl_usd:+.1f}$)")
+                self.ax.axhline(y=tp_price, color=GREEN_UP, linestyle=":", linewidth=1.3, label=f"TP: {tp_price:.2f} ({est_tp_usd:+.1f}$)")
+
+        step = max(1, len(all_times) // 12)
+        tick_indices = list(range(0, len(all_times), step))
+        self.ax.set_xticks(tick_indices)
+        self.ax.set_xticklabels([all_times[k] for k in tick_indices], color=TEXT_MAIN)
+
+        mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
+        zoom_hint = " [Đang Zoom/Pan - Nháy đúp để Reset]" if self.user_zoomed else " [Lăn chuột: Zoom | Kéo chuột: Di chuyển]"
+        self.ax.set_title(
+            f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f}{zoom_hint}",
+            color=GOLD_ACCENT, fontsize=9, fontweight="bold"
+        )
+        self.ax.legend(loc="upper right", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8)
+
+        if self.user_zoomed and self.saved_xlim is not None and self.saved_ylim is not None:
+            self.ax.set_xlim(self.saved_xlim)
+            self.ax.set_ylim(self.saved_ylim)
+        else:
+            self.ax.set_xlim(-1.5, total_x + 4)
+
+        self.fig.tight_layout()
+        self.canvas.draw_idle()
+
+
+def run_first_time_setup():
+    """Thiết lập thông số mặc định và tự động tạo Shortcut chạy phần mềm trong thư mục & ngoài Desktop."""
+    import subprocess
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    default_settings = {
+        "symbol": "XAUUSDm",
+        "analysis_tf": "M15",
+        "tf": "M5",
+        "lot": "0.01",
+        "max_pos": "5",
+        "scenarios": "8",
+        "consensus": "75",
+        "min_move": "1.2",
+        "max_spread": "0.35",
+        "sl_atr": "1.5",
+        "sl_buffer": "0.5",
+        "max_sl_price": "6.0",
+        "rr": "2.0",
+        "auto_be": True,
+        "be_trigger_r": "1.0",
+        "auto_trail": True,
+        "trail_dist_r": "0.8",
+        "auto_rev_close": True,
+        "daily_tp_usd": "0",
+        "daily_sl_usd": "0",
+        "max_consec_loss": "0",
+        "cooldown_mins": "30",
+        "engine": "Chạy trực tiếp máy nhà",
+        "model": "AI-base (102.3M - Mạnh nhất)",
+        "hf_space": "tranvankha2807/Kronos_Xau",
+        "hf_token": "",
+        "lookback": "400",
+        "pred_len": "6",
+        "realtime_chart": True,
+    }
+    if not os.path.exists(SETTINGS_FILE):
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_settings, f, ensure_ascii=False, indent=2)
+
+    # Nếu chưa có Icon trong AppData, tự động tạo Icon tròn vàng/đen sắc nét
+    if not os.path.exists(ICON_ICO_FILE) or not os.path.exists(ICON_PNG_FILE):
+        try:
+            import base64, io
+            from PIL import Image
+            img = Image.open(io.BytesIO(base64.b64decode("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"))).resize((256, 256), Image.Resampling.LANCZOS)
+            img.save(ICON_PNG_FILE, format="PNG")
+            img.save(ICON_ICO_FILE, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+        except Exception:
+            pass
+
+    work_dir = os.path.dirname(os.path.abspath(__file__))
+    weights_root = os.path.join(work_dir, "model", "weights")
+    os.makedirs(weights_root, exist_ok=True)
+    for repo_id, cls in [
+        ("NeoQuasar/Kronos-Tokenizer-base", KronosTokenizer),
+        ("NeoQuasar/Kronos-base", Kronos),
+    ]:
+        w_name = repo_id.split("/")[-1]
+        w_dir = os.path.join(weights_root, w_name)
+        if not os.path.exists(os.path.join(w_dir, "model.safetensors")):
+            try:
+                obj = cls.from_pretrained(repo_id)
+                obj.save_pretrained(w_dir)
+            except Exception:
+                pass
+
+    bot_py = os.path.abspath(__file__)
+    py_dir = os.path.dirname(sys.executable)
+    pyw_exe = os.path.join(py_dir, "pythonw.exe")
+    if not os.path.exists(pyw_exe):
+        pyw_exe = sys.executable
+
+    ps_cmd = (
+        "$WshShell = New-Object -ComObject WScript.Shell; "
+        f"$workDir = '{work_dir}'; "
+        f"$botPy = '{bot_py}'; "
+        f"$pywExe = '{pyw_exe}'; "
+        f"$icoPath = '{ICON_ICO_FILE}'; "
+        "$deskDir = [Environment]::GetFolderPath('Desktop'); "
+        "foreach ($lnk in @((Join-Path $workDir 'AI Scalping M5.lnk'), (Join-Path $deskDir 'AI Scalping M5.lnk'))) { "
+        "$s = $WshShell.CreateShortcut($lnk); "
+        "$s.TargetPath = $pywExe; "
+        "$s.Arguments = '-B \"' + $botPy + '\"'; "
+        "$s.WorkingDirectory = $workDir; "
+        "if (Test-Path $icoPath) { $s.IconLocation = $icoPath + ',0' }; "
+        "$s.Description = 'AI (KhaTran) - Phần Mềm Scalping Vàng & Quản Lý Lệnh Real-Time'; "
+        "$s.Save() }"
+    )
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd], check=False)
+    except Exception:
+        pass
+
+
+if __name__ == "__main__":
+    if "--setup" in sys.argv:
+        run_first_time_setup()
+        sys.exit(0)
+    root = tk.Tk()
+    app = KronosDesktopApp(root)
+    root.mainloop()
