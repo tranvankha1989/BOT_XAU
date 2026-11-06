@@ -179,14 +179,32 @@ class KronosDesktopApp:
         self.cached_df_hist = None
         self.cached_df_analysis = None
 
-        # Trạng thái tương tác biểu đồ kiểu TradingView (Zoom / Pan / Kéo thanh giá Y-Scale / Chuột phải Reset)
+        # Trạng thái tương tác biểu đồ kiểu TradingView (Zoom / Pan / Kéo thanh giá Y-Scale & X-Scale / Chuột phải Reset)
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
         self._drag_start_px = None
         self._drag_start_xlim = None
         self._drag_start_ylim = None
-        self._drag_mode = None  # "PAN" hoặc "Y_SCALE"
+        self._drag_mode = None  # "PAN", "Y_SCALE", hoặc "X_SCALE"
+        self._chart_visible_bars = 75
+        self._chart_hist_df = None
+        self._chart_mean_df = None
+        self._chart_all_times = []
+        self._chart_n_hist = 0
+        self._chart_total_x = 0
+        self._pos_text_artists = []
+        self.cross_vline = None
+        self.cross_hline = None
+        self.cross_price_annot = None
+        self.cross_time_annot = None
+        self.cross_ohlc_text = None
+        self._last_hover_xy = None
+
+        # Trạng thái hiển thị % trên nút Reload Pill góc phải trên
+        self._scan_pct = 100.0
+        self._scan_target_pct = 100.0
+        self._scan_anim_job = None
 
         # Trạng thái màn hình Loading khởi động kiểu MacBook (Xoay tròn + % Real-Time)
         self._is_initial_loading = True
@@ -286,11 +304,129 @@ class KronosDesktopApp:
         self._animate_startup_loader()
 
     def _set_loading_stage(self, target_pct: float, sub_text: str):
+        self._scan_target_pct = max(self._scan_target_pct, float(target_pct))
         if not self._is_initial_loading:
             return
         self._loading_target_pct = max(self._loading_target_pct, float(target_pct))
         if hasattr(self, "loading_sub_lbl") and self.loading_sub_lbl.winfo_exists():
             self.root.after(0, lambda: self.loading_sub_lbl.config(text=sub_text) if self.loading_sub_lbl.winfo_exists() else None)
+
+    @staticmethod
+    def _draw_capsule(canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float, fill: str, outline: str = "", width: int = 1):
+        """Vẽ hình viên thuốc bo tròn 2 đầu tuyệt đối mượt (Stadium/Pill) bằng 2 hình tròn + hình chữ nhật giữa."""
+        h = max(y2 - y1, 2.0)
+        r = h / 2.0
+        if x2 - x1 < h:
+            x2 = x1 + h
+        if outline and width > 0:
+            canvas.create_oval(x1, y1, x1 + h, y2, fill=fill, outline=outline, width=width)
+            canvas.create_oval(x2 - h, y1, x2, y2, fill=fill, outline=outline, width=width)
+            canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
+            canvas.create_line(x1 + r, y1, x2 - r, y1, fill=outline, width=width)
+            canvas.create_line(x1 + r, y2, x2 - r, y2, fill=outline, width=width)
+        else:
+            canvas.create_oval(x1, y1, x1 + h, y2, fill=fill, outline="")
+            canvas.create_oval(x2 - h, y1, x2, y2, fill=fill, outline="")
+            canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
+
+    def _draw_reload_pill(self):
+        """Vẽ nút Reload dạng viên thuốc bo tròn kèm thanh tiến trình và % trực quan."""
+        if not hasattr(self, "reload_canvas") or not self.reload_canvas.winfo_exists():
+            return
+        c = self.reload_canvas
+        c.delete("all")
+        w, h = 118, 32
+        x1, y1, x2, y2 = 2, 2, w - 2, h - 2
+
+        if self.is_analyzing:
+            self._draw_capsule(c, x1, y1, x2, y2, fill="#161d2a", outline="#f0b90b", width=1)
+            pct = min(max(self._scan_pct, 4.0), 100.0)
+            fill_w = max((x2 - x1 - 4) * (pct / 100.0), y2 - y1 - 4)
+            self._draw_capsule(c, x1 + 2, y1 + 2, min(x1 + 2 + fill_w, x2 - 2), y2 - 2, fill="#264653", outline="")
+            c.create_text(
+                w / 2, h / 2,
+                text=f"⏳ {int(round(pct))}%",
+                fill=GOLD_ACCENT,
+                font=("Segoe UI", 9, "bold")
+            )
+        else:
+            bg_col = "#243044"
+            self._draw_capsule(c, x1, y1, x2, y2, fill=bg_col, outline="#3d4f6d", width=1)
+            c.create_text(
+                w / 2, h / 2,
+                text="🔄 100%",
+                fill="#ffffff",
+                font=("Segoe UI", 9, "bold")
+            )
+
+    def _start_scan_progress_anim(self):
+        self._scan_pct = 8.0
+        self._scan_target_pct = 24.0
+        if self._scan_anim_job is not None:
+            try:
+                self.root.after_cancel(self._scan_anim_job)
+            except Exception:
+                pass
+            self._scan_anim_job = None
+        self._draw_reload_pill()
+        self._step_scan_progress_anim()
+
+    def _step_scan_progress_anim(self):
+        if not self.is_analyzing:
+            return
+        if self._scan_pct < self._scan_target_pct:
+            diff = self._scan_target_pct - self._scan_pct
+            self._scan_pct = min(self._scan_target_pct, self._scan_pct + max(0.8, diff * 0.22))
+        elif self._scan_pct < 95.0:
+            self._scan_pct = min(95.0, self._scan_pct + 0.25)
+        self._draw_reload_pill()
+        self._scan_anim_job = self.root.after(60, self._step_scan_progress_anim)
+
+    def _finish_scan_progress_anim(self):
+        if self._scan_anim_job is not None:
+            try:
+                self.root.after_cancel(self._scan_anim_job)
+            except Exception:
+                pass
+            self._scan_anim_job = None
+        self._scan_pct = 100.0
+        self._scan_target_pct = 100.0
+        self._draw_reload_pill()
+
+    def _draw_toggle_switch(self):
+        """Vẽ công tắc gạt (Toggle Switch) bo tròn mềm mại cho START / STOP."""
+        if not hasattr(self, "toggle_switch_canvas") or not self.toggle_switch_canvas.winfo_exists():
+            return
+        c = self.toggle_switch_canvas
+        c.delete("all")
+        w, h = 118, 32
+        x1, y1, x2, y2 = 2, 2, w - 2, h - 2
+        knob_d = (y2 - y1) - 6
+
+        if self.auto_loop_running:
+            # Trạng thái ĐANG CHẠY (ON - START): Nền xanh ngọc, nút tròn bên phải
+            self._draw_capsule(c, x1, y1, x2, y2, fill="#0ecb81", outline="#17e896", width=1)
+            kx2 = x2 - 3
+            kx1 = kx2 - knob_d
+            c.create_oval(kx1, y1 + 3, kx2, y2 - 3, fill="#ffffff", outline="")
+            c.create_text(
+                (x1 + kx1) / 2 + 4, h / 2,
+                text="RUNNING",
+                fill="#071a12",
+                font=("Segoe UI", 8, "bold")
+            )
+        else:
+            # Trạng thái ĐANG DỪNG (OFF - STOP): Nền tối viền đỏ/xám, nút tròn đỏ bên trái
+            self._draw_capsule(c, x1, y1, x2, y2, fill="#222a3a", outline="#f6465d", width=1)
+            kx1 = x1 + 3
+            kx2 = kx1 + knob_d
+            c.create_oval(kx1, y1 + 3, kx2, y2 - 3, fill="#f6465d", outline="")
+            c.create_text(
+                (kx2 + x2) / 2 - 2, h / 2,
+                text="STOPPED",
+                fill="#f6465d",
+                font=("Segoe UI", 8, "bold")
+            )
 
     def _animate_startup_loader(self):
         if not self._is_initial_loading or not hasattr(self, "loading_overlay") or not self.loading_overlay.winfo_exists():
@@ -551,6 +687,8 @@ class KronosDesktopApp:
             variable=self.auto_rev_close_var, bg=PANEL_BG, fg=GOLD_ACCENT, selectcolor=BG_DARK,
             activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w"
         ).pack(fill=tk.X, pady=(2, 2))
+        self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều (%):", "75")
+        self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0")
 
         self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0")
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0")
@@ -574,28 +712,7 @@ class KronosDesktopApp:
         self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử (Lookback):", "400")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6")
 
-        # CÁC NÚT ĐIỀU KHIỂN NẰM DƯỚI CÙNG CỦA MENU: NÚT REFRESH (🔄) & NÚT GỘP START/STOP
-        btn_frame = tk.Frame(left_panel, bg=PANEL_BG, pady=2)
-        btn_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(4, 0))
-
-        self.scan_btn = tk.Button(
-            btn_frame, text="🔄",
-            bg="#2b3548", fg="#ffffff",
-            activebackground="#3b4963", activeforeground="#ffffff",
-            font=("Segoe UI Symbol", 12, "bold"),
-            relief=tk.FLAT, pady=3, command=self.trigger_single_scan
-        )
-        self.scan_btn.pack(fill=tk.X, pady=(0, 4))
-
-        self.start_stop_btn = tk.Button(
-            btn_frame, text="▶️ START", bg=GREEN_UP, fg="#000000",
-            activebackground="#0bb572", activeforeground="#000000",
-            font=("Segoe UI", 10, "bold"), relief=tk.FLAT, pady=6,
-            command=self.toggle_bot_start_stop
-        )
-        self.start_stop_btn.pack(fill=tk.X, pady=(0, 2))
-
-        # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM NGAY TRÊN CỤM NÚT DƯỚI CÙNG
+        # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM DƯỚI CÙNG CỦA MENU TRÁI
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
         info_card.pack(fill=tk.BOTH, expand=True, pady=(6, 4))
 
@@ -621,19 +738,53 @@ class KronosDesktopApp:
         )
         self.quick_info_lbl.pack(fill=tk.BOTH, expand=True)
 
-        # Hộp Tín hiệu bên Cột phải
-        sig_box = tk.Frame(right_panel, bg=PANEL_BG, padx=12, pady=5)
+        # Hộp Tín hiệu bên Cột phải (Tích hợp nút Reload % bo tròn & Công tắc gạt START/STOP ở góc phải)
+        sig_box = tk.Frame(right_panel, bg=PANEL_BG, padx=12, pady=6)
         sig_box.pack(fill=tk.X, pady=(0, 4))
 
+        sig_right = tk.Frame(sig_box, bg=PANEL_BG)
+        sig_right.pack(side=tk.RIGHT, padx=(12, 0), anchor="center")
+
+        # 1. Nút Reload dạng viên thuốc bo tròn hiển thị % trực quan
+        reload_col = tk.Frame(sig_right, bg=PANEL_BG)
+        reload_col.pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(
+            reload_col, text="QUÉT AI (RELOAD)", bg=PANEL_BG, fg=TEXT_MUTED,
+            font=("Segoe UI", 7, "bold")
+        ).pack( pady=(0, 2))
+        self.reload_canvas = tk.Canvas(
+            reload_col, width=118, height=32, bg=PANEL_BG, highlightthickness=0, cursor="hand2"
+        )
+        self.reload_canvas.pack()
+        self.reload_canvas.bind("<Button-1>", lambda e: self.trigger_single_scan())
+        self._draw_reload_pill()
+
+        # 2. Công tắc gạt (Toggle Switch) bo tròn mềm mại cho START / STOP
+        switch_col = tk.Frame(sig_right, bg=PANEL_BG)
+        switch_col.pack(side=tk.LEFT)
+        tk.Label(
+            switch_col, text="TỰ ĐỘNG TRADE (AUTO)", bg=PANEL_BG, fg=TEXT_MUTED,
+            font=("Segoe UI", 7, "bold")
+        ).pack(pady=(0, 2))
+        self.toggle_switch_canvas = tk.Canvas(
+            switch_col, width=118, height=32, bg=PANEL_BG, highlightthickness=0, cursor="hand2"
+        )
+        self.toggle_switch_canvas.pack()
+        self.toggle_switch_canvas.bind("<Button-1>", lambda e: self.toggle_bot_start_stop())
+        self._draw_toggle_switch()
+
+        sig_left = tk.Frame(sig_box, bg=PANEL_BG)
+        sig_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
         self.signal_title_lbl = tk.Label(
-            sig_box, text="⏳ ĐANG TỰ ĐỘNG CHẠY PHÂN TÍCH AI LẦN ĐẦU...",
+            sig_left, text="⏳ ĐANG TỰ ĐỘNG CHẠY PHÂN TÍCH AI LẦN ĐẦU...",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 11, "bold"), anchor="w"
         )
         self.signal_title_lbl.pack(fill=tk.X)
 
         self.signal_detail_lbl = tk.Label(
-            sig_box,
-            text="💡 Lăn chuột: Zoom | Kéo trong biểu đồ: Di chuyển | Kéo thanh giá (phải/trái): Tăng giảm chiều cao nến | Chuột phải: Reset biểu đồ.",
+            sig_left,
+            text="💡 Rê chuột: Crosshair | Lăn chuột: Zoom | Kéo trục giá/thời gian: Co giãn nến | Chuột phải: Reset.",
             bg=PANEL_BG, fg=TEXT_MAIN, font=("Consolas", 8), justify=tk.LEFT, anchor="w"
         )
         self.signal_detail_lbl.pack(fill=tk.X, pady=(2, 0))
@@ -645,10 +796,65 @@ class KronosDesktopApp:
             font=("Segoe UI", 9, "bold")
         )
         self.chart_context_menu.add_command(label="🔄 Reset biểu đồ (Auto-Fit)", command=self.reset_chart_view)
+        self.chart_context_menu.add_separator()
+        self.chart_context_menu.add_command(label="➕ Giãn rộng nến (Phóng to ngang)", command=lambda: self.adjust_chart_horizontal_scale(0.75))
+        self.chart_context_menu.add_command(label="➖ Thu hẹp nến (Xem nhiều nến hơn)", command=lambda: self.adjust_chart_horizontal_scale(1.35))
 
-        # Biểu đồ Nến tương tác trực tiếp bằng chuột
+        # Biểu đồ Nến tương tác trực tiếp bằng chuột + Thanh công cụ chọn nhanh Khung M1/M5/M15/H1 & Co giãn nến
         chart_frame = tk.Frame(right_panel, bg=PANEL_BG)
         chart_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+
+        chart_toolbar = tk.Frame(chart_frame, bg="#131822", padx=10, pady=4, highlightthickness=1, highlightbackground="#232d3f")
+        chart_toolbar.pack(fill=tk.X)
+
+        tk.Label(
+            chart_toolbar, text="KHUNG THỜI GIAN:", bg="#131822", fg=TEXT_MUTED,
+            font=("Segoe UI", 8, "bold")
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        self.tf_quick_btns = {}
+        for tf_opt in ("M1", "M5", "M15", "H1"):
+            b = tk.Button(
+                chart_toolbar, text=tf_opt,
+                bg="#222c3c", fg=TEXT_MAIN,
+                activebackground=GOLD_ACCENT, activeforeground="#000000",
+                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=1, cursor="hand2",
+                command=lambda t=tf_opt: self.switch_chart_timeframe_quick(t)
+            )
+            b.pack(side=tk.LEFT, padx=2)
+            self.tf_quick_btns[tf_opt] = b
+
+        tk.Label(
+            chart_toolbar, text="  |  ĐỘ RỘNG NẾN:", bg="#131822", fg=TEXT_MUTED,
+            font=("Segoe UI", 8, "bold")
+        ).pack(side=tk.LEFT, padx=(8, 4))
+
+        tk.Button(
+            chart_toolbar, text="➖ Thu hẹp chart",
+            bg="#222c3c", fg=TEXT_MAIN, activebackground="#32415c", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
+            command=lambda: self.adjust_chart_horizontal_scale(1.35)
+        ).pack(side=tk.LEFT, padx=2)
+
+        tk.Button(
+            chart_toolbar, text="➕ Giãn rộng chart",
+            bg="#222c3c", fg=TEXT_MAIN, activebackground="#32415c", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
+            command=lambda: self.adjust_chart_horizontal_scale(0.75)
+        ).pack(side=tk.LEFT, padx=2)
+
+        tk.Button(
+            chart_toolbar, text="🔄 Reset View",
+            bg="#222c3c", fg=GOLD_ACCENT, activebackground="#32415c", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
+            command=self.reset_chart_view
+        ).pack(side=tk.LEFT, padx=4)
+
+        self.ohlc_hover_lbl = tk.Label(
+            chart_toolbar, text="Rê chuột lên nến để xem giá OHLC & Thời gian",
+            bg="#131822", fg=CYAN_LIVE, font=("Consolas", 8, "bold"), anchor="e"
+        )
+        self.ohlc_hover_lbl.pack(side=tk.RIGHT, padx=(6, 0))
 
         self.fig = Figure(figsize=(9, 4.4), dpi=100, facecolor=PANEL_BG)
         self.ax = self.fig.add_subplot(111)
@@ -777,6 +983,8 @@ class KronosDesktopApp:
             "auto_trail": self.auto_trail_var,
             "trail_dist_r": self.trail_dist_r_var,
             "auto_rev_close": self.auto_rev_close_var,
+            "rev_consensus": self.rev_consensus_var,
+            "rev_min_move": self.rev_min_move_var,
             "daily_tp_usd": self.daily_tp_usd_var,
             "daily_sl_usd": self.daily_sl_usd_var,
             "max_consec_loss": self.max_consec_loss_var,
@@ -854,6 +1062,28 @@ class KronosDesktopApp:
             pass
         self.toggle_left_menu()
 
+    def _highlight_active_tf_btn(self, active_tf: str):
+        if not hasattr(self, "tf_quick_btns"):
+            return
+        for tf_k, btn in self.tf_quick_btns.items():
+            if tf_k == active_tf:
+                btn.config(bg=GOLD_ACCENT, fg="#000000")
+            else:
+                btn.config(bg="#222c3c", fg=TEXT_MAIN)
+
+    def switch_chart_timeframe_quick(self, tf_opt: str):
+        """Đổi nhanh khung thời gian M1 / M5 / M15 / H1 ngay trên thanh công cụ biểu đồ."""
+        if self.chart_mode == "AI_FORECAST":
+            self.analysis_tf_var.set(tf_opt)
+        else:
+            self.tf_var.set(tf_opt)
+        self._highlight_active_tf_btn(tf_opt)
+        try:
+            symbol = self.symbol_var.get().strip()
+            self._refresh_realtime_chart(symbol, self.tf_var.get().strip())
+        except Exception:
+            pass
+
     def _on_timeframe_changed(self, *args):
         if self._loading_settings:
             return
@@ -863,6 +1093,8 @@ class KronosDesktopApp:
         self.saved_ylim = None
         scalp_tf = self.tf_var.get().strip()
         ana_tf = self.analysis_tf_var.get().strip()
+        active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
+        self._highlight_active_tf_btn(active_tf)
         if ana_tf == scalp_tf:
             self.log(f"🔄 Đã chọn cùng khung {scalp_tf} (Soi {scalp_tf} -> Trade {scalp_tf}). Đang quét lại...")
         else:
@@ -932,6 +1164,7 @@ class KronosDesktopApp:
             if self.chart_mode == "AI_FORECAST"
             else self.tf_var.get().strip()
         )
+        self._highlight_active_tf_btn(active_tf)
         if active_df is not None:
             self._draw_candlestick_chart(
                 active_df, self.cached_scenarios, self.cached_mean_df,
@@ -940,12 +1173,13 @@ class KronosDesktopApp:
             )
 
     # =========================================================================
-    # TƯƠNG TÁC BIỂU ĐỒ KIỂU TRADINGVIEW (LĂN CHUỘT ZOOM / KÉO CHUỘT PAN)
+    # TƯƠNG TÁC BIỂU ĐỒ KIỂU TRADINGVIEW (ZOOM / PAN / X-SCALE / Y-SCALE / CROSSHAIR)
     # =========================================================================
     def reset_chart_view(self):
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
+        self._chart_visible_bars = 55 if self.chart_mode == "AI_FORECAST" else 75
         active_df = (
             self.cached_df_analysis
             if (self.chart_mode == "AI_FORECAST" and self.cached_df_analysis is not None)
@@ -963,6 +1197,78 @@ class KronosDesktopApp:
                 self.symbol_var.get().strip(), active_tf, has_forming_candle=True
             )
 
+    def adjust_chart_horizontal_scale(self, factor: float):
+        """Thu hẹp (factor > 1) hoặc giãn rộng (factor < 1) số nến hiển thị trên biểu đồ theo chiều ngang."""
+        cur_xlim = self.ax.get_xlim()
+        right_edge = cur_xlim[1]
+        cur_span = max(cur_xlim[1] - cur_xlim[0], 12.0)
+        total_x = max(self._chart_total_x, 80)
+        new_span = float(np.clip(cur_span * factor, 18.0, total_x + 15.0))
+        new_left = max(-2.5, right_edge - new_span)
+        self.saved_xlim = (new_left, right_edge)
+        self._chart_visible_bars = int(round(new_span))
+        # Tự động căn lại trục giá Y vừa khít với vùng nến đang nhìn thấy
+        auto_ylim = self._compute_visible_ylim(self.saved_xlim[0], self.saved_xlim[1])
+        if auto_ylim is not None:
+            self.saved_ylim = auto_ylim
+            self.ax.set_ylim(self.saved_ylim)
+        else:
+            self.saved_ylim = self.ax.get_ylim()
+        self.user_zoomed = True
+        self.ax.set_xlim(self.saved_xlim)
+        self._sync_xlim_dependents(self.saved_xlim)
+        self.canvas.draw_idle()
+
+    def _compute_visible_ylim(self, x0: float, x1: float):
+        """Tính giới hạn trục giá Y (ylim) tự động ôm sát các cây nến nằm trong vùng hiển thị [x0, x1]."""
+        hist = self._chart_hist_df
+        if hist is None or len(hist) == 0:
+            return None
+        n_hist = len(hist)
+        i_start = max(0, min(n_hist - 1, int(math.floor(x0))))
+        i_end = max(i_start, min(n_hist - 1, int(math.ceil(x1))))
+        sub = hist.iloc[i_start:i_end + 1]
+        if len(sub) == 0:
+            return None
+        lows = [float(sub["low"].min())]
+        highs = [float(sub["high"].max())]
+        if self.chart_mode == "AI_FORECAST" and self._chart_mean_df is not None and x1 >= n_hist - 1:
+            lows.append(float(self._chart_mean_df["low"].min()))
+            highs.append(float(self._chart_mean_df["high"].max()))
+            if self.cached_sl is not None:
+                lows.append(float(self.cached_sl))
+                highs.append(float(self.cached_sl))
+            if self.cached_tp is not None:
+                lows.append(float(self.cached_tp))
+                highs.append(float(self.cached_tp))
+        y_min = min(lows)
+        y_max = max(highs)
+        pad = max((y_max - y_min) * 0.14, 0.8)
+        return (y_min - pad, y_max + pad)
+
+    def _sync_xlim_dependents(self, xlim):
+        """Cập nhật mật độ nhãn thời gian trục X và vị trí nhãn Entry/SL/TP khi thu phóng hoặc kéo biểu đồ."""
+        all_times = self._chart_all_times
+        if all_times:
+            i0 = max(0, int(math.floor(xlim[0])))
+            i1 = min(len(all_times) - 1, int(math.ceil(xlim[1])))
+            vis_count = max(1, i1 - i0 + 1)
+            step = max(1, vis_count // 10)
+            tick_indices = list(range(i0, i1 + 1, step))
+            self.ax.set_xticks(tick_indices)
+            self.ax.set_xticklabels([all_times[k] for k in tick_indices], color=TEXT_MAIN)
+
+        if self._pos_text_artists:
+            span = max(xlim[1] - xlim[0], 10.0)
+            base_x = xlim[0] + span * 0.018
+            col_step = span * 0.18
+            for txt_artist, col_idx in self._pos_text_artists:
+                try:
+                    _, y_pos = txt_artist.get_position()
+                    txt_artist.set_position((base_x + col_idx * col_step, y_pos))
+                except Exception:
+                    pass
+
     def _on_mouse_scroll(self, event):
         if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
             return
@@ -973,18 +1279,22 @@ class KronosDesktopApp:
         xdata = event.xdata
         ydata = event.ydata
 
-        new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
+        total_x = max(self._chart_total_x, 80)
+        new_width = float(np.clip((cur_xlim[1] - cur_xlim[0]) * scale_factor, 14.0, total_x + 25.0))
         new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
 
         rel_x = (cur_xlim[1] - xdata) / (cur_xlim[1] - cur_xlim[0] + 1e-9)
         rel_y = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0] + 1e-9)
 
-        self.saved_xlim = (xdata - new_width * (1 - rel_x), xdata + new_width * rel_x)
+        new_x0 = max(-3.0, xdata - new_width * (1 - rel_x))
+        new_x1 = min(total_x + 12.0, new_x0 + new_width)
+        self.saved_xlim = (new_x0, new_x1)
         self.saved_ylim = (ydata - new_height * (1 - rel_y), ydata + new_height * rel_y)
         self.user_zoomed = True
 
         self.ax.set_xlim(self.saved_xlim)
         self.ax.set_ylim(self.saved_ylim)
+        self._sync_xlim_dependents(self.saved_xlim)
         self.canvas.draw_idle()
 
     def _is_on_price_axis(self, event) -> bool:
@@ -998,6 +1308,17 @@ class KronosDesktopApp:
             return False
         # Bao phủ toàn bộ cột số giá bên phải (từ mép phải đồ thị ra hết lề phải) và cột số giá bên trái
         return (event.x >= bbox.x1 - 18) or (event.x <= bbox.x0 + 18)
+
+    def _is_on_time_axis(self, event) -> bool:
+        """Kiểm tra xem con trỏ chuột có đang nằm trên Thanh Thời Gian (trục X phía dưới biểu đồ) không."""
+        if event.x is None or event.y is None:
+            return False
+        bbox = self.ax.bbox
+        if bbox.width <= 0 or bbox.height <= 0:
+            return False
+        if not (bbox.x0 <= event.x <= bbox.x1):
+            return False
+        return 0 <= event.y <= bbox.y0 + 14
 
     def _on_mouse_press(self, event):
         # Nếu Menu đang mở mà click chuột vào biểu đồ (ngoài vùng Menu) -> Tự động thu Menu vào
@@ -1030,6 +1351,9 @@ class KronosDesktopApp:
             if self._is_on_price_axis(event):
                 self._drag_mode = "Y_SCALE"
                 self.canvas_widget.config(cursor="sb_v_double_arrow")
+            elif self._is_on_time_axis(event):
+                self._drag_mode = "X_SCALE"
+                self.canvas_widget.config(cursor="sb_h_double_arrow")
             elif event.inaxes == self.ax:
                 self._drag_mode = "PAN"
                 self.canvas_widget.config(cursor="fleur")
@@ -1040,12 +1364,101 @@ class KronosDesktopApp:
     def _on_mouse_release(self, event):
         self._drag_start_px = None
         self._drag_mode = None
-        self.canvas_widget.config(cursor="sb_v_double_arrow" if self._is_on_price_axis(event) else "")
+        if self._is_on_price_axis(event):
+            self.canvas_widget.config(cursor="sb_v_double_arrow")
+        elif self._is_on_time_axis(event):
+            self.canvas_widget.config(cursor="sb_h_double_arrow")
+        else:
+            self.canvas_widget.config(cursor="crosshair" if event.inaxes == self.ax else "")
+
+    def _hide_crosshair(self):
+        self._last_hover_xy = None
+        changed = False
+        for art in (self.cross_vline, self.cross_hline, self.cross_price_annot, self.cross_time_annot):
+            if art is not None and art.get_visible():
+                art.set_visible(False)
+                changed = True
+        if changed:
+            self.canvas.draw_idle()
+
+    def _apply_crosshair_xy(self, snap_x: float, ydata: float):
+        if self.cross_vline is None or self.cross_hline is None:
+            return
+        idx = int(round(snap_x))
+        self.cross_vline.set_xdata([snap_x, snap_x])
+        self.cross_vline.set_visible(True)
+        self.cross_hline.set_ydata([ydata, ydata])
+        self.cross_hline.set_visible(True)
+
+        if self.cross_price_annot is not None:
+            self.cross_price_annot.xy = (1.0, ydata)
+            self.cross_price_annot.set_text(f" {ydata:,.2f} ")
+            self.cross_price_annot.set_visible(True)
+
+        hist = self._chart_hist_df
+        mean_df = self._chart_mean_df
+        n_hist = self._chart_n_hist
+
+        if hist is not None and 0 <= idx < n_hist:
+            r = hist.iloc[idx]
+            ts_full = r["timestamps"].strftime("%d/%m %H:%M")
+            o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
+            chg = c - o
+            if self.cross_time_annot is not None:
+                self.cross_time_annot.xy = (snap_x, 0.0)
+                self.cross_time_annot.set_text(f" {ts_full} ")
+                self.cross_time_annot.set_visible(True)
+            if hasattr(self, "ohlc_hover_lbl"):
+                col = GREEN_UP if chg >= 0 else RED_DOWN
+                self.ohlc_hover_lbl.config(
+                    text=f"🕒 {ts_full}  |  O: {o:.2f}   H: {h:.2f}   L: {l:.2f}   C: {c:.2f} ({chg:+.2f}$)",
+                    fg=col
+                )
+        elif self.chart_mode == "AI_FORECAST" and mean_df is not None and n_hist <= idx < n_hist + len(mean_df):
+            r = mean_df.iloc[idx - n_hist]
+            ts_full = r["timestamps"].strftime("%d/%m %H:%M")
+            o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
+            chg = c - o
+            if self.cross_time_annot is not None:
+                self.cross_time_annot.xy = (snap_x, 0.0)
+                self.cross_time_annot.set_text(f" AI {ts_full} ")
+                self.cross_time_annot.set_visible(True)
+            if hasattr(self, "ohlc_hover_lbl"):
+                self.ohlc_hover_lbl.config(
+                    text=f"🤖 [Dự báo AI {ts_full}]  |  O: {o:.2f}   H: {h:.2f}   L: {l:.2f}   C: {c:.2f} ({chg:+.2f}$)",
+                    fg=GOLD_ACCENT
+                )
+        else:
+            if self.cross_time_annot is not None:
+                self.cross_time_annot.set_visible(False)
+
+    def _update_crosshair(self, event):
+        """Hiển thị đường gióng chữ thập nét đứt + nhãn giá tối bên phải + thông số OHLC kiểu TradingView."""
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
+            self._hide_crosshair()
+            return
+        xdata = float(event.xdata)
+        ydata = float(event.ydata)
+        idx = int(round(xdata))
+        snap_x = float(idx) if (0 <= idx < self._chart_total_x) else xdata
+        self._last_hover_xy = (snap_x, ydata)
+        self._apply_crosshair_xy(snap_x, ydata)
+        self.canvas.draw_idle()
 
     def _on_mouse_motion(self, event):
         if self._drag_start_px is None:
-            # Đổi biểu tượng con trỏ chuột thành mũi tên 2 đầu dọc (↕) khi rê vào Thanh Giá như TradingView
-            self.canvas_widget.config(cursor="sb_v_double_arrow" if self._is_on_price_axis(event) else "")
+            if self._is_on_price_axis(event):
+                self.canvas_widget.config(cursor="sb_v_double_arrow")
+                self._hide_crosshair()
+            elif self._is_on_time_axis(event):
+                self.canvas_widget.config(cursor="sb_h_double_arrow")
+                self._hide_crosshair()
+            elif event.inaxes == self.ax:
+                self.canvas_widget.config(cursor="crosshair")
+                self._update_crosshair(event)
+            else:
+                self.canvas_widget.config(cursor="")
+                self._hide_crosshair()
             return
 
         if event.x is None or event.y is None:
@@ -1063,13 +1476,26 @@ class KronosDesktopApp:
             y0, y1 = self._drag_start_ylim
             y_center = (y0 + y1) * 0.5
             y_span = max(y1 - y0, 0.2)
-            # Kéo lên (dy_px > 0) -> Phóng to chiều cao nến (giảm y_span); Kéo xuống (dy_px < 0) -> Thu nhỏ chiều cao nến
             scale_factor = float(np.clip(1.006 ** (-dy_px), 0.15, 8.0))
             new_half = (y_span * scale_factor) * 0.5
             self.saved_xlim = self._drag_start_xlim
             self.saved_ylim = (y_center - new_half, y_center + new_half)
             self.user_zoomed = True
             self.ax.set_ylim(self.saved_ylim)
+            self.canvas.draw_idle()
+        elif self._drag_mode == "X_SCALE":
+            # Kéo chuột trái/phải trên Thanh Thời Gian để thu hẹp hoặc giãn rộng chiều ngang biểu đồ như TradingView
+            x0, x1 = self._drag_start_xlim
+            x_span = max(x1 - x0, 12.0)
+            total_x = max(self._chart_total_x, 80)
+            scale_factor = float(np.clip(1.006 ** (-dx_px), 0.2, 6.0))
+            new_span = float(np.clip(x_span * scale_factor, 16.0, total_x + 20.0))
+            new_left = max(-3.0, x1 - new_span)
+            self.saved_xlim = (new_left, x1)
+            self.saved_ylim = self._drag_start_ylim
+            self.user_zoomed = True
+            self.ax.set_xlim(self.saved_xlim)
+            self._sync_xlim_dependents(self.saved_xlim)
             self.canvas.draw_idle()
         elif self._drag_mode == "PAN":
             x_span = self._drag_start_xlim[1] - self._drag_start_xlim[0]
@@ -1078,12 +1504,16 @@ class KronosDesktopApp:
             dx_data = -(dx_px / bbox.width) * x_span
             dy_data = -(dy_px / bbox.height) * y_span
 
-            self.saved_xlim = (self._drag_start_xlim[0] + dx_data, self._drag_start_xlim[1] + dx_data)
+            total_x = max(self._chart_total_x, 80)
+            new_x0 = float(np.clip(self._drag_start_xlim[0] + dx_data, -10.0, total_x - 5.0))
+            new_x1 = new_x0 + x_span
+            self.saved_xlim = (new_x0, new_x1)
             self.saved_ylim = (self._drag_start_ylim[0] + dy_data, self._drag_start_ylim[1] + dy_data)
             self.user_zoomed = True
 
             self.ax.set_xlim(self.saved_xlim)
             self.ax.set_ylim(self.saved_ylim)
+            self._sync_xlim_dependents(self.saved_xlim)
             self.canvas.draw_idle()
 
     def _add_labeled_entry(self, parent, label_text, default_val, show=None):
@@ -1759,7 +2189,11 @@ class KronosDesktopApp:
     def _refresh_realtime_chart(self, symbol: str, tf_str: str):
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
         active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else tf_str
-        df_live = self.fetch_mt5_candles(symbol, active_tf, 85, include_forming=True)
+        try:
+            chart_bars = min(max(int(self.lookback_var.get() or 400), 300), 500)
+        except ValueError:
+            chart_bars = 400
+        df_live = self.fetch_mt5_candles(symbol, active_tf, chart_bars, include_forming=True)
         if self.chart_mode == "AI_FORECAST":
             self.cached_df_analysis = df_live
         else:
@@ -1849,7 +2283,7 @@ class KronosDesktopApp:
         threading.Thread(target=self._run_analysis_worker, daemon=True).start()
 
     def toggle_bot_start_stop(self):
-        """Gộp chung START và STOP trên 1 nút nhấn thay đổi trạng thái (Bật/Tắt canh nến + Auto-Trade)."""
+        """Gộp chung START và STOP trên 1 công tắc gạt thay đổi trạng thái (Bật/Tắt canh nến + Auto-Trade)."""
         if self.auto_loop_running:
             self.stop_auto_scan()
         else:
@@ -1861,23 +2295,17 @@ class KronosDesktopApp:
         self.auto_loop_running = True
         self.auto_trade_var.set(True)
         self.last_candle_time = None
-        self.start_stop_btn.config(
-            text="⏹️ STOP", bg=RED_DOWN, fg="#ffffff",
-            activebackground="#d32f2f", activeforeground="#ffffff"
-        )
+        self._draw_toggle_switch()
         tf_val = self.tf_var.get().strip()
-        self.log(f"▶️ Đã BẬT Bot (Tự động canh nến {tf_val} & tự động vào lệnh)...")
+        self.log(f"▶️ Đã BẬT công tắc AUTO (Tự động canh nến {tf_val} & tự động vào lệnh)...")
         threading.Thread(target=self._auto_loop_worker, daemon=True).start()
 
     def stop_auto_scan(self):
         self.auto_loop_running = False
         self.auto_trade_var.set(False)
         self.pending_pullback_order = None
-        self.start_stop_btn.config(
-            text="▶️ START", bg=GREEN_UP, fg="#000000",
-            activebackground="#0bb572", activeforeground="#000000"
-        )
-        self.log("⏹️ Đã DỪNG Bot (Ngừng canh nến & tắt tự động vào lệnh).")
+        self._draw_toggle_switch()
+        self.log("⏹️ Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
 
     def _auto_loop_worker(self):
         while self.auto_loop_running:
@@ -1895,7 +2323,7 @@ class KronosDesktopApp:
 
     def _run_analysis_worker(self):
         self.is_analyzing = True
-        self.root.after(0, lambda: self.scan_btn.config(state=tk.DISABLED, text="⏳"))
+        self.root.after(0, self._start_scan_progress_anim)
         try:
             symbol = self.symbol_var.get().strip()
             scalp_tf = self.tf_var.get().strip()
@@ -1907,6 +2335,14 @@ class KronosDesktopApp:
             num_scenarios = int(self.scenarios_var.get())
             min_consensus = float(self.consensus_var.get())
             min_move = float(self.min_move_var.get())
+            try:
+                rev_consensus = float(self.rev_consensus_var.get())
+            except ValueError:
+                rev_consensus = min_consensus
+            try:
+                rev_min_move = max(float(self.rev_min_move_var.get()), 0.0)
+            except ValueError:
+                rev_min_move = 0.0
             max_spread = float(self.max_spread_var.get())
             lot = float(self.lot_var.get())
             sl_atr = float(self.sl_atr_var.get())
@@ -1950,6 +2386,7 @@ class KronosDesktopApp:
 
             if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
                 try:
+                    self._set_loading_stage(55.0, f"Đang gọi Hugging Face Space ({hf_space})...")
                     self.log(f"Đang gọi Hugging Face Space ({hf_space})...")
                     client = Client(hf_space, hf_token=hf_token if hf_token else None)
                     payload = df.copy()
@@ -2086,15 +2523,23 @@ class KronosDesktopApp:
             self.cached_tp = tp_price
 
             # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
+            # Sử dụng ngưỡng riêng (rev_consensus & rev_min_move) trong Mục 3 để kích hoạt ngay cả khi bộ lọc vào lệnh chính đang ĐỨNG NGOÀI!
+            rev_action = action
+            if rev_action is None:
+                if bull_pct >= rev_consensus and (rev_min_move <= 0.0 or expected_move >= rev_min_move):
+                    rev_action = "BUY"
+                elif bear_pct >= rev_consensus and (rev_min_move <= 0.0 or (-expected_move) >= rev_min_move):
+                    rev_action = "SELL"
+
             has_losing_opposite_pos = False
-            if action is not None:
+            if rev_action is not None:
                 open_positions = mt5.positions_get(symbol=symbol)
                 if open_positions:
                     sym_info = mt5.symbol_info(symbol)
                     digits = sym_info.digits if sym_info else 2
                     for pos in open_positions:
                         is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
-                        is_opposite = (action == "BUY" and not is_buy_pos) or (action == "SELL" and is_buy_pos)
+                        is_opposite = (rev_action == "BUY" and not is_buy_pos) or (rev_action == "SELL" and is_buy_pos)
                         if not is_opposite:
                             continue
 
@@ -2103,7 +2548,7 @@ class KronosDesktopApp:
                             if self.auto_rev_close_var.get():
                                 ok_c, msg_c = self._close_single_pos(pos)
                                 self.pending_be_exit_tickets.discard(pos.ticket)
-                                self.log(f"🔄 [Quy tắc 1 - AI Đảo Chiều] Lệnh cũ đang lãi -> {msg_c}")
+                                self.log(f"🔄 [Quy tắc 1 - AI Đảo Chiều sang {rev_action}] Lệnh cũ đang lãi -> {msg_c}")
                         else:
                             # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$)
                             # -> KHÔNG cắt lỗ non, KHÔNG mở lệnh ngược chiều mới, và kéo TP về đúng Entry để chờ hồi hòa vốn thoát!
@@ -2114,12 +2559,12 @@ class KronosDesktopApp:
                                 if abs(pos.tp - entry_exact) >= 0.05:
                                     if self._modify_position_sltp(pos, pos.sl, entry_exact):
                                         self.log(
-                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
+                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
                                             f"đã kéo TP về đúng Entry ({entry_exact:.2f}) chờ hồi Hòa Vốn thoát!"
                                         )
                                     else:
                                         self.log(
-                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
+                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
                                             f"tự động thoát ngay khi giá hồi về Entry ({entry_exact:.2f})!"
                                         )
 
@@ -2127,7 +2572,7 @@ class KronosDesktopApp:
             cur_sl_dist = abs(entry_ref - sl_price)
             limit_entry_price = round((sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price), 2) if max_sl_price > 0.0 else entry_ref
 
-            trade_msg = "Bot đang DỪNG (Bấm ▶️ START để tự vào lệnh)"
+            trade_msg = "Bot đang DỪNG (Gạt công tắc AUTO sang RUNNING để tự vào lệnh)"
             if action is not None:
                 if self._is_daily_limit_locked():
                     self.pending_pullback_order = None
@@ -2168,7 +2613,7 @@ class KronosDesktopApp:
                     self.log(ord_msg)
                 else:
                     self.pending_pullback_order = None
-                    self.log(f"Có tín hiệu {action} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Bấm ▶️ START để Bot tự vào lệnh.")
+                    self.log(f"Có tín hiệu {action} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh.")
             else:
                 self.pending_pullback_order = None
                 self.log(f"Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
@@ -2180,8 +2625,9 @@ class KronosDesktopApp:
             )
 
             self._set_loading_stage(96.0, "Đang dựng biểu đồ nến Real-Time...")
-            df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 85, include_forming=True)
-            df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, 85, include_forming=True)
+            chart_bars = min(max(lookback, 300), 500)
+            df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, chart_bars, include_forming=True)
+            df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=True)
             self.cached_df_hist = df_live_scalp
             self.cached_df_analysis = df_live_ana
             chart_df = df_live_ana if self.chart_mode == "AI_FORECAST" else df_live_scalp
@@ -2193,7 +2639,7 @@ class KronosDesktopApp:
                 self.root.after(0, self._finish_startup_loading)
         finally:
             self.is_analyzing = False
-            self.root.after(0, lambda: self.scan_btn.config(state=tk.NORMAL, text="🔄"))
+            self.root.after(0, self._finish_scan_progress_anim)
 
     def _update_ui_results(self, df_live, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, tf):
         self.signal_title_lbl.config(text=sig_title, fg=sig_color)
@@ -2210,20 +2656,34 @@ class KronosDesktopApp:
             self._finish_startup_loading()
 
     # =========================================================================
-    # VẼ BIỂU ĐỒ THEO 2 CHẾ ĐỘ TAB (NHÃN ENTRY/SL/TP NGẮN GỌN KÈM SỐ LÃI/LỖ)
+    # VẼ BIỂU ĐỒ THEO 2 CHẾ ĐỘ TAB (400 NẾN LỊCH SỬ + CROSSHAIR TRADINGVIEW)
     # =========================================================================
     def _draw_candlestick_chart(self, df_hist, scenarios, mean_df, action, sl_price, tp_price, symbol, tf, has_forming_candle=True):
         self.ax.clear()
         self._style_axes()
+        self._highlight_active_tf_btn(tf)
+        self._pos_text_artists = []
 
-        num_bars = 45 if self.chart_mode == "AI_FORECAST" else 80
-        hist = df_hist.iloc[-num_bars:].reset_index(drop=True)
+        # Nạp tối đa 400 nến lịch sử phía sau để khi thu nhỏ (Zoom Out) hoặc kéo lùi không bị khoảng trống đen
+        max_hist_bars = 400
+        hist = df_hist.iloc[-max_hist_bars:].reset_index(drop=True)
         n_hist = len(hist)
         # Chỉ tính và vẽ phần nến dự báo AI khi đang ở Tab 2 (AI_FORECAST); ẩn hoàn toàn khi ở Tab 1 (LIVE_POSITIONS)
         n_pred = (len(mean_df) if mean_df is not None else 0) if self.chart_mode == "AI_FORECAST" else 0
         total_x = n_hist + n_pred
 
-        # 1. Vẽ nến lịch sử + nến đang nhảy
+        self._chart_hist_df = hist
+        self._chart_mean_df = mean_df if self.chart_mode == "AI_FORECAST" else None
+        self._chart_n_hist = n_hist
+        self._chart_total_x = total_x
+
+        default_vis = 55 if self.chart_mode == "AI_FORECAST" else 75
+        if self.user_zoomed and self.saved_xlim is not None:
+            view_xlim = self.saved_xlim
+        else:
+            view_xlim = (max(-1.5, n_hist - default_vis - 0.5), total_x + 4.0)
+
+        # 1. Vẽ toàn bộ nến lịch sử + nến đang nhảy
         for i in range(n_hist):
             o, h, l, c = hist.loc[i, ["open", "high", "low", "close"]]
             is_forming = (has_forming_candle and i == n_hist - 1)
@@ -2256,54 +2716,59 @@ class KronosDesktopApp:
             zorder=15
         )
 
+        span_x = max(view_xlim[1] - view_xlim[0], 10.0)
+        base_label_x = view_xlim[0] + span_x * 0.018
+        col_step_x = span_x * 0.18
+
         # 2. Nếu đang ở Tab 1 (LIVE_POSITIONS): Hiển thị nhãn Entry, SL, TP kèm cả Mức Giá & Số Lãi/Lỗ ($)
         if self.chart_mode == "LIVE_POSITIONS" and MT5_AVAILABLE:
             open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
-                label_x = (self.saved_xlim[0] + 1.2) if (self.user_zoomed and self.saved_xlim) else 1.2
                 for idx_p, pos in enumerate(open_positions):
                     is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
-                    # Màu sắc Entry phân biệt trực tiếp BUY (Xanh lá) và SELL (Đỏ)
                     entry_col = "#00e676" if is_buy else "#ff5252"
                     text_fg = "#000000" if is_buy else "#ffffff"
                     is_sl_at_entry = (pos.sl > 0 and abs(pos.sl - pos.price_open) < 0.05)
                     is_tp_at_entry = (pos.tp > 0 and abs(pos.tp - pos.price_open) < 0.05)
                     be_tag = " [SL=0]" if is_sl_at_entry else (" [Chờ Hòa Vốn]" if is_tp_at_entry else "")
-                    offset_x = label_x + (idx_p * 16)
+                    offset_x = base_label_x + (idx_p * col_step_x)
 
                     # Đường Entry kèm mức giá & số lãi/lỗ hiện tại
                     self.ax.axhline(y=pos.price_open, color=entry_col, linestyle="--", linewidth=1.2, alpha=0.9)
-                    self.ax.text(
+                    t_ent = self.ax.text(
                         offset_x, pos.price_open,
                         f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} ",
                         color=text_fg, backgroundcolor=entry_col,
-                        fontsize=7.5, fontweight="bold", va="center"
+                        fontsize=7.5, fontweight="bold", va="center", clip_on=True
                     )
+                    self._pos_text_artists.append((t_ent, idx_p))
 
-                    # Đường SL kèm mức giá SL & số lỗ/lãi dự kiến (VD: SL: 4077.35 | -6.7$)
+                    # Đường SL kèm mức giá SL & số lỗ/lãi dự kiến
                     if pos.sl > 0 and not is_sl_at_entry:
                         sl_pnl = self._calc_target_pnl(pos, pos.sl)
                         is_profit_sl = (sl_pnl >= 0)
                         sl_col = GOLD_ACCENT if is_profit_sl else "#ff5252"
                         self.ax.axhline(y=pos.sl, color=sl_col, linestyle=":", linewidth=1.1, alpha=0.85)
-                        self.ax.text(
+                        t_sl = self.ax.text(
                             offset_x, pos.sl,
                             f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) ",
                             color="#000000" if is_profit_sl else "#ffffff",
                             backgroundcolor=sl_col if is_profit_sl else "#6e1b26",
-                            fontsize=7.5, fontweight="bold", va="center"
+                            fontsize=7.5, fontweight="bold", va="center", clip_on=True
                         )
+                        self._pos_text_artists.append((t_sl, idx_p))
 
-                    # Đường TP kèm mức giá TP & số lãi dự kiến (VD: TP: 4057.15 | +13.5$)
+                    # Đường TP kèm mức giá TP & số lãi dự kiến
                     if pos.tp > 0 and not is_tp_at_entry:
                         tp_pnl = self._calc_target_pnl(pos, pos.tp)
                         self.ax.axhline(y=pos.tp, color="#69f0ae", linestyle=":", linewidth=1.1, alpha=0.85)
-                        self.ax.text(
+                        t_tp = self.ax.text(
                             offset_x, pos.tp,
                             f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) ",
                             color="#000000", backgroundcolor="#69f0ae",
-                            fontsize=7.5, fontweight="bold", va="center"
+                            fontsize=7.5, fontweight="bold", va="center", clip_on=True
                         )
+                        self._pos_text_artists.append((t_tp, idx_p))
 
         # Vẽ đường Chờ Giá Hồi về <= SL Tối Đa (nếu đang có tín hiệu chờ hồi)
         if self.pending_pullback_order is not None:
@@ -2314,13 +2779,13 @@ class KronosDesktopApp:
                 max_sl_p = 5.0
             lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=1.2, alpha=0.9)
-            lbl_x = (self.saved_xlim[0] + 1.2) if (self.user_zoomed and self.saved_xlim) else 1.2
-            self.ax.text(
-                lbl_x, lim_entry,
+            t_wait = self.ax.text(
+                base_label_x, lim_entry,
                 f" ⏳ Chờ {p['action']} <= {max_sl_p:.1f} giá (@ {lim_entry:.2f}) ",
                 color="#000000", backgroundcolor=GOLD_ACCENT,
-                fontsize=7.5, fontweight="bold", va="center"
+                fontsize=7.5, fontweight="bold", va="center", clip_on=True
             )
+            self._pos_text_artists.append((t_wait, 0))
 
         # 3. Cụm Dự báo Kronos AI (Chỉ hiển thị ở Tab 2 - AI_FORECAST, ẩn ở Tab 1 - Lệnh đang mở Real-Time)
         all_times = list(hist["timestamps"].dt.strftime("%H:%M"))
@@ -2357,13 +2822,46 @@ class KronosDesktopApp:
                 self.ax.axhline(y=sl_price, color=RED_DOWN, linestyle=":", linewidth=1.3, label=f"SL: {sl_price:.2f} ({est_sl_usd:+.1f}$)")
                 self.ax.axhline(y=tp_price, color=GREEN_UP, linestyle=":", linewidth=1.3, label=f"TP: {tp_price:.2f} ({est_tp_usd:+.1f}$)")
 
-        step = max(1, len(all_times) // 12)
-        tick_indices = list(range(0, len(all_times), step))
-        self.ax.set_xticks(tick_indices)
-        self.ax.set_xticklabels([all_times[k] for k in tick_indices], color=TEXT_MAIN)
+        self._chart_all_times = all_times
+
+        # 4. Khởi tạo bộ Crosshair nét đứt + Nhãn giá tối bên phải kiểu TradingView (Ảnh 1)
+        self.cross_vline = self.ax.axvline(x=n_hist - 1, color="#8b98a9", linestyle="--", linewidth=0.85, alpha=0.85, visible=False, zorder=20)
+        self.cross_hline = self.ax.axhline(y=live_price, color="#8b98a9", linestyle="--", linewidth=0.85, alpha=0.85, visible=False, zorder=20)
+        self.cross_price_annot = self.ax.annotate(
+            "",
+            xy=(1.0, live_price),
+            xycoords=("axes fraction", "data"),
+            xytext=(2, 0),
+            textcoords="offset points",
+            color="#ffffff",
+            fontsize=8.5,
+            fontweight="bold",
+            va="center",
+            ha="left",
+            bbox=dict(boxstyle="square,pad=0.24", facecolor="#131722", edgecolor="#4c525e", lw=1),
+            annotation_clip=False,
+            visible=False,
+            zorder=25
+        )
+        self.cross_time_annot = self.ax.annotate(
+            "",
+            xy=(n_hist - 1, 0.0),
+            xycoords=("data", "axes fraction"),
+            xytext=(0, -14),
+            textcoords="offset points",
+            color="#ffffff",
+            fontsize=8,
+            fontweight="bold",
+            va="center",
+            ha="center",
+            bbox=dict(boxstyle="square,pad=0.22", facecolor="#131722", edgecolor="#4c525e", lw=1),
+            annotation_clip=False,
+            visible=False,
+            zorder=25
+        )
 
         mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
-        zoom_hint = " [Đang Zoom/Pan - Nháy đúp để Reset]" if self.user_zoomed else " [Lăn chuột: Zoom | Kéo chuột: Di chuyển]"
+        zoom_hint = " [Đang Zoom/Pan - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {n_hist} nến — Lăn chuột: Zoom | Kéo: Di chuyển]"
         self.ax.set_title(
             f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f}{zoom_hint}",
             color=GOLD_ACCENT, fontsize=9, fontweight="bold"
@@ -2373,8 +2871,16 @@ class KronosDesktopApp:
         if self.user_zoomed and self.saved_xlim is not None and self.saved_ylim is not None:
             self.ax.set_xlim(self.saved_xlim)
             self.ax.set_ylim(self.saved_ylim)
+            self._sync_xlim_dependents(self.saved_xlim)
         else:
-            self.ax.set_xlim(-1.5, total_x + 4)
+            self.ax.set_xlim(view_xlim)
+            auto_ylim = self._compute_visible_ylim(view_xlim[0], view_xlim[1])
+            if auto_ylim is not None:
+                self.ax.set_ylim(auto_ylim)
+            self._sync_xlim_dependents(view_xlim)
+
+        if self._last_hover_xy is not None:
+            self._apply_crosshair_xy(self._last_hover_xy[0], self._last_hover_xy[1])
 
         self.fig.tight_layout()
         self.canvas.draw_idle()
@@ -2403,6 +2909,8 @@ def run_first_time_setup():
         "auto_trail": True,
         "trail_dist_r": "0.8",
         "auto_rev_close": True,
+        "rev_consensus": "75",
+        "rev_min_move": "0",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
