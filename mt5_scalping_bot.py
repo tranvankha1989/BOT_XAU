@@ -13,6 +13,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 import json
 import math
 import time
+import queue
 import shutil
 import ctypes
 import threading
@@ -183,6 +184,23 @@ PROFILE_STATE_ATTRS = (
     "_sig_color",
 )
 
+# Các thuộc tính do luồng AI cập nhật trực tiếp vào profile_ctx (luồng UI 1 giây không được ghi đè ngược dữ liệu cũ lên)
+AI_MANAGED_STATE_ATTRS = frozenset({
+    "is_analyzing",
+    "last_candle_time",
+    "last_recommendation",
+    "cached_scenarios",
+    "cached_mean_df",
+    "cached_action",
+    "cached_sl",
+    "cached_tp",
+    "cached_df_hist",
+    "cached_df_analysis",
+    "_last_detail_prefix",
+    "_sig_title",
+    "_sig_color",
+})
+
 
 class CollapsibleSection(tk.Frame):
     """Mục giao diện có thể thu gọn / sổ xuống theo kiểu Accordion (mặc định thu gọn)."""
@@ -307,6 +325,12 @@ class KronosDesktopApp:
         self._cached_deals_stats = (0.0, 0, None)
         self._cached_deals_by_sym = {}
         self._ai_scan_lock = threading.Lock()
+        self._mt5_lock = threading.RLock()
+        self._ai_queue = queue.Queue()
+        self._ai_queue_lock = threading.Lock()
+        self._ai_queued_profiles = set()
+        self._ai_current_running_pk = None
+        self._app_closing = False
         self._sig_title = "⚪ ĐANG TẢI DỮ LIỆU & PHÂN TÍCH AI..."
         self._sig_color = GOLD_ACCENT
         self.active_profile_key = "XAUUSD"
@@ -356,6 +380,10 @@ class KronosDesktopApp:
         self._build_startup_loading_overlay()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
+        # Khởi động luồng Hàng Đợi Phân Tích AI (FIFO Queue Worker) tuần tự, đảm bảo XAUUSD & BTCUSD không bao giờ tranh chấp hay trộn dữ liệu
+        self._ai_queue_worker_thread = threading.Thread(target=self._ai_queue_consumer_loop, daemon=True)
+        self._ai_queue_worker_thread.start()
+
         # Khởi động kết nối, chạy phân tích AI lần đầu tự động và bật luồng Real-Time
         self.root.after(150, self.check_mt5_connection)
         self.root.after(350, self.trigger_single_scan)
@@ -401,28 +429,111 @@ class KronosDesktopApp:
         except Exception:
             pass
 
+    def _get_symbol_tolerances(self, symbol: str, tick=None) -> dict:
+        """
+        Trả về bộ ngưỡng đệm kỹ thuật tự động co giãn chuẩn xác theo từng mã giao dịch (XAUUSDm vs BTCUSDm):
+        - Vàng (XAUUSDm ~ 4,670$, spread ~ 0.16$): bước nhảy Trailing 0.40$, đệm dời SL 0.50$, dung sai bằng nhau 0.05$.
+        - Bitcoin (BTCUSDm ~ 75,860$, spread ~ 6.40$): bước nhảy Trailing >= 5.0$ (hoặc 0.8x Spread), đệm dời SL >= 8.0$ (hoặc 1.2x Spread),
+          giúp BTCUSD không bị spam lệnh sửa SL mỗi giây hoặc bị MT5 từ chối vì Stops Level.
+        """
+        sym_up = str(symbol or "").upper()
+        is_btc = "BTC" in sym_up
+        spread = 0.0
+        stops_dist = 0.0
+        try:
+            if MT5_AVAILABLE:
+                if tick is None and symbol:
+                    tick = mt5.symbol_info_tick(symbol)
+                if tick is not None and tick.ask > 0 and tick.bid > 0:
+                    spread = max(float(tick.ask - tick.bid), 0.0)
+                if symbol:
+                    s_info = mt5.symbol_info(symbol)
+                    if s_info is not None:
+                        stops_lvl = getattr(s_info, "trade_stops_level", 0) or 0
+                        pt = getattr(s_info, "point", 0.01) or 0.01
+                        stops_dist = float(stops_lvl) * float(pt)
+        except Exception:
+            pass
+
+        if is_btc:
+            return {
+                "is_btc": True,
+                "eps_equal": 1.50,
+                "min_stop_dist": max(stops_dist * 1.2, spread * 1.2, 8.0),
+                "min_trail_step": max(spread * 0.8, 5.0),
+                "min_manual_be_dist": max(spread * 1.0, 6.0),
+                "sl_break_tol": max(spread * 0.5, 3.0),
+                "max_sl_tol": 1.0,
+                "min_candle_body": 2.0,
+                "min_atr_sl_floor": 20.0,
+                "min_tp_floor": 30.0,
+            }
+        return {
+            "is_btc": False,
+            "eps_equal": 0.05,
+            "min_stop_dist": max(stops_dist * 1.2, spread * 1.2, 0.50),
+            "min_trail_step": 0.40,
+            "min_manual_be_dist": 0.30,
+            "sl_break_tol": 0.25,
+            "max_sl_tol": 0.05,
+            "min_candle_body": 0.05,
+            "min_atr_sl_floor": 1.0,
+            "min_tp_floor": 1.5,
+        }
+
     def _get_profile_cfg(self, profile_key: str = None) -> dict:
-        """Lấy thông số cài đặt của Tab được chỉ định (an toàn đa luồng)."""
+        """Lấy thông số cài đặt độc lập của Tab được chỉ định (an toàn đa luồng, không bao giờ trộn thông số giữa XAUUSD và BTCUSD)."""
         pk = profile_key or self.active_profile_key
-        if pk == self.active_profile_key and hasattr(self, "symbol_var") and threading.current_thread() is threading.main_thread():
+        if (
+            pk == self.active_profile_key
+            and not self._loading_settings
+            and hasattr(self, "symbol_var")
+            and threading.current_thread() is threading.main_thread()
+        ):
             try:
                 smap = self._get_settings_vars_map()
                 cfg = {k: v.get() for k, v in smap.items()}
                 self.profile_settings[pk] = dict(cfg)
-                return cfg
+                return dict(cfg)
             except Exception:
                 pass
         return dict(self.profile_settings.get(pk, DEFAULT_PROFILE_SETTINGS.get(pk, {})))
 
-    def _sync_self_to_active_ctx(self):
-        """Lưu toàn bộ trạng thái và thông số của Tab đang mở vào bộ nhớ riêng của Tab đó."""
+    def _sync_self_to_active_ctx(self, include_ai_state: bool = False):
+        """
+        Lưu trạng thái giao diện và thông số của Tab đang mở vào bộ nhớ riêng của Tab đó.
+        Mặc định KHÔNG ghi đè ngược các thuộc tính do luồng AI quản lý (AI_MANAGED_STATE_ATTRS) để tránh xung đột với luồng quét AI ngầm.
+        """
+        if self._loading_settings:
+            return
         pk = self.active_profile_key
         ctx = self.profile_ctx[pk]
         for attr in PROFILE_STATE_ATTRS:
+            if not include_ai_state and attr in AI_MANAGED_STATE_ATTRS:
+                continue
             ctx[attr] = getattr(self, attr, None)
-        if hasattr(self, "symbol_var"):
+        if hasattr(self, "symbol_var") and threading.current_thread() is threading.main_thread():
             smap = self._get_settings_vars_map()
             self.profile_settings[pk] = {k: v.get() for k, v in smap.items()}
+
+    def _update_forecast_tab_header(self):
+        """Cập nhật tiêu đề Tab 3 và thanh tiêu đề Bảng 6 nến dự báo AI để hiển thị rõ đang thuộc về XAUUSD hay BTCUSD."""
+        pk = self.active_profile_key
+        cfg = self.profile_settings.get(pk, DEFAULT_PROFILE_SETTINGS.get(pk, {}))
+        sym = str(cfg.get("symbol", pk)).strip()
+        ana_tf = str(cfg.get("analysis_tf", cfg.get("tf", "M5"))).strip()
+        scalp_tf = str(cfg.get("tf", "M5")).strip()
+        tf_desc = f"Khung {ana_tf}" if ana_tf == scalp_tf else f"Phân tích {ana_tf} -> Vào lệnh {scalp_tf}"
+        try:
+            if hasattr(self, "bottom_notebook"):
+                self.bottom_notebook.tab(2, text=f"📊 BẢNG GIÁ DỰ BÁO AI [{pk}] & NHẬT KÝ")
+            if hasattr(self, "pred_table_title_lbl"):
+                self.pred_table_title_lbl.config(
+                    text=f"📌 BẢNG 6 NẾN DỰ BÁO AI ĐANG HIỂN THỊ CỦA TAB: {pk} ({sym} — {tf_desc})",
+                    fg=GOLD_ACCENT if pk == "XAUUSD" else CYAN_LIVE
+                )
+        except Exception:
+            pass
 
     def _sync_active_ctx_to_self(self):
         """Nạp toàn bộ trạng thái, thông số Menu, công tắc AUTO và bảng lệnh của Tab đang chọn lên giao diện."""
@@ -446,13 +557,14 @@ class KronosDesktopApp:
             self.pos_summary_lbl = self.pos_summary_lbl_by_profile[pk]
         if hasattr(self, "drawer_title_lbl"):
             self.drawer_title_lbl.config(text=f"BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ({pk})")
+        self._update_forecast_tab_header()
 
     def _switch_active_profile(self, target_key: str):
         """Chuyển đổi dứt khoát giữa Tab XAUUSD và Tab BTCUSD: của Tab nào chỉ hiển thị đúng Tab đó."""
         if target_key not in ("XAUUSD", "BTCUSD"):
             return
         if target_key != self.active_profile_key:
-            self._sync_self_to_active_ctx()
+            self._sync_self_to_active_ctx(include_ai_state=False)
             self.active_profile_key = target_key
             self._sync_active_ctx_to_self()
         else:
@@ -462,6 +574,7 @@ class KronosDesktopApp:
                 self.pos_summary_lbl = self.pos_summary_lbl_by_profile[target_key]
             if hasattr(self, "drawer_title_lbl"):
                 self.drawer_title_lbl.config(text=f"BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ({target_key})")
+            self._update_forecast_tab_header()
 
         # Cập nhật công tắc AUTO và nút Reload theo đúng trạng thái của Tab đang mở
         self._draw_toggle_switch()
@@ -508,7 +621,7 @@ class KronosDesktopApp:
         except Exception:
             pass
 
-        # Nếu Tab vừa chuyển sang chưa có dữ liệu nến/dự báo AI -> Tự động quét AI ngay cho Tab đó
+        # Nếu Tab vừa chuyển sang chưa có dữ liệu nến/dự báo AI -> Đưa vào hàng đợi quét AI cho Tab đó
         if self.cached_df_hist is None and not self.is_analyzing:
             self.trigger_single_scan(profile_key=target_key)
 
@@ -1295,13 +1408,20 @@ class KronosDesktopApp:
 
         # TAB 2: CHI TIẾT 6 CÂY NẾN DỰ BÁO KRONOS AI & NHẬT KÝ LOG
         pred_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
-        self.bottom_notebook.add(pred_tab, text="📊 BẢNG GIÁ DỰ BÁO AI & NHẬT KÝ (BIỂU ĐỒ PHÂN TÍCH AI)")
+        self.bottom_notebook.add(pred_tab, text="📊 BẢNG GIÁ DỰ BÁO AI [XAUUSD] & NHẬT KÝ")
 
         pred_left = tk.Frame(pred_tab, bg=PANEL_BG)
         pred_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 4), pady=4)
 
+        self.pred_table_title_lbl = tk.Label(
+            pred_left,
+            text="📌 BẢNG 6 NẾN DỰ BÁO AI ĐANG HIỂN THỊ CỦA TAB: XAUUSD (XAUUSDm — Khung M15)",
+            bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold"), anchor="w", padx=8, pady=3
+        )
+        self.pred_table_title_lbl.pack(fill=tk.X, pady=(0, 3))
+
         cols = ("timestamps", "open", "high", "low", "close")
-        self.tree = ttk.Treeview(pred_left, columns=cols, show="headings", height=6)
+        self.tree = ttk.Treeview(pred_left, columns=cols, show="headings", height=5)
         headers = {
             "timestamps": "Thời gian dự báo",
             "open": "Open",
@@ -1562,19 +1682,26 @@ class KronosDesktopApp:
     def _on_timeframe_changed(self, *args):
         if self._loading_settings:
             return
+        pk = self.active_profile_key
         self.last_candle_time = None
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
+        if pk in self.profile_ctx:
+            self.profile_ctx[pk]["last_candle_time"] = None
+            self.profile_ctx[pk]["user_zoomed"] = False
+            self.profile_ctx[pk]["saved_xlim"] = None
+            self.profile_ctx[pk]["saved_ylim"] = None
         scalp_tf = self.tf_var.get().strip()
         ana_tf = self.analysis_tf_var.get().strip()
         active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
         self._highlight_active_tf_btn(active_tf)
+        self._update_forecast_tab_header()
         if ana_tf == scalp_tf:
-            self.log(f"🔄 Đã chọn cùng khung {scalp_tf} (Soi {scalp_tf} -> Trade {scalp_tf}). Đang quét lại...")
+            self.log(f"🔄 [{pk}] Đã chọn cùng khung {scalp_tf} (Soi {scalp_tf} -> Trade {scalp_tf}). Đang quét lại...")
         else:
-            self.log(f"🔄 Chế độ Đa Khung: Phân tích AI trên [{ana_tf}] -> Vào lệnh Scalping trên [{scalp_tf}]. Đang quét lại...")
-        self.trigger_single_scan()
+            self.log(f"🔄 [{pk}] Chế độ Đa Khung: Phân tích AI trên [{ana_tf}] -> Vào lệnh Scalping trên [{scalp_tf}]. Đang quét lại...")
+        self.trigger_single_scan(profile_key=pk)
 
     def toggle_left_menu(self):
         """Trượt mượt mà (Slide-Over Animation) cột Menu bên trái mà không làm giật hay vẽ lại biểu đồ."""
@@ -1612,10 +1739,15 @@ class KronosDesktopApp:
         self._drawer_anim_job = self.root.after(12, self._animate_drawer_step, target_x)
 
     def _on_close_window(self):
+        self._app_closing = True
         self.save_user_settings()
         self.auto_loop_running = False
         for pk in self.profile_ctx:
             self.profile_ctx[pk]["auto_loop_running"] = False
+        try:
+            self._ai_queue.put_nowait(None)
+        except Exception:
+            pass
         self._cleanup_workspace_junk()
         self.root.destroy()
 
@@ -1629,6 +1761,7 @@ class KronosDesktopApp:
             self._switch_active_profile("BTCUSD")
         else:
             self.chart_mode = "AI_FORECAST"
+            self._update_forecast_tab_header()
             if self.cached_mean_df is None and not self.is_analyzing:
                 self.trigger_single_scan(profile_key=self.active_profile_key)
 
@@ -2333,11 +2466,12 @@ class KronosDesktopApp:
         sl_price = float(p["sl_price"])
         cur_price = tick.ask if action == "BUY" else tick.bid
         spread_usd = tick.ask - tick.bid
+        tols = self._get_symbol_tolerances(symbol, tick)
 
         cur_sl_dist = (cur_price - sl_price) if action == "BUY" else (sl_price - cur_price)
 
         # 1. Nếu giá chạy ngược xuyên qua luôn mức SL của AI -> Hủy lệnh chờ hồi vì kịch bản đã gãy
-        if cur_sl_dist <= 0.25:
+        if cur_sl_dist <= tols["sl_break_tol"]:
             self.log(f"❌ [{pk} - Hủy Lệnh Chờ Hồi {action}] Giá ({cur_price:.2f}) đã chạm/phá qua mức SL AI ({sl_price:.2f}).")
             ctx["pending_pullback_order"] = None
             if pk == self.active_profile_key:
@@ -2345,7 +2479,7 @@ class KronosDesktopApp:
             return
 
         # 2. Nếu giá đã hồi về vùng cho phép: Khoảng cách SL hiện tại <= SL tối đa (hoặc max_sl_price == 0 là theo AI)
-        if max_sl_price <= 0.0 or cur_sl_dist <= max_sl_price:
+        if max_sl_price <= 0.0 or cur_sl_dist <= max_sl_price + tols["max_sl_tol"]:
             is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
             should_execute = is_auto_on or p.get("manual_queued", False)
             if not should_execute:
@@ -2510,6 +2644,11 @@ class KronosDesktopApp:
         except ValueError:
             be_trigger_r, trail_dist_r = 1.0, 0.35
 
+        tols = self._get_symbol_tolerances(symbol)
+        eps_eq = tols["eps_equal"]
+        min_stop_d = tols["min_stop_dist"]
+        min_trail_step = tols["min_trail_step"]
+
         for pos in positions:
             total_profit += pos.profit
             is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
@@ -2529,7 +2668,7 @@ class KronosDesktopApp:
             # Kiểm tra nếu lệnh đang ở chế độ "Quy tắc 3: Chờ giá hồi về Entry (Hòa vốn) để thoát"
             is_waiting_be_exit = (
                 pos.ticket in self.pending_be_exit_tickets
-                or (pos.tp > 0 and abs(pos.tp - entry_exact) < 0.05)
+                or (pos.tp > 0 and abs(pos.tp - entry_exact) < eps_eq)
             )
             if is_waiting_be_exit:
                 status_str = f"⏳ Chờ về Entry thoát ({current_r:+.2f}R)"
@@ -2541,43 +2680,43 @@ class KronosDesktopApp:
                         self.log(f"🛡️ [{pk} - Quy tắc 3 - Thoát Hòa Vốn] Giá đã hồi về Entry ({entry_exact:.2f}) -> {msg_be}")
                         continue
                 # Nếu TP chưa được đặt về Entry (do lúc trước giá quá sát Entry), tự động đặt TP = Entry khi đủ khoảng cách
-                elif abs(pos.tp - entry_exact) >= 0.05 and abs(pos.price_current - entry_exact) > 0.40:
+                elif abs(pos.tp - entry_exact) >= eps_eq and abs(pos.price_current - entry_exact) > min_stop_d:
                     if self._modify_position_sltp(pos, pos.sl, entry_exact):
                         self.log(f"🎯 [{pk} - Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về đúng Entry ({entry_exact:.2f}) để tự thoát hòa vốn")
 
             if is_buy:
-                if abs(pos.sl - entry_exact) < 0.05:
+                if abs(pos.sl - entry_exact) < eps_eq:
                     status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
                 elif pos.sl > entry_exact:
                     status_str = f"📈 Trailing ({current_r:+.2f}R)"
 
-                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < entry_exact - 0.02):
-                    if entry_exact < pos.price_current - 0.50:
+                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < entry_exact - eps_eq * 0.5):
+                    if entry_exact < pos.price_current - min_stop_d:
                         if self._modify_position_sltp(pos, entry_exact, pos.tp):
                             self.log(f"🛡️ [{pk} - Auto-Hòa Vốn {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} về Entry ({entry_exact:.2f})")
                             status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current - trail_dist_price, digits)
-                    if desired_sl > entry_exact and desired_sl > pos.sl + 0.40:
+                    if desired_sl > entry_exact and desired_sl > pos.sl + min_trail_step and desired_sl < pos.price_current - min_stop_d:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
                             self.log(f"📈 [{pk} - Trailing {current_r:.2f}R] Đã nâng SL lệnh BUY #{pos.ticket} lên {desired_sl:.2f}")
                             status_str = f"📈 Trailing ({current_r:+.2f}R)"
             else:
-                if pos.sl > 0 and abs(pos.sl - entry_exact) < 0.05:
+                if pos.sl > 0 and abs(pos.sl - entry_exact) < eps_eq:
                     status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
                 elif 0 < pos.sl < entry_exact:
                     status_str = f"📉 Trailing ({current_r:+.2f}R)"
 
-                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > entry_exact + 0.02):
-                    if entry_exact > pos.price_current + 0.50:
+                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > entry_exact + eps_eq * 0.5):
+                    if entry_exact > pos.price_current + min_stop_d:
                         if self._modify_position_sltp(pos, entry_exact, pos.tp):
                             self.log(f"🛡️ [{pk} - Auto-Hòa Vốn {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} về Entry ({entry_exact:.2f})")
                             status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current + trail_dist_price, digits)
-                    if desired_sl < entry_exact and (pos.sl == 0 or desired_sl < pos.sl - 0.40):
+                    if desired_sl < entry_exact and (pos.sl == 0 or desired_sl < pos.sl - min_trail_step) and desired_sl > pos.price_current + min_stop_d:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
                             self.log(f"📉 [{pk} - Trailing {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {desired_sl:.2f}")
                             status_str = f"📉 Trailing ({current_r:+.2f}R)"
@@ -2659,13 +2798,15 @@ class KronosDesktopApp:
         if not positions:
             messagebox.showinfo("Thông báo", f"Hiện không có lệnh {symbol} nào đang mở trên MT5.")
             return
+        tols = self._get_symbol_tolerances(symbol)
+        min_be_d = max(tols["min_manual_be_dist"], tols["min_stop_dist"])
         count = 0
         for pos in positions:
             is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
-            if is_buy and pos.price_current > pos.price_open + 0.30:
+            if is_buy and pos.price_current > pos.price_open + min_be_d:
                 if self._modify_position_sltp(pos, pos.price_open, pos.tp):
                     count += 1
-            elif (not is_buy) and pos.price_current < pos.price_open - 0.30:
+            elif (not is_buy) and pos.price_current < pos.price_open - min_be_d:
                 if self._modify_position_sltp(pos, pos.price_open, pos.tp):
                     count += 1
         self.log(f"🛡️ Đã dời SL về đúng giá Entry cho {count} lệnh {symbol} đang có lãi.")
@@ -2777,12 +2918,12 @@ class KronosDesktopApp:
         x_stamp_np = calc_time_stamps(x_timestamp).values.astype(np.float32)
         y_stamp_np = calc_time_stamps(y_timestamp).values.astype(np.float32)
 
-        # Cố định Seed theo dữ liệu OHLC của nến cuối cùng để cùng 1 trạng thái nến luôn cho kết quả dự báo nhất quán (không nhảy ngẫu nhiên)
+        # Cố định Seed độc lập trong ngữ cảnh fork_rng theo dữ liệu OHLC của nến cuối cùng (không làm ảnh hưởng luồng khác)
         last_r = x_np[-1]
         data_seed = int(abs(hash((len(df_in), round(float(last_r[0]), 2), round(float(last_r[1]), 2), round(float(last_r[2]), 2), round(float(last_r[3]), 2))))) % (2**31 - 1)
-        torch.manual_seed(data_seed)
 
-        with torch.no_grad():
+        with torch.random.fork_rng(), torch.no_grad():
+            torch.manual_seed(data_seed)
             x_t = torch.from_numpy(x_norm[np.newaxis, :]).to(device)
             x_st = torch.from_numpy(x_stamp_np[np.newaxis, :]).to(device)
             y_st = torch.from_numpy(y_stamp_np[np.newaxis, :]).to(device)
@@ -2918,8 +3059,6 @@ class KronosDesktopApp:
         return scenarios
 
     def fetch_mt5_candles(self, symbol: str, timeframe_str: str, count: int, include_forming: bool = False):
-        if not mt5.initialize():
-            raise RuntimeError("Không kết nối được phần mềm MT5 Exness.")
         tf_map = {
             "M1": mt5.TIMEFRAME_M1,
             "M5": mt5.TIMEFRAME_M5,
@@ -2927,18 +3066,29 @@ class KronosDesktopApp:
             "H1": mt5.TIMEFRAME_H1
         }
         tf = tf_map.get(timeframe_str, mt5.TIMEFRAME_M5)
-        if not mt5.symbol_select(symbol, True):
-            raise RuntimeError(f"Không tìm thấy mã '{symbol}' trên MT5.")
-
         start_pos = 0 if include_forming else 1
-        rates = mt5.copy_rates_from_pos(symbol, tf, start_pos, count)
+
+        rates = None
+        for attempt in range(3):
+            with self._mt5_lock:
+                if not mt5.initialize():
+                    raise RuntimeError("Không kết nối được phần mềm MT5 Exness.")
+                if not mt5.symbol_select(symbol, True):
+                    raise RuntimeError(f"Không tìm thấy mã '{symbol}' trên MT5.")
+                rates = mt5.copy_rates_from_pos(symbol, tf, start_pos, count)
+            if rates is not None and len(rates) > 0:
+                break
+            if attempt < 2:
+                time.sleep(0.04)
+
         if rates is None or len(rates) == 0:
             raise RuntimeError(f"Không lấy được nến {symbol} ({timeframe_str}) từ MT5.")
 
         df = pd.DataFrame(rates)
         df["timestamps"] = pd.to_datetime(df["time"], unit="s")
         df["volume"] = df["tick_volume"].astype(float)
-        return df[["timestamps", "open", "high", "low", "close", "volume"]].dropna().reset_index(drop=True)
+        df = df[["timestamps", "open", "high", "low", "close", "volume"]].dropna()
+        return df.sort_values("timestamps").reset_index(drop=True)
 
     def _refresh_realtime_chart(self, symbol: str, tf_str: str):
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
@@ -2994,13 +3144,14 @@ class KronosDesktopApp:
 
                     # Cập nhật số Lãi/Lỗ ($) đang nhảy trên nhãn Entry của các lệnh đang mở
                     if open_positions and self._pos_text_artists:
+                        eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
                         pos_by_idx = {i: p for i, p in enumerate(open_positions)}
                         for txt_artist, col_idx in self._pos_text_artists:
                             txt_str = txt_artist.get_text()
                             if txt_str.startswith(" Entry:") and col_idx in pos_by_idx:
                                 p_obj = pos_by_idx[col_idx]
-                                is_sl_be = (p_obj.sl > 0 and abs(p_obj.sl - p_obj.price_open) < 0.05)
-                                is_tp_be = (p_obj.tp > 0 and abs(p_obj.tp - p_obj.price_open) < 0.05)
+                                is_sl_be = (p_obj.sl > 0 and abs(p_obj.sl - p_obj.price_open) < eps_eq)
+                                is_tp_be = (p_obj.tp > 0 and abs(p_obj.tp - p_obj.price_open) < eps_eq)
                                 be_tag = " [SL=0]" if is_sl_be else (" [Chờ Hòa Vốn]" if is_tp_be else "")
                                 txt_artist.set_text(f" Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
 
@@ -3073,8 +3224,9 @@ class KronosDesktopApp:
         except ValueError:
             max_sl_price = 6.0
 
+        tols = self._get_symbol_tolerances(symbol, tick)
         actual_sl_dist = (price - sl_price) if action == "BUY" else (sl_price - price)
-        if max_sl_price > 0.0 and actual_sl_dist > max_sl_price + 0.05:
+        if max_sl_price > 0.0 and actual_sl_dist > max_sl_price + tols["max_sl_tol"]:
             limit_entry = (sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price)
             return (
                 False,
@@ -3106,12 +3258,77 @@ class KronosDesktopApp:
 
         return True, f"✅ [{pk}] ĐÃ KHỚP LỆNH {action} {lot} lot {symbol} @ {price:.2f} | SL: {sl_price:.2f} (-{actual_sl_dist:.2f} giá) | TP: {tp_price:.2f}"
 
+    def enqueue_ai_scan(self, profile_key: str = None, reason: str = "MANUAL", closed_candle_ts=None) -> bool:
+        """
+        Đưa yêu cầu phân tích AI của một mã (XAUUSD / BTCUSD) vào Hàng Đợi Tuần Tự (FIFO Queue):
+        - Nếu cả 2 mã đóng nến cùng lúc trên cùng khung thời gian (VD: cùng M5), mã thứ 2 sẽ xếp hàng chờ mã thứ 1 phân tích xong.
+        - Tuyệt đối không chạy chồng chéo hay trộn lẫn dữ liệu nến giữa XAUUSD và BTCUSD.
+        """
+        pk = profile_key or self.active_profile_key
+        if pk not in self.profile_ctx:
+            return False
+
+        with self._ai_queue_lock:
+            if pk in self._ai_queued_profiles or pk == self._ai_current_running_pk:
+                return False
+            self._ai_queued_profiles.add(pk)
+            self.profile_ctx[pk]["is_analyzing"] = True
+            running_other = self._ai_current_running_pk if (self._ai_current_running_pk and self._ai_current_running_pk != pk) else None
+
+            if pk == self.active_profile_key:
+                self.is_analyzing = True
+                self._ui_after(0, self._start_scan_progress_anim)
+
+            if running_other is not None:
+                wait_title = f"⏳ [{pk}] ĐANG XẾP HÀNG CHỜ AI PHÂN TÍCH XONG [{running_other}]..."
+                self.profile_ctx[pk]["_sig_title"] = wait_title
+                self.profile_ctx[pk]["_sig_color"] = GOLD_ACCENT
+                if pk == self.active_profile_key:
+                    self._sig_title = wait_title
+                    self._sig_color = GOLD_ACCENT
+                    self._ui_after(
+                        0,
+                        lambda t=wait_title: self.signal_title_lbl.config(text=t, fg=GOLD_ACCENT)
+                        if hasattr(self, "signal_title_lbl") and self.signal_title_lbl.winfo_exists()
+                        else None
+                    )
+                self.log(f"⏳ [HÀNG ĐỢI AI - {pk}] Cùng nhịp quét -> Đã xếp hàng chờ AI phân tích xong [{running_other}] trước (Tuần tự FIFO, không trộn dữ liệu)...")
+
+            self._ai_queue.put((pk, reason, closed_candle_ts, time.monotonic()))
+        return True
+
+    def _ai_queue_consumer_loop(self):
+        """Luồng duy nhất chuyên xử lý Hàng Đợi Phân Tích AI theo đúng thứ tự FIFO (First-In-First-Out)."""
+        while not getattr(self, "_app_closing", False):
+            try:
+                item = self._ai_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            pk, reason, closed_candle_ts, enq_mono = item
+            with self._ai_queue_lock:
+                self._ai_queued_profiles.discard(pk)
+                self._ai_current_running_pk = pk
+            try:
+                wait_sec = max(0.0, time.monotonic() - enq_mono)
+                if wait_sec >= 0.25:
+                    self.log(f"▶️ [HÀNG ĐỢI AI - {pk}] Tới lượt phân tích AI (sau {wait_sec:.1f}s xếp hàng chờ)...")
+                self._run_analysis_worker(profile_key=pk, reason=reason, closed_candle_ts=closed_candle_ts)
+            except Exception as e:
+                self.log(f"❌ [HÀNG ĐỢI AI - {pk}] Lỗi thực thi: {e}")
+            finally:
+                with self._ai_queue_lock:
+                    if self._ai_current_running_pk == pk:
+                        self._ai_current_running_pk = None
+                try:
+                    self._ai_queue.task_done()
+                except Exception:
+                    pass
+
     def trigger_single_scan(self, profile_key: str = None):
         pk = profile_key or self.active_profile_key
-        is_ana = self.is_analyzing if pk == self.active_profile_key else self.profile_ctx[pk].get("is_analyzing", False)
-        if is_ana:
-            return
-        threading.Thread(target=self._run_analysis_worker, args=(pk,), daemon=True).start()
+        self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
 
     def _get_live_bot_status_text(self, profile_key: str = None) -> str:
         """Lấy chuỗi trạng thái thực tế của Bot theo đúng Tab để hiển thị đồng bộ trên thanh tín hiệu."""
@@ -3179,16 +3396,19 @@ class KronosDesktopApp:
                 tf = str(cfg.get("tf", "M5")).strip()
                 df_check = self.fetch_mt5_candles(symbol, tf, 3, include_forming=False)
                 latest_time = df_check["timestamps"].iloc[-1]
-                last_ct = self.last_candle_time if pk == self.active_profile_key else ctx.get("last_candle_time")
-                is_ana = self.is_analyzing if pk == self.active_profile_key else ctx.get("is_analyzing", False)
+                last_ct = ctx.get("last_candle_time")
+                is_ana = ctx.get("is_analyzing", False)
                 if last_ct != latest_time and not is_ana:
-                    self.log(f"🔔 [{pk} - {symbol}] Nến {tf} mới vừa đóng ({latest_time}). Đang chạy phân tích AI...")
-                    self._run_analysis_worker(profile_key=pk)
+                    ctx["last_candle_time"] = latest_time
+                    if pk == self.active_profile_key:
+                        self.last_candle_time = latest_time
+                    self.log(f"🔔 [{pk} - {symbol}] Nến {tf} mới vừa đóng ({latest_time}). Đưa vào hàng đợi phân tích AI...")
+                    self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE", closed_candle_ts=latest_time)
             except Exception as e:
                 self.log(f"⚠️ [{pk}] Lỗi canh nến: {e}")
             time.sleep(2)
 
-    def _run_analysis_worker(self, profile_key: str = None):
+    def _run_analysis_worker(self, profile_key: str = None, reason: str = "MANUAL", closed_candle_ts=None):
         pk = profile_key or self.active_profile_key
         self.profile_ctx[pk]["is_analyzing"] = True
         if pk == self.active_profile_key:
@@ -3196,10 +3416,12 @@ class KronosDesktopApp:
             self._ui_after(0, self._start_scan_progress_anim)
         try:
             with self._ai_scan_lock:
-                cfg = self._get_profile_cfg(pk)
+                # Chụp bản sao cấu hình độc lập của đúng hồ sơ pk (XAUUSD hoặc BTCUSD) tại thời điểm bắt đầu phân tích
+                cfg = dict(self._get_profile_cfg(pk))
                 ctx = self.profile_ctx[pk]
-                symbol = str(cfg.get("symbol", "XAUUSDm")).strip()
-                scalp_tf = str(cfg.get("tf", "M5")).strip()
+                default_sym = DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "XAUUSDm")
+                symbol = str(cfg.get("symbol", default_sym)).strip() or default_sym
+                scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
                 analysis_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
                 tf = scalp_tf
                 tf_label = scalp_tf if analysis_tf == scalp_tf else f"AI:{analysis_tf} -> Scalp:{scalp_tf}"
@@ -3229,27 +3451,32 @@ class KronosDesktopApp:
                 hf_space = str(cfg.get("hf_space", "")).strip()
                 hf_token = str(cfg.get("hf_token", "")).strip()
 
-                # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf): luôn nạp tối thiểu 400 nến để vẽ biểu đồ đầy đặn.
+                # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf) riêng cho mã symbol của pk
                 if pk == self.active_profile_key:
                     self._set_loading_stage(28.0, f"Đang tải dữ liệu nến {symbol} ({analysis_tf}) từ MT5...")
                 chart_bars = max(lookback, 400)
                 df_with_forming = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars + 1, include_forming=True)
-                tick = mt5.symbol_info_tick(symbol)
+                with self._mt5_lock:
+                    tick = mt5.symbol_info_tick(symbol)
+                tols = self._get_symbol_tolerances(symbol, tick)
                 server_now_ts = pd.to_datetime(int(tick.time), unit="s") if tick is not None else df_with_forming["timestamps"].iloc[-1]
                 forming_open_ts = df_with_forming["timestamps"].iloc[-1]
                 forming_age_sec = (server_now_ts - forming_open_ts).total_seconds()
-                # Nếu nến mới chỉ vừa mở < 15 giây (ngay thời điểm vừa đóng nến cũ), dùng nến vừa đóng làm mốc chuẩn;
-                # nếu nến hiện tại đã chạy >= 15 giây (hoặc khác khung M15->M5), đưa cả cây nến đang chạy vào để AI phân tích sát giá Live!
-                if forming_age_sec < 15.0 and len(df_with_forming) > 35:
+
+                # Nếu kích hoạt tự động khi đóng nến (AUTO_CANDLE) và cùng khung thời gian, giữ ngưỡng cắt nến mới mở 60s
+                # để dù mã thứ 2 có xếp hàng chờ mã thứ 1 phân tích xong (~2-5s) thì vẫn phân tích chính xác cây nến vừa đóng!
+                age_cutoff_sec = 60.0 if (reason == "AUTO_CANDLE" and analysis_tf == scalp_tf) else 15.0
+                if forming_age_sec < age_cutoff_sec and len(df_with_forming) > 35:
                     df = df_with_forming.iloc[:-1].reset_index(drop=True)
                 else:
                     df = df_with_forming.iloc[-chart_bars:].reset_index(drop=True)
 
                 ai_lookback = min(lookback, 220) if lookback >= 350 else lookback
-                df_ai = df.iloc[-ai_lookback:].reset_index(drop=True)
-                last_close = float(df["close"].iloc[-1])
+                # Sao chép độc lập (Deep Copy) bảng dữ liệu nến đưa vào AI để không bao giờ bị tham chiếu chéo
+                df_ai = df.iloc[-ai_lookback:][["timestamps", "open", "high", "low", "close", "volume"]].copy(deep=True).reset_index(drop=True)
+                last_close = float(df_ai["close"].iloc[-1])
 
-                # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & kết hợp ATR đa khung
+                # 2. Lấy nến Khung Scalping để canh thời điểm đóng nến & kết hợp ATR đa khung
                 if analysis_tf == scalp_tf:
                     df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
                 else:
@@ -3267,7 +3494,7 @@ class KronosDesktopApp:
 
                 spread_usd = (tick.ask - tick.bid) if tick else 0.0
 
-                x_timestamp = df_ai["timestamps"].reset_index(drop=True)
+                x_timestamp = df_ai["timestamps"].copy(deep=True).reset_index(drop=True)
                 delta = x_timestamp.iloc[-1] - x_timestamp.iloc[-2] if len(x_timestamp) >= 2 else pd.Timedelta(minutes=5)
                 future_dates = [x_timestamp.iloc[-1] + delta * (i + 1) for i in range(pred_len)]
                 y_timestamp = pd.Series(pd.to_datetime(future_dates))
@@ -3281,7 +3508,7 @@ class KronosDesktopApp:
                             self._set_loading_stage(55.0, f"Đang gọi Hugging Face Space ({hf_space})...")
                         self.log(f"[{pk}] Đang gọi Hugging Face Space ({hf_space})...")
                         client = Client(hf_space, hf_token=hf_token if hf_token else None)
-                        payload = df_ai.copy()
+                        payload = df_ai.copy(deep=True)
                         payload["timestamps"] = payload["timestamps"].dt.strftime("%Y-%m-%d %H:%M:%S")
                         hf_model_arg = model_choice.replace("AI-", "Kronos-", 1) if model_choice.startswith("AI-") else model_choice
                         res_json = client.predict(
@@ -3333,17 +3560,17 @@ class KronosDesktopApp:
 
                 # Chọn Kịch bản Đại diện Chuẩn nhất (Medoid)
                 best_idx = int(np.argmin([np.mean(np.abs(s["close"].values - mean_closes)) for s in scenarios]))
-                mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy()
+                mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy(deep=True)
 
                 expected_move = avg_end_close - last_close
                 ai_pred_high = float(mean_df["high"].max())
                 ai_pred_low = float(mean_df["low"].min())
                 ai_swing_low_dist = max(last_close - ai_pred_low, 0.0)
                 ai_swing_high_dist = max(ai_pred_high - last_close, 0.0)
-                base_atr_sl = max(atr * sl_atr, 1.0)
+                base_atr_sl = max(atr * sl_atr, tols["min_atr_sl_floor"])
 
-                ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), 1.5)
-                ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), 1.5)
+                ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), tols["min_tp_floor"])
+                ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), tols["min_tp_floor"])
 
                 action = None
                 sig_color = GOLD_ACCENT
@@ -3419,6 +3646,7 @@ class KronosDesktopApp:
                     if open_positions:
                         sym_info = mt5.symbol_info(symbol)
                         digits = sym_info.digits if sym_info else 2
+                        eps_eq = tols["eps_equal"]
                         for pos in open_positions:
                             is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
                             is_opposite = (rev_action == "BUY" and not is_buy_pos) or (rev_action == "SELL" and is_buy_pos)
@@ -3437,7 +3665,7 @@ class KronosDesktopApp:
                                 if auto_rev_close:
                                     entry_exact = round(pos.price_open, digits)
                                     self.pending_be_exit_tickets.add(pos.ticket)
-                                    if abs(pos.tp - entry_exact) >= 0.05:
+                                    if abs(pos.tp - entry_exact) >= eps_eq:
                                         if self._modify_position_sltp(pos, pos.sl, entry_exact):
                                             self.log(
                                                 f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
@@ -3458,8 +3686,8 @@ class KronosDesktopApp:
                 if action is not None:
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
-                        reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-                        trade_msg = f"🔒 Đã dừng giao dịch hết hôm nay ({reason})"
+                        reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
+                        trade_msg = f"🔒 Đã dừng giao dịch hết hôm nay ({reason_lk})"
                         self.log(f"[{pk}] {trade_msg}")
                     elif self._is_cooldown_active(pk):
                         ctx["pending_pullback_order"] = None
@@ -3469,7 +3697,7 @@ class KronosDesktopApp:
                         ctx["pending_pullback_order"] = None
                         trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Không mở {action} đè)"
                         self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
-                    elif max_sl_price > 0.0 and cur_sl_dist > max_sl_price + 0.05:
+                    elif max_sl_price > 0.0 and cur_sl_dist > max_sl_price + tols["max_sl_tol"]:
                         ctx["pending_pullback_order"] = {
                             "symbol": symbol,
                             "action": action,
@@ -3543,6 +3771,14 @@ class KronosDesktopApp:
     def _update_ui_results(self, profile_key, df_live_scalp, df_live_ana, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, scalp_tf, analysis_tf):
         # Chỉ cập nhật lên giao diện chính nếu kết quả thuộc về đúng Tab mà người dùng đang mở!
         if profile_key == self.active_profile_key:
+            for attr in (
+                "last_recommendation", "pending_pullback_order", "cached_scenarios",
+                "cached_mean_df", "cached_action", "cached_sl", "cached_tp",
+                "cached_df_hist", "cached_df_analysis", "_last_detail_prefix",
+                "_sig_title", "_sig_color"
+            ):
+                setattr(self, attr, self.profile_ctx[profile_key].get(attr))
+            self._update_forecast_tab_header()
             self.signal_title_lbl.config(text=sig_title, fg=sig_color)
             self.signal_detail_lbl.config(text=detail_text)
 
@@ -3665,12 +3901,13 @@ class KronosDesktopApp:
         if self.chart_mode == "LIVE_POSITIONS" and MT5_AVAILABLE:
             open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
+                eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
                 for idx_p, pos in enumerate(open_positions):
                     is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
                     entry_col = "#00e676" if is_buy else "#ff5252"
                     text_fg = "#000000" if is_buy else "#ffffff"
-                    is_sl_at_entry = (pos.sl > 0 and abs(pos.sl - pos.price_open) < 0.05)
-                    is_tp_at_entry = (pos.tp > 0 and abs(pos.tp - pos.price_open) < 0.05)
+                    is_sl_at_entry = (pos.sl > 0 and abs(pos.sl - pos.price_open) < eps_eq)
+                    is_tp_at_entry = (pos.tp > 0 and abs(pos.tp - pos.price_open) < eps_eq)
                     be_tag = " [SL=0]" if is_sl_at_entry else (" [Chờ Hòa Vốn]" if is_tp_at_entry else "")
                     offset_x = base_label_x + (idx_p * col_step_x)
 
