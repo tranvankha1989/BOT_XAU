@@ -116,6 +116,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "auto_rev_close": True,
         "rev_consensus": "75",
         "rev_min_move": "0",
+        "be_plus_price": "0.2",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
@@ -150,6 +151,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "auto_rev_close": True,
         "rev_consensus": "75",
         "rev_min_move": "0",
+        "be_plus_price": "5.0",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
@@ -1228,12 +1230,13 @@ class KronosDesktopApp:
 
         self.auto_rev_close_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
-            sec3.content, text="Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry)",
+            sec3.content, text="Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry+)",
             variable=self.auto_rev_close_var, bg=PANEL_BG, fg=GOLD_ACCENT, selectcolor=BG_DARK,
             activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w"
         ).pack(fill=tk.X, pady=(2, 2))
         self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều (%):", "75")
         self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0")
+        self.be_plus_price_var = self._add_labeled_entry(sec3.content, "   + Giá lãi nhỏ vào Entry (Giá):", "0.2")
 
         self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0")
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0")
@@ -1555,6 +1558,7 @@ class KronosDesktopApp:
             "auto_rev_close": self.auto_rev_close_var,
             "rev_consensus": self.rev_consensus_var,
             "rev_min_move": self.rev_min_move_var,
+            "be_plus_price": self.be_plus_price_var,
             "daily_tp_usd": self.daily_tp_usd_var,
             "daily_sl_usd": self.daily_sl_usd_var,
             "max_consec_loss": self.max_consec_loss_var,
@@ -1628,7 +1632,7 @@ class KronosDesktopApp:
                             self.profile_settings[pk][sk] = val
 
                 sym_old = str(data.get("symbol", "XAUUSDm")).strip()
-                sym_specific_keys = ("symbol", "analysis_tf", "tf", "min_move", "max_spread", "sl_buffer", "max_sl_price")
+                sym_specific_keys = ("symbol", "analysis_tf", "tf", "min_move", "max_spread", "sl_buffer", "max_sl_price", "be_plus_price")
                 if "BTC" in sym_old.upper():
                     for k in sym_specific_keys:
                         if k in data:
@@ -2944,11 +2948,16 @@ class KronosDesktopApp:
         total_profit = 0.0
         auto_be = bool(cfg.get("auto_be", True))
         auto_trail = bool(cfg.get("auto_trail", True))
+        default_be_plus = 5.0 if pk == "BTCUSD" else 0.2
         try:
             be_trigger_r = float(cfg.get("be_trigger_r", 1.0))
             trail_dist_r = float(cfg.get("trail_dist_r", 0.35))
         except ValueError:
             be_trigger_r, trail_dist_r = 1.0, 0.35
+        try:
+            be_plus_price = max(float(cfg.get("be_plus_price", default_be_plus)), 0.0)
+        except ValueError:
+            be_plus_price = default_be_plus
 
         tols = self._get_symbol_tolerances(symbol)
         eps_eq = tols["eps_equal"]
@@ -2971,59 +2980,62 @@ class KronosDesktopApp:
                 sym_info = mt5.symbol_info(pos.symbol)
             digits = sym_info.digits if sym_info else 2
             entry_exact = round(pos.price_open, digits)
+            be_target_price = round((pos.price_open + be_plus_price) if is_buy else (pos.price_open - be_plus_price), digits)
+            be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
 
-            # Kiểm tra nếu lệnh đang ở chế độ "Quy tắc 3: Chờ giá hồi về Entry (Hòa vốn) để thoát"
+            # Kiểm tra nếu lệnh đang ở chế độ "Quy tắc 3: Chờ giá hồi về Entry (+ lãi nhỏ) để thoát khi AI báo đảo chiều"
             is_waiting_be_exit = (
                 pos.ticket in self.pending_be_exit_tickets
-                or (pos.tp > 0 and abs(pos.tp - entry_exact) < eps_eq)
+                or (pos.tp > 0 and (abs(pos.tp - be_target_price) < eps_eq or abs(pos.tp - entry_exact) < eps_eq))
             )
             if is_waiting_be_exit:
-                status_str = f"⏳ Chờ về Entry thoát ({current_r:+.2f}R)"
-                # Nếu giá đã hồi về Hòa vốn (profit >= 0 hoặc chạm Entry) mà sàn chưa khớp TP -> Đóng ngay lập tức
-                if pos.profit >= 0.0 or price_move >= 0.0:
+                status_str = f"⏳ Chờ về {be_label_tag} thoát ({current_r:+.2f}R)"
+                # Nếu giá đã hồi về chạm/vượt mức Entry + lãi nhỏ (be_target_price) mà sàn chưa khớp TP -> Đóng ngay lập tức
+                if price_move >= be_plus_price and (pos.profit >= 0.0 or be_plus_price > 0.0):
                     ok_be, msg_be = self._close_single_pos(pos)
                     if ok_be:
                         self.pending_be_exit_tickets.discard(pos.ticket)
-                        self.log(f"🛡️ [{pk} - Quy tắc 3 - Thoát Hòa Vốn] Giá đã hồi về Entry ({entry_exact:.2f}) -> {msg_be}")
+                        self.log(f"🛡️ [{pk} - Quy tắc 3 - Thoát {be_label_tag}] Giá đã hồi về {be_target_price:.2f} -> {msg_be}")
                         continue
-                # Nếu TP chưa được đặt về Entry (do lúc trước giá quá sát Entry), tự động đặt TP = Entry khi đủ khoảng cách
-                elif abs(pos.tp - entry_exact) >= eps_eq and abs(pos.price_current - entry_exact) > min_stop_d:
-                    if self._modify_position_sltp(pos, pos.sl, entry_exact):
-                        self.log(f"🎯 [{pk} - Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về đúng Entry ({entry_exact:.2f}) để tự thoát hòa vốn")
+                # Nếu TP chưa được đặt về be_target_price (do lúc trước giá quá sát), tự động đặt TP = be_target_price khi đủ khoảng cách
+                elif abs(pos.tp - be_target_price) >= eps_eq and abs(pos.price_current - be_target_price) > min_stop_d:
+                    if (is_buy and pos.price_current < be_target_price - min_stop_d) or ((not is_buy) and pos.price_current > be_target_price + min_stop_d):
+                        if self._modify_position_sltp(pos, pos.sl, be_target_price):
+                            self.log(f"🎯 [{pk} - Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về {be_label_tag} ({be_target_price:.2f}) để tự thoát có lãi nhẹ")
 
             if is_buy:
-                if abs(pos.sl - entry_exact) < eps_eq:
-                    status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
-                elif pos.sl > entry_exact:
+                if abs(pos.sl - be_target_price) < eps_eq or abs(pos.sl - entry_exact) < eps_eq:
+                    status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
+                elif pos.sl > be_target_price:
                     status_str = f"📈 Trailing ({current_r:+.2f}R)"
 
-                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < entry_exact - eps_eq * 0.5):
-                    if entry_exact < pos.price_current - min_stop_d:
-                        if self._modify_position_sltp(pos, entry_exact, pos.tp):
-                            self.log(f"🛡️ [{pk} - Auto-Hòa Vốn {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} về Entry ({entry_exact:.2f})")
-                            status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
+                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < be_target_price - eps_eq * 0.5):
+                    if be_target_price < pos.price_current - min_stop_d:
+                        if self._modify_position_sltp(pos, be_target_price, pos.tp):
+                            self.log(f"🛡️ [{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} lên {be_target_price:.2f} (+{be_plus_price:g} giá)")
+                            status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current - trail_dist_price, digits)
-                    if desired_sl > entry_exact and desired_sl > pos.sl + min_trail_step and desired_sl < pos.price_current - min_stop_d:
+                    if desired_sl > be_target_price and desired_sl > pos.sl + min_trail_step and desired_sl < pos.price_current - min_stop_d:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
                             self.log(f"📈 [{pk} - Trailing {current_r:.2f}R] Đã nâng SL lệnh BUY #{pos.ticket} lên {desired_sl:.2f}")
                             status_str = f"📈 Trailing ({current_r:+.2f}R)"
             else:
-                if pos.sl > 0 and abs(pos.sl - entry_exact) < eps_eq:
-                    status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
-                elif 0 < pos.sl < entry_exact:
+                if pos.sl > 0 and (abs(pos.sl - be_target_price) < eps_eq or abs(pos.sl - entry_exact) < eps_eq):
+                    status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
+                elif 0 < pos.sl < be_target_price:
                     status_str = f"📉 Trailing ({current_r:+.2f}R)"
 
-                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > entry_exact + eps_eq * 0.5):
-                    if entry_exact > pos.price_current + min_stop_d:
-                        if self._modify_position_sltp(pos, entry_exact, pos.tp):
-                            self.log(f"🛡️ [{pk} - Auto-Hòa Vốn {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} về Entry ({entry_exact:.2f})")
-                            status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
+                if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > be_target_price + eps_eq * 0.5):
+                    if be_target_price > pos.price_current + min_stop_d:
+                        if self._modify_position_sltp(pos, be_target_price, pos.tp):
+                            self.log(f"🛡️ [{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {be_target_price:.2f} (+{be_plus_price:g} giá)")
+                            status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current + trail_dist_price, digits)
-                    if desired_sl < entry_exact and (pos.sl == 0 or desired_sl < pos.sl - min_trail_step) and desired_sl > pos.price_current + min_stop_d:
+                    if desired_sl < be_target_price and (pos.sl == 0 or desired_sl < pos.sl - min_trail_step) and desired_sl > pos.price_current + min_stop_d:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
                             self.log(f"📉 [{pk} - Trailing {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {desired_sl:.2f}")
                             status_str = f"📉 Trailing ({current_r:+.2f}R)"
@@ -3099,8 +3111,15 @@ class KronosDesktopApp:
             return True, f"✅ Đã đóng lệnh #{pos.ticket} ({pos.symbol}) | Lãi/Lỗ: {pos.profit:+.2f}$"
 
     def breakeven_all_positions(self):
-        """Dời SL về đúng giá Entry (pos.price_open) cho các lệnh đang có lãi của mã giao dịch."""
+        """Dời SL về giá Entry + khoản lãi nhỏ (be_plus_price) cho các lệnh đang có lãi của mã giao dịch."""
+        pk = self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
         symbol = self.symbol_var.get().strip()
+        default_be_plus = 5.0 if pk == "BTCUSD" else 0.2
+        try:
+            be_plus_price = max(float(cfg.get("be_plus_price", default_be_plus)), 0.0)
+        except ValueError:
+            be_plus_price = default_be_plus
         with self._mt5_lock:
             positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
         if not positions:
@@ -3111,14 +3130,16 @@ class KronosDesktopApp:
         count = 0
         for pos in positions:
             is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
-            if is_buy and pos.price_current > pos.price_open + min_be_d:
-                if self._modify_position_sltp(pos, pos.price_open, pos.tp):
+            target_sl = (pos.price_open + be_plus_price) if is_buy else (pos.price_open - be_plus_price)
+            if is_buy and pos.price_current > target_sl + min_be_d:
+                if self._modify_position_sltp(pos, target_sl, pos.tp):
                     count += 1
-            elif (not is_buy) and pos.price_current < pos.price_open - min_be_d:
-                if self._modify_position_sltp(pos, pos.price_open, pos.tp):
+            elif (not is_buy) and pos.price_current < target_sl - min_be_d:
+                if self._modify_position_sltp(pos, target_sl, pos.tp):
                     count += 1
-        self.log(f"🛡️ Đã dời SL về đúng giá Entry cho {count} lệnh {symbol} đang có lãi.")
-        self._update_open_positions_and_manage(symbol, profile_key=self.active_profile_key)
+        plus_tag = f" (+{be_plus_price:g} giá)" if be_plus_price > 0 else ""
+        self.log(f"🛡️ Đã dời SL về Entry{plus_tag} cho {count} lệnh {symbol} đang có lãi.")
+        self._update_open_positions_and_manage(symbol, profile_key=pk)
 
     def close_selected_position(self):
         sel = self.pos_tree.selection()
@@ -3463,14 +3484,22 @@ class KronosDesktopApp:
                     # Cập nhật số Lãi/Lỗ ($) đang nhảy trên nhãn Entry của các lệnh đang mở
                     if open_positions and self._pos_text_artists:
                         eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
+                        cfg_live = self._get_profile_cfg(self.active_profile_key)
+                        def_be_p = 5.0 if self.active_profile_key == "BTCUSD" else 0.2
+                        try:
+                            be_p_live = max(float(cfg_live.get("be_plus_price", def_be_p)), 0.0)
+                        except ValueError:
+                            be_p_live = def_be_p
                         pos_by_idx = {i: p for i, p in enumerate(open_positions)}
                         for txt_artist, col_idx in self._pos_text_artists:
                             txt_str = txt_artist.get_text()
                             if txt_str.startswith(" Entry:") and col_idx in pos_by_idx:
                                 p_obj = pos_by_idx[col_idx]
-                                is_sl_be = (p_obj.sl > 0 and abs(p_obj.sl - p_obj.price_open) < eps_eq)
-                                is_tp_be = (p_obj.tp > 0 and abs(p_obj.tp - p_obj.price_open) < eps_eq)
-                                be_tag = " [SL=0]" if is_sl_be else (" [Chờ Hòa Vốn]" if is_tp_be else "")
+                                is_b = (p_obj.type == mt5.POSITION_TYPE_BUY)
+                                be_t = (p_obj.price_open + be_p_live) if is_b else (p_obj.price_open - be_p_live)
+                                is_sl_be = (p_obj.sl > 0 and (abs(p_obj.sl - be_t) < eps_eq or abs(p_obj.sl - p_obj.price_open) < eps_eq))
+                                is_tp_be = (p_obj.tp > 0 and (abs(p_obj.tp - be_t) < eps_eq or abs(p_obj.tp - p_obj.price_open) < eps_eq))
+                                be_tag = f" [SL=Entry+{be_p_live:g}]" if (is_sl_be and be_p_live > 0) else (" [SL=0]" if is_sl_be else (" [Chờ Entry+]" if is_tp_be else ""))
                                 txt_artist.set_text(f" Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
 
                     mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
@@ -3810,6 +3839,11 @@ class KronosDesktopApp:
                     rev_min_move = max(float(cfg.get("rev_min_move", 0.0)), 0.0)
                 except ValueError:
                     rev_min_move = 0.0
+                default_be_plus = 5.0 if pk == "BTCUSD" else 0.2
+                try:
+                    be_plus_price = max(float(cfg.get("be_plus_price", default_be_plus)), 0.0)
+                except ValueError:
+                    be_plus_price = default_be_plus
                 max_spread = float(cfg.get("max_spread", 0.35))
                 lot = float(cfg.get("lot", 0.01))
                 sl_atr = float(cfg.get("sl_atr", 1.5))
@@ -4033,21 +4067,22 @@ class KronosDesktopApp:
                                     self.pending_be_exit_tickets.discard(pos.ticket)
                                     self.log(f"🔄 [{pk} - Quy tắc 1 - AI Đảo Chiều sang {rev_action}] Lệnh cũ đang lãi -> {msg_c}")
                             else:
-                                # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$) -> Chờ hồi về Entry thoát hòa vốn
+                                # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$) -> Chờ hồi về Entry + khoản lãi nhỏ (be_plus_price) để thoát có lãi nhẹ
                                 has_losing_opposite_pos = True
                                 if auto_rev_close:
-                                    entry_exact = round(pos.price_open, digits)
+                                    be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
+                                    be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
                                     self.pending_be_exit_tickets.add(pos.ticket)
-                                    if abs(pos.tp - entry_exact) >= eps_eq:
-                                        if self._modify_position_sltp(pos, pos.sl, entry_exact):
+                                    if abs(pos.tp - be_target_price) >= eps_eq:
+                                        if self._modify_position_sltp(pos, pos.sl, be_target_price):
                                             self.log(
                                                 f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
-                                                f"đã kéo TP về đúng Entry ({entry_exact:.2f}) chờ hồi Hòa Vốn thoát!"
+                                                f"đã kéo điểm thoát về {be_label_tag} ({be_target_price:.2f}) chờ hồi thoát có lãi nhẹ!"
                                             )
                                         else:
                                             self.log(
                                                 f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
-                                                f"tự động thoát ngay khi giá hồi về Entry ({entry_exact:.2f})!"
+                                                f"tự động thoát ngay khi giá hồi về {be_label_tag} ({be_target_price:.2f})!"
                                             )
 
                 # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL
@@ -4282,13 +4317,25 @@ class KronosDesktopApp:
                 open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
                 eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
+                cfg_chart = self._get_profile_cfg(self.active_profile_key)
+                def_be_p = 5.0 if self.active_profile_key == "BTCUSD" else 0.2
+                try:
+                    be_p_chart = max(float(cfg_chart.get("be_plus_price", def_be_p)), 0.0)
+                except ValueError:
+                    be_p_chart = def_be_p
                 for idx_p, pos in enumerate(open_positions):
                     is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
                     entry_col = "#00e676" if is_buy else "#ff5252"
                     text_fg = "#000000" if is_buy else "#ffffff"
+                    be_target_c = (pos.price_open + be_p_chart) if is_buy else (pos.price_open - be_p_chart)
                     is_sl_at_entry = (pos.sl > 0 and abs(pos.sl - pos.price_open) < eps_eq)
                     is_tp_at_entry = (pos.tp > 0 and abs(pos.tp - pos.price_open) < eps_eq)
-                    be_tag = " [SL=0]" if is_sl_at_entry else (" [Chờ Hòa Vốn]" if is_tp_at_entry else "")
+                    is_sl_at_be_plus = (pos.sl > 0 and abs(pos.sl - be_target_c) < eps_eq)
+                    is_tp_at_be_plus = (pos.tp > 0 and abs(pos.tp - be_target_c) < eps_eq)
+                    be_tag = (
+                        f" [SL=Entry+{be_p_chart:g}]" if (is_sl_at_be_plus and be_p_chart > 0)
+                        else (" [SL=0]" if is_sl_at_entry else (" [Chờ Entry+]" if (is_tp_at_be_plus or is_tp_at_entry) else ""))
+                    )
                     offset_x = base_label_x + (idx_p * col_step_x)
 
                     # Đường Entry kèm mức giá & số lãi/lỗ hiện tại
