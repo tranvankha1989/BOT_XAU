@@ -103,6 +103,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "magic_number": "20260501",
         "scenarios": "8",
         "consensus": "75",
+        "max_dispersion": "2.5",
         "min_move": "1.2",
         "max_spread": "0.35",
         "sl_atr": "1.5",
@@ -125,7 +126,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
         "hf_token": "",
-        "lookback": "200",
+        "lookback": "450",
         "pred_len": "6",
         "realtime_chart": True,
     },
@@ -138,6 +139,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "magic_number": "20260502",
         "scenarios": "8",
         "consensus": "75",
+        "max_dispersion": "2.5",
         "min_move": "150",
         "max_spread": "25.0",
         "sl_atr": "1.5",
@@ -160,7 +162,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
         "hf_token": "",
-        "lookback": "200",
+        "lookback": "450",
         "pred_len": "6",
         "realtime_chart": True,
     },
@@ -1203,6 +1205,7 @@ class KronosDesktopApp:
         sec2 = CollapsibleSection(left_panel, "2. Bộ lọc entry", initially_open=False, group_list=self.accordion_sections)
         self.scenarios_var = self._add_labeled_entry(sec2.content, "Số kịch bản AI (Ensemble):", "8")
         self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75")
+        self.max_dispersion_var = self._add_labeled_entry(sec2.content, "Độ phân tán tối đa (x ATR, 0=Tắt):", "2.5")
         self.min_move_var = self._add_labeled_entry(sec2.content, "Biên độ tối thiểu (Giá):", "1.2")
         self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35")
         self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5")
@@ -1257,7 +1260,7 @@ class KronosDesktopApp:
         )
         self.hf_space_var = self._add_labeled_entry(sec4.content, "HF Space ID:", "tranvankha2807/Kronos_Xau")
         self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*")
-        self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "200")
+        self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6")
 
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM DƯỚI CÙNG CỦA MENU TRÁI
@@ -1545,6 +1548,7 @@ class KronosDesktopApp:
             "magic_number": self.magic_number_var,
             "scenarios": self.scenarios_var,
             "consensus": self.consensus_var,
+            "max_dispersion": self.max_dispersion_var,
             "min_move": self.min_move_var,
             "max_spread": self.max_spread_var,
             "sl_atr": self.sl_atr_var,
@@ -1615,7 +1619,7 @@ class KronosDesktopApp:
             else:
                 # Tự động chuyển đổi (Migration) từ file cài đặt đơn cũ sang 2 hồ sơ độc lập XAUUSD & BTCUSD
                 shared_keys = (
-                    "lot", "max_pos", "scenarios", "consensus", "sl_atr", "rr",
+                    "lot", "max_pos", "scenarios", "consensus", "max_dispersion", "sl_atr", "rr",
                     "auto_be", "be_trigger_r", "auto_trail", "trail_dist_r",
                     "auto_rev_close", "rev_consensus", "rev_min_move",
                     "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins",
@@ -3514,9 +3518,9 @@ class KronosDesktopApp:
                 pass
 
         try:
-            chart_bars = min(max(int(self.lookback_var.get() or 400), 400), 500)
+            chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
         except ValueError:
-            chart_bars = 400
+            chart_bars = 450
         df_live = self.fetch_mt5_candles(symbol, active_tf, chart_bars, include_forming=True)
         if self.chart_mode == "AI_FORECAST":
             self.cached_df_analysis = df_live
@@ -3826,10 +3830,11 @@ class KronosDesktopApp:
                 analysis_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
                 tf = scalp_tf
                 tf_label = scalp_tf if analysis_tf == scalp_tf else f"AI:{analysis_tf} -> Scalp:{scalp_tf}"
-                lookback = int(cfg.get("lookback", 200))
+                lookback = int(cfg.get("lookback", 450))
                 pred_len = int(cfg.get("pred_len", 6))
                 num_scenarios = int(cfg.get("scenarios", 8))
                 min_consensus = float(cfg.get("consensus", 75.0))
+                max_dispersion = float(cfg.get("max_dispersion", 2.5))
                 min_move = float(cfg.get("min_move", 1.2))
                 try:
                     rev_consensus = float(cfg.get("rev_consensus", min_consensus))
@@ -3860,7 +3865,7 @@ class KronosDesktopApp:
                 # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf) riêng cho mã symbol của pk
                 if pk == self.active_profile_key:
                     self._set_loading_stage(28.0, f"Đang tải dữ liệu nến {symbol} ({analysis_tf}) từ MT5...")
-                chart_bars = max(lookback, 400)
+                chart_bars = max(lookback, 450)
                 df_with_forming = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars + 1, include_forming=True)
                 with self._mt5_lock:
                     tick = mt5.symbol_info_tick(symbol)
@@ -3877,7 +3882,7 @@ class KronosDesktopApp:
                 else:
                     df = df_with_forming.iloc[-chart_bars:].reset_index(drop=True)
 
-                ai_lookback = min(lookback, 220) if lookback >= 350 else lookback
+                ai_lookback = min(max(lookback, 50), 500)
                 # Sao chép độc lập (Deep Copy) bảng dữ liệu nến đưa vào AI để không bao giờ bị tham chiếu chéo
                 df_ai = df.iloc[-ai_lookback:][["timestamps", "open", "high", "low", "close", "volume"]].copy(deep=True).reset_index(drop=True)
                 last_close = float(df_ai["close"].iloc[-1])
@@ -3968,6 +3973,15 @@ class KronosDesktopApp:
                 best_idx = int(np.argmin([np.mean(np.abs(s["close"].values - mean_closes)) for s in scenarios]))
                 mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy(deep=True)
 
+                # Phân tích Độ phân tán & Bất định kịch bản (Scenario Uncertainty Quantification)
+                end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
+                scenario_std = float(np.std(end_closes))
+                dispersion_r = float(scenario_std / max(atr, 0.01))
+                dir_pct = max(bull_pct, bear_pct)
+                disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
+                confidence_pct = max(10.0, min(100.0, dir_pct * (1.0 - disp_penalty)))
+                is_high_uncertainty = (max_dispersion > 0.0 and dispersion_r > max_dispersion)
+
                 expected_move = avg_end_close - last_close
                 ai_pred_high = float(mean_df["high"].max())
                 ai_pred_low = float(mean_df["low"].min())
@@ -3982,8 +3996,14 @@ class KronosDesktopApp:
                 sig_color = GOLD_ACCENT
                 ref_tag = ""
                 if bull_pct >= min_consensus and expected_move >= min_move:
-                    action = "BUY"
-                    sig_color = GREEN_UP
+                    if is_high_uncertainty:
+                        action = None
+                        sig_color = GOLD_ACCENT
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
+                    else:
+                        action = "BUY"
+                        sig_color = GREEN_UP
+                        sig_title = f"🟢 TÍN HIỆU [{pk}]: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total}) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
                     entry_ref = tick.ask if tick else last_close
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
@@ -3993,10 +4013,15 @@ class KronosDesktopApp:
                         tp_price = round(eff_entry + (eff_entry - sl_price) * rr, 2)
                     else:
                         tp_price = round(max(ai_pred_high, eff_entry + ai_tp_dist_up), 2)
-                    sig_title = f"🟢 TÍN HIỆU [{pk}]: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total} kịch bản)"
                 elif bear_pct >= min_consensus and (-expected_move) >= min_move:
-                    action = "SELL"
-                    sig_color = RED_DOWN
+                    if is_high_uncertainty:
+                        action = None
+                        sig_color = GOLD_ACCENT
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
+                    else:
+                        action = "SELL"
+                        sig_color = RED_DOWN
+                        sig_title = f"🔴 TÍN HIỆU [{pk}]: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total}) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
                     entry_ref = tick.bid if tick else last_close
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
@@ -4006,7 +4031,6 @@ class KronosDesktopApp:
                         tp_price = round(eff_entry - (sl_price - eff_entry) * rr, 2)
                     else:
                         tp_price = round(min(ai_pred_low, eff_entry - ai_tp_dist_down), 2)
-                    sig_title = f"🔴 TÍN HIỆU [{pk}]: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total} kịch bản)"
                 else:
                     entry_ref = last_close
                     is_bear_bias = (bear_pct > bull_pct) or (bear_pct == bull_pct and expected_move < 0)
@@ -4026,7 +4050,7 @@ class KronosDesktopApp:
                         tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_up
                         sl_price = round(last_close - total_sl_dist, 2)
                         tp_price = round(last_close + tp_dist, 2)
-                    sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI ({tf_label}) — Tăng: {bull_pct:.0f}% | Giảm: {bear_pct:.0f}% | Biên độ dự kiến: {expected_move:+.2f}$"
+                    sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI ({tf_label}) — Tăng: {bull_pct:.0f}% | Giảm: {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR | Tin cậy: {confidence_pct:.0f}%"
 
                 tp_dist = abs(tp_price - entry_ref)
                 ctx["last_recommendation"] = {"sl_dist": sl_ai_raw_dist, "tp_dist": tp_dist}
@@ -4040,7 +4064,7 @@ class KronosDesktopApp:
 
                 # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
                 rev_action = action
-                if rev_action is None:
+                if rev_action is None and not is_high_uncertainty:
                     if bull_pct >= rev_consensus and (rev_min_move <= 0.0 or expected_move >= rev_min_move):
                         rev_action = "BUY"
                     elif bear_pct >= rev_consensus and (rev_min_move <= 0.0 or (-expected_move) >= rev_min_move):
@@ -4140,19 +4164,23 @@ class KronosDesktopApp:
                         self.log(f"[{pk}] Có tín hiệu {action} {symbol} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh.")
                 else:
                     ctx["pending_pullback_order"] = None
-                    self.log(f"[{pk} - {symbol}] Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
+                    if is_high_uncertainty:
+                        trade_msg = f"⚠️ Chặn mở lệnh: Độ phân tán kịch bản AI cao ({dispersion_r:.2f}x ATR > {max_dispersion:.1f}x ATR) — Bất định cao, tránh bẫy giá"
+                        self.log(f"⚠️ [{pk}] Độ phân tán kịch bản AI cao ({dispersion_r:.2f}x ATR > {max_dispersion:.1f}x ATR, độ lệch {scenario_std:.2f}$). Tự động chặn vào lệnh mới để tránh bẫy giá bất định.")
+                    else:
+                        self.log(f"[{pk} - {symbol}] Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
 
                 max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
                 detail_prefix = (
-                    f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  SL AI (+{sl_buffer:.1f} giá): {cur_sl_dist:.2f} giá ({max_sl_str})\n"
-                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   "
+                    f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  Phân tán: {dispersion_r:.2f}x ATR ({scenario_std:.2f}$)  |  Tin cậy AI: {confidence_pct:.0f}%\n"
+                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f} (SL AI: {cur_sl_dist:.2f} giá [{max_sl_str}])   |   🎯 TP: {tp_price:.2f}   |   "
                 )
                 ctx["_last_detail_prefix"] = detail_prefix
                 detail_text = f"{detail_prefix}{trade_msg}"
 
                 if pk == self.active_profile_key:
                     self._set_loading_stage(96.0, f"Đang dựng biểu đồ nến Real-Time ({symbol})...")
-                chart_bars = min(max(lookback, 400), 500)
+                chart_bars = min(max(lookback, 450), 500)
                 df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, chart_bars, include_forming=True)
                 df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=True)
                 ctx["cached_df_hist"] = df_live_scalp
@@ -4218,8 +4246,8 @@ class KronosDesktopApp:
         self._highlight_active_tf_btn(tf)
         self._pos_text_artists = []
 
-        # Nạp tối đa 400 nến lịch sử phía sau để khi thu nhỏ (Zoom Out) hoặc kéo lùi không bị khoảng trống đen
-        max_hist_bars = 400
+        # Nạp tối đa 450 nến lịch sử phía sau để khi thu nhỏ (Zoom Out) hoặc kéo lùi không bị khoảng trống đen
+        max_hist_bars = 450
         hist = df_hist.iloc[-max_hist_bars:].reset_index(drop=True)
         n_hist = len(hist)
         # Chỉ tính và vẽ phần nến dự báo AI khi đang ở Tab 2 (AI_FORECAST); ẩn hoàn toàn khi ở Tab 1 (LIVE_POSITIONS)
