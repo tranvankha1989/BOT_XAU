@@ -297,7 +297,7 @@ class KronosDesktopApp:
         self.cooldown_until = None  # Thời điểm hết hạn tạm ngừng sau chuỗi thua
         self.last_cooldown_deal_ticket = None
         self.left_menu_visible = False  # Mặc định thu gọn vào
-        self.drawer_width = 345
+        self.drawer_width = 355
         self.drawer_x = -350
         self._drawer_anim_job = None
         self.auto_loop_running = False
@@ -1269,8 +1269,8 @@ class KronosDesktopApp:
             list(MODEL_CONFIGS.keys()),
             "AI-base (102.3M - Mạnh nhất)"
         )
-        self.hf_space_var = self._add_labeled_entry(sec4.content, "HF Space ID:", "tranvankha2807/Kronos_Xau")
-        self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*")
+        self.hf_space_var = self._add_labeled_entry(sec4.content, "HF Space ID:", "tranvankha2807/Kronos_Xau", entry_width=18)
+        self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18)
         self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6")
 
@@ -2245,22 +2245,26 @@ class KronosDesktopApp:
             self._sync_xlim_dependents(self.saved_xlim)
             self._request_canvas_redraw()
 
-    def _add_labeled_entry(self, parent, label_text, default_val, show=None):
+    def _add_labeled_entry(self, parent, label_text, default_val, show=None, entry_width=10):
         row = tk.Frame(parent, bg=PANEL_BG)
         row.pack(fill=tk.X, pady=2)
-        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), width=23, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
         var = tk.StringVar(value=default_val)
-        entry = tk.Entry(row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief=tk.FLAT, font=("Consolas", 8), show=show)
-        entry.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        entry = tk.Entry(
+            row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN,
+            relief=tk.FLAT, font=("Consolas", 8), show=show, width=entry_width,
+            justify="center" if entry_width <= 12 else "left"
+        )
+        entry.pack(side=tk.RIGHT)
         return var
 
-    def _add_labeled_combo(self, parent, label_text, values, default_val):
+    def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=15):
         row = tk.Frame(parent, bg=PANEL_BG)
         row.pack(fill=tk.X, pady=2)
-        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), width=23, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
         var = tk.StringVar(value=default_val)
-        cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8))
-        cb.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8), width=combo_width)
+        cb.pack(side=tk.RIGHT)
         return var
 
     def _style_axes(self):
