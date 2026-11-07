@@ -1670,7 +1670,21 @@ class KronosDesktopApp:
             os.makedirs(SETTINGS_DIR, exist_ok=True)
             cur_data = {k: v.get() for k, v in self._get_settings_vars_map().items()}
             self.profile_settings[self.active_profile_key] = dict(cur_data)
+
+            # Đồng bộ các thông tin xác thực & kết nối chung (HF Token, HF Space) cho cả 2 tab
+            # để khi đổi giữa XAUUSD và BTCUSD hoặc khi mở lại app không bao giờ bị mất Token
+            token_val = str(self.hf_token_var.get()).strip()
+            space_val = str(self.hf_space_var.get()).strip()
+            for pk in ("XAUUSD", "BTCUSD"):
+                if pk in self.profile_settings:
+                    if token_val:
+                        self.profile_settings[pk]["hf_token"] = token_val
+                    if space_val:
+                        self.profile_settings[pk]["hf_space"] = space_val
+
             payload = dict(self.profile_settings.get("XAUUSD", cur_data))
+            payload["hf_token"] = token_val
+            payload["hf_space"] = space_val
             payload["profiles"] = {
                 "XAUUSD": dict(self.profile_settings["XAUUSD"]),
                 "BTCUSD": dict(self.profile_settings["BTCUSD"]),
@@ -1740,6 +1754,21 @@ class KronosDesktopApp:
                     except Exception:
                         pass
 
+            # Trích xuất và nạp HF Token từ bất kỳ đâu có lưu (profile hoặc root)
+            token_saved = ""
+            for pk in ("XAUUSD", "BTCUSD"):
+                t = str(self.profile_settings.get(pk, {}).get("hf_token", "")).strip()
+                if t:
+                    token_saved = t
+                    break
+            if not token_saved and isinstance(data, dict):
+                token_saved = str(data.get("hf_token", "")).strip()
+
+            if token_saved:
+                for pk in ("XAUUSD", "BTCUSD"):
+                    if pk in self.profile_settings:
+                        self.profile_settings[pk]["hf_token"] = token_saved
+
             # Mặc định khi mở phần mềm luôn hiển thị Tab XAUUSD đầu tiên
             self.active_profile_key = "XAUUSD"
             self._sync_active_ctx_to_self()
@@ -1765,10 +1794,13 @@ class KronosDesktopApp:
         pk = self.active_profile_key
         defaults = DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"])
         smap = self._get_settings_vars_map()
+        cur_token = str(self.hf_token_var.get()).strip()
 
         self._loading_settings = True
         try:
             for k in keys:
+                if k == "hf_token" and cur_token:
+                    continue  # Không xóa token bảo mật của người dùng khi reset
                 if k in smap and k in defaults:
                     smap[k].set(defaults[k])
                     if pk in self.profile_settings:
@@ -1790,10 +1822,13 @@ class KronosDesktopApp:
 
         defaults = DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"])
         smap = self._get_settings_vars_map()
+        cur_token = str(self.hf_token_var.get()).strip()
 
         self._loading_settings = True
         try:
             for k, val in defaults.items():
+                if k == "hf_token" and cur_token:
+                    continue  # Không xóa token bảo mật cá nhân khi reset thông số giao dịch
                 if k in smap:
                     smap[k].set(val)
                     if pk in self.profile_settings:
