@@ -334,7 +334,7 @@ class KronosDesktopApp:
         self._drag_start_xlim = None
         self._drag_start_ylim = None
         self._drag_mode = None  # "PAN", "Y_SCALE", hoặc "X_SCALE"
-        self._chart_visible_bars = 85
+        self._chart_visible_bars = 170
         self._chart_hist_df = None
         self._chart_mean_df = None
         self._chart_all_times = []
@@ -2179,7 +2179,7 @@ class KronosDesktopApp:
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
-        self._chart_visible_bars = 60 if self.chart_mode == "AI_FORECAST" else 85
+        self._chart_visible_bars = 170
         pk = self.active_profile_key
         ana_tf = self.analysis_tf_var.get().strip()
         scalp_tf = self.tf_var.get().strip()
@@ -2257,17 +2257,15 @@ class KronosDesktopApp:
         y_max = max(highs)
         raw_span = max(y_max - y_min, 0.5)
 
-        # TĂNG CHIỀU CAO NẾN LÊN THÊM 50%:
-        # Chiều cao nến (pixel) tỉ lệ nghịch với độ rộng dải giá Y (y_span).
-        # Khi thu hẹp độ rộng Y hiển thị theo tỉ lệ 1 / 1.5 = 0.667, mỗi cây nến sẽ cao hơn chính xác 50% (1.5x)!
-        scaled_span = max((raw_span * 1.15) / 1.5, 0.8)
+        # Trục giá ôm vừa khít toàn bộ nến trong vùng nhìn (nến nhỏ gọn, thấy rõ ~170 nến), chừa lề ~12% để không bị cắt đỉnh/đáy.
+        scaled_span = max(raw_span * 1.12, 0.8)
 
         # Neo tâm vùng nhìn Y theo giá Live và các nến gần nhất để nến biến động sinh động, rõ nét
         live_p = float(hist["close"].iloc[-1])
         recent_cnt = max(5, min(len(sub), 25))
         recent_sub = sub.iloc[-recent_cnt:]
         recent_mid = (float(recent_sub["high"].max()) + float(recent_sub["low"].min())) * 0.5
-        center_y = live_p * 0.5 + recent_mid * 0.5
+        center_y = (y_min + y_max) * 0.5
 
         half_span = scaled_span * 0.5
         target_y0 = center_y - half_span
@@ -4675,7 +4673,7 @@ class KronosDesktopApp:
         self._chart_n_hist = n_hist
         self._chart_total_x = total_x
 
-        default_vis = 60 if self.chart_mode == "AI_FORECAST" else 85
+        default_vis = 170
         if self.user_zoomed and self.saved_xlim is not None:
             view_xlim = self.saved_xlim
         else:
