@@ -370,7 +370,7 @@ class KronosDesktopApp:
 
         # Trạng thái cửa sổ kiểu MacBook (Traffic Light Minimize / Maximize / Close + Kéo thanh tiêu đề)
         self._win_maximized = False
-        self._win_normal_geom = "1450x880+60+40"
+        self._win_normal_geom = self._get_centered_geometry(1450, 880)
         self._win_drag_offset = None
         self._mac_ctrl_hover = False
         self._minimizing_to_taskbar = False
@@ -606,7 +606,7 @@ class KronosDesktopApp:
             self.signal_detail_lbl.config(text=f"{self._last_detail_prefix}{self._get_live_bot_status_text()}")
         else:
             self.signal_detail_lbl.config(
-                text="💡 Rê chuột: Crosshair | Lăn chuột: Zoom | Kéo trục giá/thời gian: Co giãn nến | Chuột phải: Reset."
+                text="💡 Rê chuột: Crosshair | Lăn chuột: Co giãn nến | Kéo chuột: Di chuyển | Chuột phải / Nháy đúp: Reset."
             )
 
         # Cập nhật bảng 6 cây nến dự báo AI theo đúng Tab đang mở
@@ -894,10 +894,32 @@ class KronosDesktopApp:
                 pass
             self.root.after(220, lambda: self.loading_overlay.destroy() if hasattr(self, "loading_overlay") and self.loading_overlay.winfo_exists() else None)
 
-    def _apply_window_and_taskbar_icon(self):
-        """Gán biểu tượng KhaTran và kích hoạt thanh tiêu đề MacBook không viền (vẫn giữ Icon dưới Taskbar Windows)."""
+    def _get_centered_geometry(self, win_w: int = 1450, win_h: int = 880) -> str:
+        """Tính toán tọa độ để cửa sổ ứng dụng luôn nằm chính giữa màn hình khi khởi động."""
         try:
-            self.root.geometry("1450x880+60+40")
+            self.root.update_idletasks()
+            rect = (ctypes.c_long * 4)()
+            if ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(rect), 0):
+                x0, y0, x1, y1 = int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
+                work_w = max(x1 - x0, win_w)
+                work_h = max(y1 - y0, win_h)
+                pos_x = x0 + max(0, (work_w - win_w) // 2)
+                pos_y = y0 + max(0, (work_h - win_h) // 2)
+                return f"{win_w}x{win_h}+{pos_x}+{pos_y}"
+        except Exception:
+            pass
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        pos_x = max(0, (sw - win_w) // 2)
+        pos_y = max(0, (sh - 40 - win_h) // 2)
+        return f"{win_w}x{win_h}+{pos_x}+{pos_y}"
+
+    def _apply_window_and_taskbar_icon(self):
+        """Gán biểu tượng KhaTran, căn giữa màn hình khi khởi động và kích hoạt thanh tiêu đề MacBook không viền."""
+        try:
+            centered_geom = self._get_centered_geometry(1450, 880)
+            self._win_normal_geom = centered_geom
+            self.root.geometry(centered_geom)
             if os.path.exists(ICON_ICO_FILE):
                 self.root.iconbitmap(default=ICON_ICO_FILE)
                 self.root.wm_iconbitmap(ICON_ICO_FILE)
@@ -1017,26 +1039,6 @@ class KronosDesktopApp:
             self._toggle_maximize_window()
         else:
             self._on_close_window()
-
-    def _draw_mac_chart_zoom_bar(self, hover_idx: int = -1):
-        """Vẽ cụm nút Thu/Phóng biểu đồ (Độ rộng nến) bo tròn kiểu MacBook trên thanh công cụ biểu đồ."""
-        if not hasattr(self, "mac_zoom_canvas") or not self.mac_zoom_canvas.winfo_exists():
-            return
-        c = self.mac_zoom_canvas
-        c.delete("all")
-        w, h = 116, 24
-        self._draw_capsule(c, 1, 1, w - 1, h - 1, fill="#1b2333", outline="#32415c", width=1)
-
-        items = [
-            (20.0, "#ffbd2e", "−", "#4a3200", 0),
-            (58.0, "#28c840", "+", "#064010", 1),
-            (96.0, "#38bdf8", "⟲", "#062c43", 2),
-        ]
-        cy = h / 2.0
-        for cx, col, sym, fg_col, idx in items:
-            rad = 8.5 if hover_idx == idx else 7.5
-            c.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=col, outline="")
-            c.create_text(cx, cy - (0.5 if sym != "⟲" else 0), text=sym, fill=fg_col, font=("Segoe UI", 9, "bold"))
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -1331,7 +1333,7 @@ class KronosDesktopApp:
 
         self.signal_detail_lbl = tk.Label(
             sig_left,
-            text="💡 Rê chuột: Crosshair | Lăn chuột: Zoom | Kéo trục giá/thời gian: Co giãn nến | Chuột phải: Reset.",
+            text="💡 Rê chuột: Crosshair | Lăn chuột: Co giãn nến | Kéo chuột: Di chuyển | Chuột phải / Nháy đúp: Reset.",
             bg=PANEL_BG, fg=TEXT_MAIN, font=("Consolas", 8), justify=tk.LEFT, anchor="w"
         )
         self.signal_detail_lbl.pack(fill=tk.X, pady=(2, 0))
@@ -1344,10 +1346,10 @@ class KronosDesktopApp:
         )
         self.chart_context_menu.add_command(label="🔄 Reset biểu đồ (Auto-Fit)", command=self.reset_chart_view)
         self.chart_context_menu.add_separator()
-        self.chart_context_menu.add_command(label="➕ Giãn rộng nến (Phóng to ngang)", command=lambda: self.adjust_chart_horizontal_scale(0.75))
+        self.chart_context_menu.add_command(label="➕ Mở rộng nến (Phóng to ngang)", command=lambda: self.adjust_chart_horizontal_scale(0.75))
         self.chart_context_menu.add_command(label="➖ Thu hẹp nến (Xem nhiều nến hơn)", command=lambda: self.adjust_chart_horizontal_scale(1.35))
 
-        # Biểu đồ Nến tương tác trực tiếp bằng chuột + Thanh công cụ chọn nhanh Khung M1/M5/M15/H1 & Co giãn nến
+        # Biểu đồ Nến tương tác trực tiếp bằng chuột + Thanh công cụ chọn nhanh Khung M1/M5/M15/H1
         chart_frame = tk.Frame(right_panel, bg=PANEL_BG)
         chart_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
 
@@ -1370,28 +1372,6 @@ class KronosDesktopApp:
             )
             b.pack(side=tk.LEFT, padx=2)
             self.tf_quick_btns[tf_opt] = b
-
-        tk.Label(
-            chart_toolbar, text="  |  THU PHÓNG CHART:", bg="#131822", fg=TEXT_MUTED,
-            font=("Segoe UI", 8, "bold")
-        ).pack(side=tk.LEFT, padx=(8, 4))
-
-        self.mac_zoom_canvas = tk.Canvas(
-            chart_toolbar, width=116, height=24, bg="#131822", highlightthickness=0, cursor="hand2"
-        )
-        self.mac_zoom_canvas.pack(side=tk.LEFT, padx=2)
-        self.mac_zoom_canvas.bind(
-            "<Motion>",
-            lambda e: self._draw_mac_chart_zoom_bar(0 if e.x < 39 else (1 if e.x < 77 else 2))
-        )
-        self.mac_zoom_canvas.bind("<Leave>", lambda e: self._draw_mac_chart_zoom_bar(-1))
-        self.mac_zoom_canvas.bind(
-            "<Button-1>",
-            lambda e: self.adjust_chart_horizontal_scale(1.35) if e.x < 39 else (
-                self.adjust_chart_horizontal_scale(0.75) if e.x < 77 else self.reset_chart_view()
-            )
-        )
-        self._draw_mac_chart_zoom_bar(-1)
 
         self.ohlc_hover_lbl = tk.Label(
             chart_toolbar, text="Rê chuột lên nến để xem giá OHLC & Thời gian",
@@ -1929,32 +1909,11 @@ class KronosDesktopApp:
                     pass
 
     def _on_mouse_scroll(self, event):
-        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
+        """Lăn chuột lên để mở rộng nến (xem rõ chi tiết), lăn chuột xuống để thu hẹp nến (xem bao quát nhiều nến hơn)."""
+        if event.inaxes != self.ax:
             return
-        scale_factor = 0.82 if event.button == "up" else 1.22
-        cur_xlim = self.ax.get_xlim()
-        cur_ylim = self.ax.get_ylim()
-
-        xdata = event.xdata
-        ydata = event.ydata
-
-        total_x = max(self._chart_total_x, 80)
-        new_width = float(np.clip((cur_xlim[1] - cur_xlim[0]) * scale_factor, 14.0, total_x + 25.0))
-        new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
-
-        rel_x = (cur_xlim[1] - xdata) / (cur_xlim[1] - cur_xlim[0] + 1e-9)
-        rel_y = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0] + 1e-9)
-
-        new_x0 = max(-3.0, xdata - new_width * (1 - rel_x))
-        new_x1 = min(total_x + 12.0, new_x0 + new_width)
-        self.saved_xlim = (new_x0, new_x1)
-        self.saved_ylim = (ydata - new_height * (1 - rel_y), ydata + new_height * rel_y)
-        self.user_zoomed = True
-
-        self.ax.set_xlim(self.saved_xlim)
-        self.ax.set_ylim(self.saved_ylim)
-        self._sync_xlim_dependents(self.saved_xlim)
-        self._request_canvas_redraw()
+        scale_factor = 0.80 if event.button == "up" else 1.25
+        self.adjust_chart_horizontal_scale(scale_factor)
 
     def _is_on_price_axis(self, event) -> bool:
         """Kiểm tra xem con trỏ chuột có đang nằm trên vùng Thanh Giá (cột số giá bên phải hoặc bên trái) không."""
@@ -3457,7 +3416,7 @@ class KronosDesktopApp:
                                 txt_artist.set_text(f" Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
 
                     mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
-                    zoom_hint = " [Đang Zoom/Pan - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {len(self._chart_hist_df)} nến — Lăn chuột: Zoom | Kéo: Di chuyển]"
+                    zoom_hint = " [Đang Co giãn/Di chuyển - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {len(self._chart_hist_df)} nến — Lăn chuột: Co giãn nến | Kéo: Di chuyển]"
                     self.ax.set_title(
                         f"[{mode_label}] {symbol} ({active_tf}) — Giá Live: {c:.2f}{zoom_hint}",
                         color=GOLD_ACCENT, fontsize=9, fontweight="bold"
@@ -4390,7 +4349,7 @@ class KronosDesktopApp:
         )
 
         mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
-        zoom_hint = " [Đang Zoom/Pan - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {n_hist} nến — Lăn chuột: Zoom | Kéo: Di chuyển]"
+        zoom_hint = " [Đang Co giãn/Di chuyển - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {n_hist} nến — Lăn chuột: Co giãn nến | Kéo: Di chuyển]"
         self.ax.set_title(
             f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f}{zoom_hint}",
             color=GOLD_ACCENT, fontsize=9, fontweight="bold"
