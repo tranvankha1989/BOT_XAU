@@ -81,3 +81,4 @@ if __name__ == "__main__":
     sym = sys.argv[1] if len(sys.argv) > 1 else "XAUUSDm"
     bars = int(sys.argv[2]) if len(sys.argv) > 2 else 60000
     export_candles(symbol=sym, timeframe_str="M5", count=bars)
+
