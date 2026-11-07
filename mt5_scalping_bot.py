@@ -645,12 +645,7 @@ class KronosDesktopApp:
 
         # Đồng bộ nút khung thời gian hiển thị trên thanh công cụ biểu đồ
         active_view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(target_key, self.tf_var.get().strip())
-        active_tf = (
-            self.analysis_tf_var.get().strip()
-            if self.chart_mode == "AI_FORECAST"
-            else active_view_tf
-        )
-        self._highlight_active_tf_btn(active_tf)
+        self._highlight_active_tf_btn(active_view_tf)
 
         # Cập nhật hộp tín hiệu (Signal Box) của Tab đang mở
         sig_title = self._sig_title or f"⏳ ĐANG TẢI DỮ LIỆU & PHÂN TÍCH AI ({self.symbol_var.get().strip()})..."
@@ -2041,9 +2036,11 @@ class KronosDesktopApp:
             self.profile_ctx[pk]["saved_ylim"] = None
         scalp_tf = self.tf_var.get().strip()
         ana_tf = self.analysis_tf_var.get().strip()
-        if hasattr(self, "chart_view_tf_by_profile"):
+        if not hasattr(self, "chart_view_tf_by_profile"):
+            self.chart_view_tf_by_profile = {}
+        if pk not in self.chart_view_tf_by_profile:
             self.chart_view_tf_by_profile[pk] = scalp_tf
-        active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
+        active_tf = self.chart_view_tf_by_profile.get(pk, scalp_tf)
         self._highlight_active_tf_btn(active_tf)
         self._update_forecast_tab_header()
         if ana_tf == scalp_tf:
@@ -2163,28 +2160,28 @@ class KronosDesktopApp:
         self.saved_xlim = None
         self.saved_ylim = None
         pk = self.active_profile_key
-        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(pk, self.tf_var.get().strip())
-        active_tf = (
-            self.analysis_tf_var.get().strip()
-            if self.chart_mode == "AI_FORECAST"
-            else view_tf
-        )
+        ana_tf = self.analysis_tf_var.get().strip()
+        scalp_tf = self.tf_var.get().strip()
+        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(pk, scalp_tf)
+        active_tf = view_tf
         self._highlight_active_tf_btn(active_tf)
-        if self.chart_mode == "AI_FORECAST":
+        if active_tf == scalp_tf and self.cached_df_hist is not None:
+            active_df = self.cached_df_hist
+        elif active_tf == ana_tf and self.cached_df_analysis is not None:
             active_df = self.cached_df_analysis
         else:
-            if view_tf == self.tf_var.get().strip() and self.cached_df_hist is not None:
-                active_df = self.cached_df_hist
-            else:
-                try:
-                    chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
-                except ValueError:
-                    chart_bars = 450
-                active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), view_tf, chart_bars, include_forming=True)
+            try:
+                chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+            except ValueError:
+                chart_bars = 450
+            active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), active_tf, chart_bars, include_forming=True)
 
         if active_df is not None:
+            show_fan = (self.chart_mode == "AI_FORECAST" and active_tf == ana_tf)
             self._draw_candlestick_chart(
-                active_df, self.cached_scenarios, self.cached_mean_df,
+                active_df,
+                self.cached_scenarios if show_fan else None,
+                self.cached_mean_df if show_fan else None,
                 self.cached_action, self.cached_sl, self.cached_tp,
                 self.symbol_var.get().strip(), active_tf, has_forming_candle=True
             )
@@ -2198,27 +2195,27 @@ class KronosDesktopApp:
         self.saved_ylim = None
         self._chart_visible_bars = 60 if self.chart_mode == "AI_FORECAST" else 85
         pk = self.active_profile_key
-        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(pk, self.tf_var.get().strip())
-        active_tf = (
-            self.analysis_tf_var.get().strip()
-            if self.chart_mode == "AI_FORECAST"
-            else view_tf
-        )
-        if self.chart_mode == "AI_FORECAST":
+        ana_tf = self.analysis_tf_var.get().strip()
+        scalp_tf = self.tf_var.get().strip()
+        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(pk, scalp_tf)
+        active_tf = view_tf
+        if active_tf == scalp_tf and self.cached_df_hist is not None:
+            active_df = self.cached_df_hist
+        elif active_tf == ana_tf and self.cached_df_analysis is not None:
             active_df = self.cached_df_analysis
         else:
-            if view_tf == self.tf_var.get().strip() and self.cached_df_hist is not None:
-                active_df = self.cached_df_hist
-            else:
-                try:
-                    chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
-                except ValueError:
-                    chart_bars = 450
-                active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), view_tf, chart_bars, include_forming=True)
+            try:
+                chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+            except ValueError:
+                chart_bars = 450
+            active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), active_tf, chart_bars, include_forming=True)
 
         if active_df is not None:
+            show_fan = (self.chart_mode == "AI_FORECAST" and active_tf == ana_tf)
             self._draw_candlestick_chart(
-                active_df, self.cached_scenarios, self.cached_mean_df,
+                active_df,
+                self.cached_scenarios if show_fan else None,
+                self.cached_mean_df if show_fan else None,
                 self.cached_action, self.cached_sl, self.cached_tp,
                 self.symbol_var.get().strip(), active_tf, has_forming_candle=True
             )
@@ -3806,7 +3803,7 @@ class KronosDesktopApp:
         active_pk = self.active_profile_key
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
         view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(active_pk, tf_str)
-        active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else view_tf
+        active_tf = view_tf
 
         # Fast-path: Nếu vẫn đang cùng 1 cây nến hiện tại và không có thay đổi lệnh/SL/TP -> chỉ cập nhật tại chỗ cây nến cuối (< 2ms, siêu mượt 60 FPS)
         if (
@@ -3894,14 +3891,15 @@ class KronosDesktopApp:
         except ValueError:
             chart_bars = 450
         df_live = self.fetch_mt5_candles(symbol, active_tf, chart_bars, include_forming=True)
-        if self.chart_mode == "AI_FORECAST":
+        if active_tf == ana_tf:
             self.cached_df_analysis = df_live
-        else:
+        if active_tf == tf_str:
             self.cached_df_hist = df_live
+        show_fan = (self.chart_mode == "AI_FORECAST" and active_tf == ana_tf)
         self._draw_candlestick_chart(
             df_hist=df_live,
-            scenarios=self.cached_scenarios,
-            mean_df=self.cached_mean_df,
+            scenarios=self.cached_scenarios if show_fan else None,
+            mean_df=self.cached_mean_df if show_fan else None,
             action=self.cached_action,
             sl_price=self.cached_sl,
             tp_price=self.cached_tp,
@@ -4638,26 +4636,33 @@ class KronosDesktopApp:
                 self.tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
 
             view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(profile_key, scalp_tf)
-            if self.chart_mode == "AI_FORECAST":
+            if view_tf == scalp_tf:
+                chart_df = df_live_scalp
+                chart_tf = scalp_tf
+            elif view_tf == analysis_tf:
                 chart_df = df_live_ana
                 chart_tf = analysis_tf
             else:
-                if view_tf == scalp_tf:
-                    chart_df = df_live_scalp
-                    chart_tf = scalp_tf
-                elif view_tf == analysis_tf:
-                    chart_df = df_live_ana
-                    chart_tf = analysis_tf
-                else:
-                    try:
-                        chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
-                    except ValueError:
-                        chart_bars = 450
-                    chart_df = self.fetch_mt5_candles(symbol, view_tf, chart_bars, include_forming=True)
-                    chart_tf = view_tf
+                try:
+                    chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+                except ValueError:
+                    chart_bars = 450
+                chart_df = self.fetch_mt5_candles(symbol, view_tf, chart_bars, include_forming=True)
+                chart_tf = view_tf
 
+            show_fan = (self.chart_mode == "AI_FORECAST" and chart_tf == analysis_tf)
             self._highlight_active_tf_btn(chart_tf)
-            self._draw_candlestick_chart(chart_df, scenarios, mean_df, action, sl_price, tp_price, symbol, chart_tf, has_forming_candle=True)
+            self._draw_candlestick_chart(
+                chart_df,
+                scenarios if show_fan else None,
+                mean_df if show_fan else None,
+                action,
+                sl_price,
+                tp_price,
+                symbol,
+                chart_tf,
+                has_forming_candle=True
+            )
 
         if self._is_initial_loading:
             self._finish_startup_loading()
