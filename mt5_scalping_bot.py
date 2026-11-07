@@ -87,6 +87,102 @@ GREEN_UP = "#0ecb81"
 RED_DOWN = "#f6465d"
 CYAN_LIVE = "#00e5ff"
 
+DEFAULT_PROFILE_SETTINGS = {
+    "XAUUSD": {
+        "symbol": "XAUUSDm",
+        "analysis_tf": "M15",
+        "tf": "M5",
+        "lot": "0.01",
+        "max_pos": "5",
+        "scenarios": "8",
+        "consensus": "75",
+        "min_move": "1.2",
+        "max_spread": "0.35",
+        "sl_atr": "1.5",
+        "sl_buffer": "0.5",
+        "max_sl_price": "6.0",
+        "rr": "2.0",
+        "auto_be": True,
+        "be_trigger_r": "1.0",
+        "auto_trail": True,
+        "trail_dist_r": "0.35",
+        "auto_rev_close": True,
+        "rev_consensus": "75",
+        "rev_min_move": "0",
+        "daily_tp_usd": "0",
+        "daily_sl_usd": "0",
+        "max_consec_loss": "0",
+        "cooldown_mins": "30",
+        "engine": "Chạy trực tiếp máy nhà",
+        "model": "AI-base (102.3M - Mạnh nhất)",
+        "hf_space": "tranvankha2807/Kronos_Xau",
+        "hf_token": "",
+        "lookback": "200",
+        "pred_len": "6",
+        "realtime_chart": True,
+    },
+    "BTCUSD": {
+        "symbol": "BTCUSDm",
+        "analysis_tf": "M5",
+        "tf": "M5",
+        "lot": "0.01",
+        "max_pos": "5",
+        "scenarios": "8",
+        "consensus": "75",
+        "min_move": "150",
+        "max_spread": "25.0",
+        "sl_atr": "1.5",
+        "sl_buffer": "25.0",
+        "max_sl_price": "250.0",
+        "rr": "2.0",
+        "auto_be": True,
+        "be_trigger_r": "1.0",
+        "auto_trail": True,
+        "trail_dist_r": "0.35",
+        "auto_rev_close": True,
+        "rev_consensus": "75",
+        "rev_min_move": "0",
+        "daily_tp_usd": "0",
+        "daily_sl_usd": "0",
+        "max_consec_loss": "0",
+        "cooldown_mins": "30",
+        "engine": "Chạy trực tiếp máy nhà",
+        "model": "AI-base (102.3M - Mạnh nhất)",
+        "hf_space": "tranvankha2807/Kronos_Xau",
+        "hf_token": "",
+        "lookback": "200",
+        "pred_len": "6",
+        "realtime_chart": True,
+    },
+}
+
+PROFILE_STATE_ATTRS = (
+    "auto_loop_running",
+    "is_analyzing",
+    "last_candle_time",
+    "last_recommendation",
+    "pending_pullback_order",
+    "daily_limit_locked_date",
+    "daily_limit_reason",
+    "cached_daily_pnl",
+    "consec_loss_count",
+    "cooldown_until",
+    "last_cooldown_deal_ticket",
+    "cached_scenarios",
+    "cached_mean_df",
+    "cached_action",
+    "cached_sl",
+    "cached_tp",
+    "cached_df_hist",
+    "cached_df_analysis",
+    "user_zoomed",
+    "saved_xlim",
+    "saved_ylim",
+    "_last_detail_prefix",
+    "_sig_title",
+    "_sig_color",
+)
+
 
 class CollapsibleSection(tk.Frame):
     """Mục giao diện có thể thu gọn / sổ xuống theo kiểu Accordion (mặc định thu gọn)."""
@@ -209,6 +305,21 @@ class KronosDesktopApp:
         self._chart_bg_bbox = None
         self._last_deals_check_ts = 0.0
         self._cached_deals_stats = (0.0, 0, None)
+        self._cached_deals_by_sym = {}
+        self._ai_scan_lock = threading.Lock()
+        self._sig_title = "⚪ ĐANG TẢI DỮ LIỆU & PHÂN TÍCH AI..."
+        self._sig_color = GOLD_ACCENT
+        self.active_profile_key = "XAUUSD"
+        self.profile_settings = {
+            "XAUUSD": dict(DEFAULT_PROFILE_SETTINGS["XAUUSD"]),
+            "BTCUSD": dict(DEFAULT_PROFILE_SETTINGS["BTCUSD"]),
+        }
+        self.profile_ctx = {
+            "XAUUSD": self._create_empty_profile_ctx("XAUUSD"),
+            "BTCUSD": self._create_empty_profile_ctx("BTCUSD"),
+        }
+        self.pos_tree_by_profile = {}
+        self.pos_summary_lbl_by_profile = {}
         self.cross_vline = None
         self.cross_hline = None
         self.cross_price_annot = None
@@ -249,6 +360,157 @@ class KronosDesktopApp:
         self.root.after(150, self.check_mt5_connection)
         self.root.after(350, self.trigger_single_scan)
         self.root.after(1000, self._realtime_tick_loop)
+
+    def _create_empty_profile_ctx(self, profile_key: str) -> dict:
+        """Khởi tạo bộ trạng thái độc lập cho từng Tab (XAUUSD / BTCUSD)."""
+        sym_default = DEFAULT_PROFILE_SETTINGS.get(profile_key, {}).get("symbol", profile_key)
+        return {
+            "auto_loop_running": False,
+            "is_analyzing": False,
+            "last_candle_time": None,
+            "last_recommendation": None,
+            "pending_pullback_order": None,
+            "daily_limit_locked_date": None,
+            "daily_limit_reason": "",
+            "cached_daily_pnl": 0.0,
+            "consec_loss_count": 0,
+            "cooldown_until": None,
+            "last_cooldown_deal_ticket": None,
+            "cached_scenarios": None,
+            "cached_mean_df": None,
+            "cached_action": None,
+            "cached_sl": None,
+            "cached_tp": None,
+            "cached_df_hist": None,
+            "cached_df_analysis": None,
+            "user_zoomed": False,
+            "saved_xlim": None,
+            "saved_ylim": None,
+            "_last_detail_prefix": None,
+            "_sig_title": f"⏳ ĐANG TẢI DỮ LIỆU & PHÂN TÍCH AI ({sym_default})...",
+            "_sig_color": GOLD_ACCENT,
+        }
+
+    def _ui_after(self, delay_ms: int, fn, *args):
+        """Gọi hàm cập nhật giao diện an toàn từ mọi luồng (Thread-Safe)."""
+        try:
+            if threading.current_thread() is threading.main_thread() and delay_ms == 0:
+                fn(*args)
+            else:
+                self.root.after(delay_ms, fn, *args)
+        except Exception:
+            pass
+
+    def _get_profile_cfg(self, profile_key: str = None) -> dict:
+        """Lấy thông số cài đặt của Tab được chỉ định (an toàn đa luồng)."""
+        pk = profile_key or self.active_profile_key
+        if pk == self.active_profile_key and hasattr(self, "symbol_var") and threading.current_thread() is threading.main_thread():
+            try:
+                smap = self._get_settings_vars_map()
+                cfg = {k: v.get() for k, v in smap.items()}
+                self.profile_settings[pk] = dict(cfg)
+                return cfg
+            except Exception:
+                pass
+        return dict(self.profile_settings.get(pk, DEFAULT_PROFILE_SETTINGS.get(pk, {})))
+
+    def _sync_self_to_active_ctx(self):
+        """Lưu toàn bộ trạng thái và thông số của Tab đang mở vào bộ nhớ riêng của Tab đó."""
+        pk = self.active_profile_key
+        ctx = self.profile_ctx[pk]
+        for attr in PROFILE_STATE_ATTRS:
+            ctx[attr] = getattr(self, attr, None)
+        if hasattr(self, "symbol_var"):
+            smap = self._get_settings_vars_map()
+            self.profile_settings[pk] = {k: v.get() for k, v in smap.items()}
+
+    def _sync_active_ctx_to_self(self):
+        """Nạp toàn bộ trạng thái, thông số Menu, công tắc AUTO và bảng lệnh của Tab đang chọn lên giao diện."""
+        pk = self.active_profile_key
+        ctx = self.profile_ctx[pk]
+        for attr in PROFILE_STATE_ATTRS:
+            setattr(self, attr, ctx.get(attr))
+        self._loading_settings = True
+        try:
+            smap = self._get_settings_vars_map()
+            prof_cfg = self.profile_settings.get(pk, DEFAULT_PROFILE_SETTINGS[pk])
+            for k, var in smap.items():
+                if k in prof_cfg:
+                    var.set(prof_cfg[k])
+            self.auto_trade_var.set(bool(self.auto_loop_running))
+        finally:
+            self._loading_settings = False
+        if pk in self.pos_tree_by_profile:
+            self.pos_tree = self.pos_tree_by_profile[pk]
+        if pk in self.pos_summary_lbl_by_profile:
+            self.pos_summary_lbl = self.pos_summary_lbl_by_profile[pk]
+        if hasattr(self, "drawer_title_lbl"):
+            self.drawer_title_lbl.config(text=f"BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ({pk})")
+
+    def _switch_active_profile(self, target_key: str):
+        """Chuyển đổi dứt khoát giữa Tab XAUUSD và Tab BTCUSD: của Tab nào chỉ hiển thị đúng Tab đó."""
+        if target_key not in ("XAUUSD", "BTCUSD"):
+            return
+        if target_key != self.active_profile_key:
+            self._sync_self_to_active_ctx()
+            self.active_profile_key = target_key
+            self._sync_active_ctx_to_self()
+        else:
+            if target_key in self.pos_tree_by_profile:
+                self.pos_tree = self.pos_tree_by_profile[target_key]
+            if target_key in self.pos_summary_lbl_by_profile:
+                self.pos_summary_lbl = self.pos_summary_lbl_by_profile[target_key]
+            if hasattr(self, "drawer_title_lbl"):
+                self.drawer_title_lbl.config(text=f"BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ({target_key})")
+
+        # Cập nhật công tắc AUTO và nút Reload theo đúng trạng thái của Tab đang mở
+        self._draw_toggle_switch()
+        if self.is_analyzing:
+            self._start_scan_progress_anim()
+        else:
+            self._scan_pct = 100.0
+            self._scan_target_pct = 100.0
+            self._draw_reload_pill()
+
+        # Cập nhật hộp tín hiệu (Signal Box) của Tab đang mở
+        sig_title = self._sig_title or f"⏳ ĐANG TẢI DỮ LIỆU & PHÂN TÍCH AI ({self.symbol_var.get().strip()})..."
+        sig_color = self._sig_color or GOLD_ACCENT
+        self.signal_title_lbl.config(text=sig_title, fg=sig_color)
+        if self._last_detail_prefix:
+            self.signal_detail_lbl.config(text=f"{self._last_detail_prefix}{self._get_live_bot_status_text()}")
+        else:
+            self.signal_detail_lbl.config(
+                text="💡 Rê chuột: Crosshair | Lăn chuột: Zoom | Kéo trục giá/thời gian: Co giãn nến | Chuột phải: Reset."
+            )
+
+        # Cập nhật bảng 6 cây nến dự báo AI theo đúng Tab đang mở
+        if hasattr(self, "tree"):
+            for row in self.tree.get_children():
+                self.tree.delete(row)
+            if self.cached_mean_df is not None:
+                for _, r in self.cached_mean_df.iterrows():
+                    ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
+                    self.tree.insert(
+                        "", tk.END,
+                        values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}")
+                    )
+
+        # Cập nhật ngay giá Live, bảng lệnh đang mở và thông tin nhanh cho Tab vừa chọn
+        try:
+            if MT5_AVAILABLE and mt5.initialize():
+                sym = self.symbol_var.get().strip()
+                tf_s = self.tf_var.get().strip()
+                mt5.symbol_select(sym, True)
+                tick = mt5.symbol_info_tick(sym)
+                pos_cnt, tot_prof = self._update_open_positions_and_manage(sym, profile_key=target_key)
+                self._check_daily_profit_loss_limits(tot_prof, tick, profile_key=target_key)
+                self._update_left_quick_info(sym, tf_s, tick, pos_cnt, tot_prof)
+        except Exception:
+            pass
+
+        # Nếu Tab vừa chuyển sang chưa có dữ liệu nến/dự báo AI -> Tự động quét AI ngay cho Tab đó
+        if self.cached_df_hist is None and not self.is_analyzing:
+            self.trigger_single_scan(profile_key=target_key)
 
     def _cleanup_workspace_junk(self):
         """Tự động dọn dẹp mọi thư mục đệm (__pycache__, .pytest_cache, file .pyc/.tmp/.log) nếu có phát sinh."""
@@ -331,8 +593,7 @@ class KronosDesktopApp:
         if not self._is_initial_loading:
             return
         self._loading_target_pct = max(self._loading_target_pct, float(target_pct))
-        if hasattr(self, "loading_sub_lbl") and self.loading_sub_lbl.winfo_exists():
-            self.root.after(0, lambda: self.loading_sub_lbl.config(text=sub_text) if self.loading_sub_lbl.winfo_exists() else None)
+        self._ui_after(0, lambda: self.loading_sub_lbl.config(text=sub_text) if hasattr(self, "loading_sub_lbl") and self.loading_sub_lbl.winfo_exists() else None)
 
     @staticmethod
     def _draw_capsule(canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float, fill: str, outline: str = "", width: int = 1):
@@ -756,10 +1017,11 @@ class KronosDesktopApp:
         )
         self.drawer_close_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        tk.Label(
-            drawer_header, text="BẢNG ĐIỀU KHIỂN & CÀI ĐẶT",
+        self.drawer_title_lbl = tk.Label(
+            drawer_header, text="BẢNG ĐIỀU KHIỂN & CÀI ĐẶT (XAUUSD)",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold"), anchor="w"
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        )
+        self.drawer_title_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # KHỐI ĐẦU MENU: KẾT NỐI MT5, CHART REAL-TIME & DÒNG HIỂN THỊ SỐ DƯ BÊN DƯỚI
         menu_top_card = tk.Frame(left_panel, bg="#121722", padx=8, pady=6, highlightthickness=1, highlightbackground="#263147")
@@ -793,7 +1055,7 @@ class KronosDesktopApp:
 
         # Mục 1: 1. Cài đặt (Mặc định thu gọn)
         sec1 = CollapsibleSection(left_panel, "1. Cài đặt", initially_open=False, group_list=self.accordion_sections)
-        self.symbol_var = self._add_labeled_entry(sec1.content, "Mã Vàng MT5:", "XAUUSDm")
+        self.symbol_var = self._add_labeled_entry(sec1.content, "Mã giao dịch MT5:", "XAUUSDm")
         self.analysis_tf_var = self._add_labeled_combo(sec1.content, "Khung phân tích AI:", ["M1", "M5", "M15", "H1"], "M15")
         self.tf_var = self._add_labeled_combo(sec1.content, "Khung vào lệnh (Scalp):", ["M1", "M5", "M15", "H1"], "M5")
         self.lot_var = self._add_labeled_entry(sec1.content, "Khối lượng (Lot):", "0.01")
@@ -1013,66 +1275,23 @@ class KronosDesktopApp:
         self.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
         self.canvas.mpl_connect("resize_event", lambda e: setattr(self, "_chart_bg_bbox", None))
 
-        # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB (CHUYỂN TAB SẼ CHUYỂN CHẾ ĐỘ BIỂU ĐỒ)
+        # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB (XAUUSD | BTCUSD | DỰ BÁO AI & NHẬT KÝ)
         self.bottom_notebook = ttk.Notebook(right_panel, height=200)
         self.bottom_notebook.pack(fill=tk.X)
 
-        # TAB 1: QUẢN LÝ LỆNH ĐANG MỞ REAL-TIME
-        pos_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
-        self.bottom_notebook.add(pos_tab, text="⚡ LỆNH ĐANG MỞ REAL-TIME (BIỂU ĐỒ LỆNH)")
+        # TAB 0 (Mặc định khi mở App): XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
+        pos_tab_xau = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+        self.bottom_notebook.add(pos_tab_xau, text="⚡ XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)")
+        self._build_positions_tab_ui(pos_tab_xau, "XAUUSD")
 
-        pos_top_bar = tk.Frame(pos_tab, bg=PANEL_BG, pady=4, padx=6)
-        pos_top_bar.pack(fill=tk.X)
+        # TAB 1 (Tab mới): BTCUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
+        pos_tab_btc = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+        self.bottom_notebook.add(pos_tab_btc, text="₿ BTCUSD (BIỂU ĐỒ & LỆNH REAL-TIME)")
+        self._build_positions_tab_ui(pos_tab_btc, "BTCUSD")
 
-        tk.Button(
-            pos_top_bar, text="🔥 ĐÓNG TẤT CẢ (CLOSE ALL)", bg=RED_DOWN, fg="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
-            command=self.close_all_positions
-        ).pack(side=tk.RIGHT, padx=3)
-
-        tk.Button(
-            pos_top_bar, text="❌ Đóng Lệnh Chọn", bg="#8c2d3b", fg="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
-            command=self.close_selected_position
-        ).pack(side=tk.RIGHT, padx=3)
-
-        tk.Button(
-            pos_top_bar, text="🛡️ Dời SL về Entry", bg="#235c46", fg="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
-            command=self.breakeven_all_positions
-        ).pack(side=tk.RIGHT, padx=3)
-
-        self.pos_summary_lbl = tk.Label(
-            pos_top_bar, text="Đang tải danh sách lệnh từ MT5...",
-            bg=PANEL_BG, fg=CYAN_LIVE, font=("Consolas", 9, "bold")
-        )
-        self.pos_summary_lbl.pack(side=tk.LEFT)
-
-        pos_cols = ("ticket", "time", "symbol", "type", "volume", "open_price", "current_price", "sl", "tp", "profit", "status")
-        self.pos_tree = ttk.Treeview(pos_tab, columns=pos_cols, show="headings", height=5)
-        pos_headers = {
-            "ticket": "Mã Lệnh (Ticket)",
-            "time": "Giờ mở",
-            "symbol": "Mã",
-            "type": "Loại",
-            "volume": "Lot",
-            "open_price": "Giá Vào (Entry)",
-            "current_price": "Giá Hiện Tại",
-            "sl": "SL (Cắt lỗ)",
-            "tp": "TP (Chốt lời)",
-            "profit": "Lãi / Lỗ (USD)",
-            "status": "Trạng thái Bảo vệ"
-        }
-        pos_widths = {
-            "ticket": 95, "time": 90, "symbol": 75, "type": 55, "volume": 50,
-            "open_price": 90, "current_price": 85, "sl": 85, "tp": 85, "profit": 95, "status": 160
-        }
-        for c in pos_cols:
-            self.pos_tree.heading(c, text=pos_headers[c])
-            self.pos_tree.column(c, width=pos_widths[c], anchor=tk.CENTER)
-        self.pos_tree.tag_configure("profit_pos", foreground=GREEN_UP)
-        self.pos_tree.tag_configure("profit_neg", foreground=RED_DOWN)
-        self.pos_tree.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        # Mặc định khởi tạo trỏ vào Tab XAUUSD
+        self.pos_tree = self.pos_tree_by_profile["XAUUSD"]
+        self.pos_summary_lbl = self.pos_summary_lbl_by_profile["XAUUSD"]
 
         # TAB 2: CHI TIẾT 6 CÂY NẾN DỰ BÁO KRONOS AI & NHẬT KÝ LOG
         pred_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
@@ -1104,8 +1323,66 @@ class KronosDesktopApp:
 
         self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
+    def _build_positions_tab_ui(self, pos_tab: tk.Frame, profile_key: str):
+        """Dựng giao diện bảng quản lý lệnh đang mở Real-Time riêng biệt cho từng Tab (XAUUSD / BTCUSD)."""
+        pos_top_bar = tk.Frame(pos_tab, bg=PANEL_BG, pady=4, padx=6)
+        pos_top_bar.pack(fill=tk.X)
+
+        tk.Button(
+            pos_top_bar, text="🔥 ĐÓNG TẤT CẢ (CLOSE ALL)", bg=RED_DOWN, fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            command=self.close_all_positions
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            pos_top_bar, text="❌ Đóng Lệnh Chọn", bg="#8c2d3b", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            command=self.close_selected_position
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            pos_top_bar, text="🛡️ Dời SL về Entry", bg="#235c46", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2,
+            command=self.breakeven_all_positions
+        ).pack(side=tk.RIGHT, padx=3)
+
+        summary_lbl = tk.Label(
+            pos_top_bar, text=f"Đang tải danh sách lệnh {profile_key} từ MT5...",
+            bg=PANEL_BG, fg=CYAN_LIVE, font=("Consolas", 9, "bold")
+        )
+        summary_lbl.pack(side=tk.LEFT)
+
+        pos_cols = ("ticket", "time", "symbol", "type", "volume", "open_price", "current_price", "sl", "tp", "profit", "status")
+        tree = ttk.Treeview(pos_tab, columns=pos_cols, show="headings", height=5)
+        pos_headers = {
+            "ticket": "Mã Lệnh (Ticket)",
+            "time": "Giờ mở",
+            "symbol": "Mã",
+            "type": "Loại",
+            "volume": "Lot",
+            "open_price": "Giá Vào (Entry)",
+            "current_price": "Giá Hiện Tại",
+            "sl": "SL (Cắt lỗ)",
+            "tp": "TP (Chốt lời)",
+            "profit": "Lãi / Lỗ (USD)",
+            "status": "Trạng thái Bảo vệ"
+        }
+        pos_widths = {
+            "ticket": 95, "time": 90, "symbol": 75, "type": 55, "volume": 50,
+            "open_price": 90, "current_price": 85, "sl": 85, "tp": 85, "profit": 95, "status": 160
+        }
+        for c in pos_cols:
+            tree.heading(c, text=pos_headers[c])
+            tree.column(c, width=pos_widths[c], anchor=tk.CENTER)
+        tree.tag_configure("profit_pos", foreground=GREEN_UP)
+        tree.tag_configure("profit_neg", foreground=RED_DOWN)
+        tree.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+
+        self.pos_tree_by_profile[profile_key] = tree
+        self.pos_summary_lbl_by_profile[profile_key] = summary_lbl
+
     # =========================================================================
-    # TỰ ĐỘNG LƯU & KHÔI PHỤC CÀI ĐẶT NGƯỜI DÙNG (MỤC 1, 2, 3, 4)
+    # TỰ ĐỘNG LƯU & KHÔI PHỤC CÀI ĐẶT NGƯỜI DÙNG THEO TỪNG TAB (XAUUSD / BTCUSD)
     # =========================================================================
     def _get_settings_vars_map(self) -> dict:
         return {
@@ -1147,30 +1424,83 @@ class KronosDesktopApp:
             return
         try:
             os.makedirs(SETTINGS_DIR, exist_ok=True)
-            data = {k: v.get() for k, v in self._get_settings_vars_map().items()}
+            cur_data = {k: v.get() for k, v in self._get_settings_vars_map().items()}
+            self.profile_settings[self.active_profile_key] = dict(cur_data)
+            payload = dict(self.profile_settings.get("XAUUSD", cur_data))
+            payload["profiles"] = {
+                "XAUUSD": dict(self.profile_settings["XAUUSD"]),
+                "BTCUSD": dict(self.profile_settings["BTCUSD"]),
+            }
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+                json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
     def load_user_settings(self):
         if not os.path.exists(SETTINGS_FILE):
+            self.active_profile_key = "XAUUSD"
+            self._sync_active_ctx_to_self()
             return
         try:
             self._loading_settings = True
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            vmap = self._get_settings_vars_map()
-            for k, val in data.items():
-                if k in vmap:
-                    if k == "model" and isinstance(val, str) and val.startswith("Kronos-"):
-                        val = val.replace("Kronos-", "AI-", 1)
-                    vmap[k].set(val)
-            self.log("Đã khôi phục thông số cài đặt của bạn từ lần dùng trước.")
+
+            if isinstance(data.get("profiles"), dict):
+                for pk in ("XAUUSD", "BTCUSD"):
+                    saved_p = data["profiles"].get(pk, {})
+                    if isinstance(saved_p, dict):
+                        merged = dict(DEFAULT_PROFILE_SETTINGS[pk])
+                        for k, val in saved_p.items():
+                            if k in merged:
+                                if k == "model" and isinstance(val, str) and val.startswith("Kronos-"):
+                                    val = val.replace("Kronos-", "AI-", 1)
+                                merged[k] = val
+                        self.profile_settings[pk] = merged
+            else:
+                # Tự động chuyển đổi (Migration) từ file cài đặt đơn cũ sang 2 hồ sơ độc lập XAUUSD & BTCUSD
+                shared_keys = (
+                    "lot", "max_pos", "scenarios", "consensus", "sl_atr", "rr",
+                    "auto_be", "be_trigger_r", "auto_trail", "trail_dist_r",
+                    "auto_rev_close", "rev_consensus", "rev_min_move",
+                    "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins",
+                    "engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "realtime_chart"
+                )
+                for pk in ("XAUUSD", "BTCUSD"):
+                    for sk in shared_keys:
+                        if sk in data:
+                            val = data[sk]
+                            if sk == "model" and isinstance(val, str) and val.startswith("Kronos-"):
+                                val = val.replace("Kronos-", "AI-", 1)
+                            self.profile_settings[pk][sk] = val
+
+                sym_old = str(data.get("symbol", "XAUUSDm")).strip()
+                sym_specific_keys = ("symbol", "analysis_tf", "tf", "min_move", "max_spread", "sl_buffer", "max_sl_price")
+                if "BTC" in sym_old.upper():
+                    for k in sym_specific_keys:
+                        if k in data:
+                            self.profile_settings["BTCUSD"][k] = data[k]
+                else:
+                    for k in sym_specific_keys:
+                        if k in data:
+                            self.profile_settings["XAUUSD"][k] = data[k]
+                    # Nếu trước đó người dùng thử nghiệm thông số SL tối đa của BTC (>= 50 giá) trên mã Vàng -> Tách riêng cho BTCUSD và trả Vàng về 6.0 giá
+                    try:
+                        if float(self.profile_settings["XAUUSD"].get("max_sl_price", 6.0)) >= 50.0:
+                            self.profile_settings["BTCUSD"]["max_sl_price"] = str(self.profile_settings["XAUUSD"]["max_sl_price"])
+                            self.profile_settings["XAUUSD"]["max_sl_price"] = "6.0"
+                    except Exception:
+                        pass
+
+            # Mặc định khi mở phần mềm luôn hiển thị Tab XAUUSD đầu tiên
+            self.active_profile_key = "XAUUSD"
+            self._sync_active_ctx_to_self()
+            self.log("Đã khôi phục hồ sơ cài đặt riêng cho Tab XAUUSD và Tab BTCUSD.")
         except Exception:
             pass
         finally:
             self._loading_settings = False
+            self.save_user_settings()
 
     def _bind_auto_save_settings(self):
         for var in self._get_settings_vars_map().values():
@@ -1284,6 +1614,8 @@ class KronosDesktopApp:
     def _on_close_window(self):
         self.save_user_settings()
         self.auto_loop_running = False
+        for pk in self.profile_ctx:
+            self.profile_ctx[pk]["auto_loop_running"] = False
         self._cleanup_workspace_junk()
         self.root.destroy()
 
@@ -1291,10 +1623,14 @@ class KronosDesktopApp:
         selected_idx = self.bottom_notebook.index(self.bottom_notebook.select())
         if selected_idx == 0:
             self.chart_mode = "LIVE_POSITIONS"
+            self._switch_active_profile("XAUUSD")
+        elif selected_idx == 1:
+            self.chart_mode = "LIVE_POSITIONS"
+            self._switch_active_profile("BTCUSD")
         else:
             self.chart_mode = "AI_FORECAST"
             if self.cached_mean_df is None and not self.is_analyzing:
-                self.trigger_single_scan()
+                self.trigger_single_scan(profile_key=self.active_profile_key)
 
         self.user_zoomed = False
         self.saved_xlim = None
@@ -1731,7 +2067,7 @@ class KronosDesktopApp:
     def log(self, msg: str):
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {msg}\n"
-        self.root.after(0, self._append_log, line)
+        self._ui_after(0, self._append_log, line)
 
     def _append_log(self, line: str):
         self.log_text.insert("1.0", line)
@@ -1743,6 +2079,7 @@ class KronosDesktopApp:
     def _realtime_tick_loop(self):
         try:
             if MT5_AVAILABLE and mt5.initialize():
+                active_pk = self.active_profile_key
                 symbol = self.symbol_var.get().strip()
                 tf_str = self.tf_var.get().strip()
                 mt5.symbol_select(symbol, True)
@@ -1763,7 +2100,7 @@ class KronosDesktopApp:
                     mins, secs = divmod(rem_sec, 60)
                     scan_state = "ĐANG CANH" if self.auto_loop_running else "CHỜ"
                     self.live_clock_lbl.config(
-                        text=f"{dot} {now_str} | Bid:{tick.bid:.2f} Ask:{tick.ask:.2f} (Spr:{spread:.2f}$) | ⏳Nến {tf_str}: {mins:02d}p:{secs:02d}s [{scan_state}]"
+                        text=f"{dot} {now_str} | [{active_pk}] Bid:{tick.bid:.2f} Ask:{tick.ask:.2f} (Spr:{spread:.2f}$) | ⏳Nến {tf_str}: {mins:02d}p:{secs:02d}s [{scan_state}]"
                     )
 
                 if acc is not None:
@@ -1773,11 +2110,23 @@ class KronosDesktopApp:
                         fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
                     )
 
-                pos_count, total_profit = self._update_open_positions_and_manage(symbol)
-                self._check_daily_profit_loss_limits(total_profit, tick)
+                pos_count, total_profit = self._update_open_positions_and_manage(symbol, profile_key=active_pk)
+                self._check_daily_profit_loss_limits(total_profit, tick, profile_key=active_pk)
                 if tick is not None:
-                    self._check_pending_pullback_order(symbol, tick)
+                    self._check_pending_pullback_order(symbol, tick, profile_key=active_pk)
                 self._update_left_quick_info(symbol, tf_str, tick, pos_count, total_profit)
+                self._sync_self_to_active_ctx()
+
+                # Quản lý song song Tab còn lại ở chế độ chạy ngầm (Auto-Hòa vốn, Trailing Stop, Thoát đảo chiều, Chờ giá hồi, Giới hạn Lãi/Lỗ ngày)
+                bg_pk = "BTCUSD" if active_pk == "XAUUSD" else "XAUUSD"
+                bg_sym = str(self.profile_settings.get(bg_pk, {}).get("symbol", "")).strip()
+                if bg_sym:
+                    mt5.symbol_select(bg_sym, True)
+                    bg_tick = mt5.symbol_info_tick(bg_sym)
+                    _, bg_profit = self._update_open_positions_and_manage(bg_sym, profile_key=bg_pk)
+                    self._check_daily_profit_loss_limits(bg_profit, bg_tick, profile_key=bg_pk)
+                    if bg_tick is not None:
+                        self._check_pending_pullback_order(bg_sym, bg_tick, profile_key=bg_pk)
 
                 if self.realtime_chart_var.get() and self.heartbeat_toggle and not self.is_analyzing and self._drag_start_px is None:
                     self._refresh_realtime_chart(symbol, tf_str)
@@ -1790,9 +2139,11 @@ class KronosDesktopApp:
         """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay theo đúng mã giao dịch & giờ Server MT5."""
         if not MT5_AVAILABLE:
             return 0.0, 0, None
+        sym_key = symbol or "__ALL__"
         now_mono = time.monotonic()
-        if (now_mono - self._last_deals_check_ts) < 4.0 and self._cached_deals_stats is not None:
-            return self._cached_deals_stats
+        cached_entry = self._cached_deals_by_sym.get(sym_key)
+        if cached_entry is not None and (now_mono - cached_entry[0]) < 4.0:
+            return cached_entry[1]
         try:
             ref_ts = int(tick.time) if tick is not None else int(time.time())
             ref_date_str = datetime.fromtimestamp(ref_ts).strftime("%Y-%m-%d")
@@ -1802,7 +2153,7 @@ class KronosDesktopApp:
                 datetime.fromtimestamp(ref_ts + 86400)
             )
             if deals is None:
-                return self._cached_deals_stats
+                return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
             realized = 0.0
             consec_losses = 0
             last_loss_deal = None
@@ -1824,151 +2175,179 @@ class KronosDesktopApp:
                     elif net_pnl > 0.05:
                         consec_losses = 0
                         last_loss_deal = None
-            self._cached_deals_stats = (realized, consec_losses, last_loss_deal)
+            res_stats = (realized, consec_losses, last_loss_deal)
+            self._cached_deals_by_sym[sym_key] = (now_mono, res_stats)
+            self._cached_deals_stats = res_stats
             self._last_deals_check_ts = now_mono
-            return self._cached_deals_stats
+            return res_stats
         except Exception:
-            return self._cached_deals_stats
+            return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
-    def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None):
-        """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp. Nếu = 0 thì tắt."""
+    def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None, profile_key: str = None):
+        """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp cho từng Tab (XAUUSD / BTCUSD)."""
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx[pk]
         today_str = datetime.now().strftime("%Y-%m-%d")
-        symbol = self.symbol_var.get().strip()
+        symbol = str(cfg.get("symbol", "")).strip()
         realized_pnl, consec_losses, last_loss_deal = self._get_today_deals_stats(symbol=symbol, tick=tick)
         total_daily_pnl = realized_pnl + floating_profit
-        self.cached_daily_pnl = total_daily_pnl
-        self.consec_loss_count = consec_losses
+        ctx["cached_daily_pnl"] = total_daily_pnl
+        ctx["consec_loss_count"] = consec_losses
 
         try:
-            daily_tp = max(float(self.daily_tp_usd_var.get()), 0.0)
+            daily_tp = max(float(cfg.get("daily_tp_usd", 0.0)), 0.0)
         except ValueError:
             daily_tp = 0.0
         try:
-            daily_sl = max(abs(float(self.daily_sl_usd_var.get())), 0.0)
+            daily_sl = max(abs(float(cfg.get("daily_sl_usd", 0.0))), 0.0)
         except ValueError:
             daily_sl = 0.0
         try:
-            max_consec_loss = max(int(float(self.max_consec_loss_var.get())), 0)
+            max_consec_loss = max(int(float(cfg.get("max_consec_loss", 0))), 0)
         except ValueError:
             max_consec_loss = 0
         try:
-            cooldown_mins = max(float(self.cooldown_mins_var.get()), 0.0)
+            cooldown_mins = max(float(cfg.get("cooldown_mins", 30.0)), 0.0)
         except ValueError:
             cooldown_mins = 0.0
 
         # 1. Xử lý Tạm ngừng sau chuỗi lệnh thua liên tiếp (= 0 là tắt)
         if max_consec_loss == 0 or cooldown_mins == 0.0:
-            if self.cooldown_until is not None:
-                self.cooldown_until = None
-                self.log("🔓 Đã tắt bộ đếm tạm ngừng sau chuỗi thua (do thông số cài = 0).")
+            if ctx["cooldown_until"] is not None:
+                ctx["cooldown_until"] = None
+                self.log(f"🔓 [{pk}] Đã tắt bộ đếm tạm ngừng sau chuỗi thua (do thông số cài = 0).")
         else:
-            if self.cooldown_until is not None and datetime.now() >= self.cooldown_until:
-                self.cooldown_until = None
-                self.log("▶️ Đã hết thời gian tạm ngừng sau chuỗi lệnh thua! Bot tiếp tục canh lệnh.")
+            if ctx["cooldown_until"] is not None and datetime.now() >= ctx["cooldown_until"]:
+                ctx["cooldown_until"] = None
+                self.log(f"▶️ [{pk}] Đã hết thời gian tạm ngừng sau chuỗi lệnh thua! Bot tiếp tục canh lệnh.")
 
             if consec_losses >= max_consec_loss and last_loss_deal is not None:
-                if self.last_cooldown_deal_ticket != last_loss_deal.ticket:
+                if ctx["last_cooldown_deal_ticket"] != last_loss_deal.ticket:
                     server_now = int(tick.time) if tick is not None else int(last_loss_deal.time)
                     elapsed_sec = max(0, server_now - int(last_loss_deal.time))
                     total_cd_sec = cooldown_mins * 60.0
-                    self.last_cooldown_deal_ticket = last_loss_deal.ticket
+                    ctx["last_cooldown_deal_ticket"] = last_loss_deal.ticket
                     if elapsed_sec < total_cd_sec:
                         rem_sec = total_cd_sec - elapsed_sec
-                        self.cooldown_until = datetime.now() + timedelta(seconds=rem_sec)
-                        self.pending_pullback_order = None
+                        ctx["cooldown_until"] = datetime.now() + timedelta(seconds=rem_sec)
+                        ctx["pending_pullback_order"] = None
                         self.log(
-                            f"⏸️ [Tạm Ngừng Chuỗi Thua] Đã thua liên tiếp {consec_losses} lệnh (>= {max_consec_loss} lệnh) -> "
-                            f"Tạm ngừng vào lệnh {cooldown_mins:.0f} phút (đến {self.cooldown_until.strftime('%H:%M:%S')})!"
+                            f"⏸️ [{pk} - Tạm Ngừng Chuỗi Thua] Đã thua liên tiếp {consec_losses} lệnh (>= {max_consec_loss} lệnh) -> "
+                            f"Tạm ngừng vào lệnh {cooldown_mins:.0f} phút (đến {ctx['cooldown_until'].strftime('%H:%M:%S')})!"
                         )
 
         # 2. Sang ngày mới -> Tự động mở khóa giao dịch
-        if self.daily_limit_locked_date is not None and self.daily_limit_locked_date != today_str:
-            self.daily_limit_locked_date = None
-            self.daily_limit_reason = ""
-            self.log("🌅 Đã sang ngày giao dịch mới! Mở khóa bộ giới hạn Lãi/Lỗ ngày.")
+        if ctx["daily_limit_locked_date"] is not None and ctx["daily_limit_locked_date"] != today_str:
+            ctx["daily_limit_locked_date"] = None
+            ctx["daily_limit_reason"] = ""
+            self.log(f"🌅 [{pk}] Đã sang ngày giao dịch mới! Mở khóa bộ giới hạn Lãi/Lỗ ngày.")
 
         # Nếu người dùng chỉnh về 0 (chạy tẹt ga) hoặc nâng hạn mức cao hơn hiện tại -> Mở khóa ngay
-        if self.daily_limit_locked_date == today_str:
+        if ctx["daily_limit_locked_date"] == today_str:
             tp_still_hit = (daily_tp > 0.0 and total_daily_pnl >= daily_tp)
             sl_still_hit = (daily_sl > 0.0 and total_daily_pnl <= -daily_sl)
             if not tp_still_hit and not sl_still_hit:
-                self.daily_limit_locked_date = None
-                self.daily_limit_reason = ""
-                self.log("🔓 Đã mở khóa giao dịch trong ngày (theo thông số Lãi/Lỗ ngày mới cài đặt).")
+                ctx["daily_limit_locked_date"] = None
+                ctx["daily_limit_reason"] = ""
+                self.log(f"🔓 [{pk}] Đã mở khóa giao dịch trong ngày (theo thông số Lãi/Lỗ ngày mới cài đặt).")
 
         # Kiểm tra chạm mức Chốt lời ngày (nếu > 0)
-        if daily_tp > 0.0 and total_daily_pnl >= daily_tp and self.daily_limit_locked_date != today_str:
-            self.daily_limit_locked_date = today_str
-            self.daily_limit_reason = f"Đạt Lãi ngày ({total_daily_pnl:+.2f}$ >= +{daily_tp:.1f}$)"
-            self.pending_pullback_order = None
+        if daily_tp > 0.0 and total_daily_pnl >= daily_tp and ctx["daily_limit_locked_date"] != today_str:
+            ctx["daily_limit_locked_date"] = today_str
+            ctx["daily_limit_reason"] = f"Đạt Lãi ngày ({total_daily_pnl:+.2f}$ >= +{daily_tp:.1f}$)"
+            ctx["pending_pullback_order"] = None
             positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
             if positions:
                 for pos in positions:
                     self._close_single_pos(pos)
-            self.log(f"🏆 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã chốt toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
+            self.log(f"🏆 [{pk} - QUẢN LÝ VỐN NGÀY] {ctx['daily_limit_reason']} -> Đã chốt toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
 
         # Kiểm tra chạm mức Cắt lỗ ngày (nếu > 0)
-        elif daily_sl > 0.0 and total_daily_pnl <= -daily_sl and self.daily_limit_locked_date != today_str:
-            self.daily_limit_locked_date = today_str
-            self.daily_limit_reason = f"Chạm Cắt lỗ ngày ({total_daily_pnl:+.2f}$ <= -{daily_sl:.1f}$)"
-            self.pending_pullback_order = None
+        elif daily_sl > 0.0 and total_daily_pnl <= -daily_sl and ctx["daily_limit_locked_date"] != today_str:
+            ctx["daily_limit_locked_date"] = today_str
+            ctx["daily_limit_reason"] = f"Chạm Cắt lỗ ngày ({total_daily_pnl:+.2f}$ <= -{daily_sl:.1f}$)"
+            ctx["pending_pullback_order"] = None
             positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
             if positions:
                 for pos in positions:
                     self._close_single_pos(pos)
-            self.log(f"🛑 [QUẢN LÝ VỐN NGÀY] {self.daily_limit_reason} -> Đã đóng toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
+            self.log(f"🛑 [{pk} - QUẢN LÝ VỐN NGÀY] {ctx['daily_limit_reason']} -> Đã đóng toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
 
-    def _is_daily_limit_locked(self) -> bool:
-        return self.daily_limit_locked_date == datetime.now().strftime("%Y-%m-%d")
+        if pk == self.active_profile_key:
+            self.cached_daily_pnl = ctx["cached_daily_pnl"]
+            self.consec_loss_count = ctx["consec_loss_count"]
+            self.cooldown_until = ctx["cooldown_until"]
+            self.last_cooldown_deal_ticket = ctx["last_cooldown_deal_ticket"]
+            self.daily_limit_locked_date = ctx["daily_limit_locked_date"]
+            self.daily_limit_reason = ctx["daily_limit_reason"]
+            self.pending_pullback_order = ctx["pending_pullback_order"]
 
-    def _is_cooldown_active(self) -> bool:
-        return self.cooldown_until is not None and datetime.now() < self.cooldown_until
+    def _is_daily_limit_locked(self, profile_key: str = None) -> bool:
+        pk = profile_key or self.active_profile_key
+        locked_d = self.daily_limit_locked_date if pk == self.active_profile_key else self.profile_ctx[pk].get("daily_limit_locked_date")
+        return locked_d == datetime.now().strftime("%Y-%m-%d")
 
-    def _get_cooldown_remaining_str(self) -> str:
-        if not self._is_cooldown_active():
+    def _is_cooldown_active(self, profile_key: str = None) -> bool:
+        pk = profile_key or self.active_profile_key
+        cd = self.cooldown_until if pk == self.active_profile_key else self.profile_ctx[pk].get("cooldown_until")
+        return cd is not None and datetime.now() < cd
+
+    def _get_cooldown_remaining_str(self, profile_key: str = None) -> str:
+        pk = profile_key or self.active_profile_key
+        if not self._is_cooldown_active(pk):
             return ""
-        rem = max(0, int((self.cooldown_until - datetime.now()).total_seconds()))
+        cd = self.cooldown_until if pk == self.active_profile_key else self.profile_ctx[pk].get("cooldown_until")
+        losses = self.consec_loss_count if pk == self.active_profile_key else self.profile_ctx[pk].get("consec_loss_count", 0)
+        rem = max(0, int((cd - datetime.now()).total_seconds()))
         m, s = divmod(rem, 60)
-        return f"⏸️ Tạm nghỉ sau {self.consec_loss_count} lệnh thua ({m:02d}p:{s:02d}s)"
+        return f"⏸️ Tạm nghỉ sau {losses} lệnh thua ({m:02d}p:{s:02d}s)"
 
-    def _check_pending_pullback_order(self, symbol: str, tick):
-        """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa (1 giá = 10 pip) thì khớp lệnh ngay khi đạt."""
-        if self.pending_pullback_order is None:
+    def _check_pending_pullback_order(self, symbol: str, tick, profile_key: str = None):
+        """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa thì khớp lệnh ngay khi đạt."""
+        pk = profile_key or self.active_profile_key
+        ctx = self.profile_ctx[pk]
+        p = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
+        if p is None:
             return
-        if self._is_daily_limit_locked() or self._is_cooldown_active():
-            self.pending_pullback_order = None
+        if self._is_daily_limit_locked(pk) or self._is_cooldown_active(pk):
+            ctx["pending_pullback_order"] = None
+            if pk == self.active_profile_key:
+                self.pending_pullback_order = None
             return
 
-        p = self.pending_pullback_order
         if p.get("symbol") != symbol:
             return
 
+        cfg = self._get_profile_cfg(pk)
         try:
-            max_sl_price = max(float(self.max_sl_price_var.get()), 0.0)
-            max_spread = float(self.max_spread_var.get())
-            lot = float(self.lot_var.get())
-            max_pos = int(self.max_pos_var.get())
-            rr = max(float(self.rr_var.get()), 0.0)
+            max_sl_price = max(float(cfg.get("max_sl_price", 6.0)), 0.0)
+            max_spread = float(cfg.get("max_spread", 0.35))
+            lot = float(cfg.get("lot", 0.01))
+            max_pos = int(cfg.get("max_pos", 5))
+            rr = max(float(cfg.get("rr", 2.0)), 0.0)
         except ValueError:
-            max_sl_price, max_spread, lot, max_pos, rr = 5.0, 0.35, 0.01, 2, 1.5
+            max_sl_price, max_spread, lot, max_pos, rr = 6.0, 0.35, 0.01, 5, 2.0
 
         action = p["action"]
         sl_price = float(p["sl_price"])
         cur_price = tick.ask if action == "BUY" else tick.bid
         spread_usd = tick.ask - tick.bid
 
-        # Khoảng cách từ giá hiện tại đến SL của AI (+ đệm an toàn), đơn vị: Giá vàng (1 giá = 10 pip)
         cur_sl_dist = (cur_price - sl_price) if action == "BUY" else (sl_price - cur_price)
 
         # 1. Nếu giá chạy ngược xuyên qua luôn mức SL của AI -> Hủy lệnh chờ hồi vì kịch bản đã gãy
         if cur_sl_dist <= 0.25:
-            self.log(f"❌ [Hủy Lệnh Chờ Hồi {action}] Giá ({cur_price:.2f}) đã chạm/phá qua mức SL AI ({sl_price:.2f}).")
-            self.pending_pullback_order = None
+            self.log(f"❌ [{pk} - Hủy Lệnh Chờ Hồi {action}] Giá ({cur_price:.2f}) đã chạm/phá qua mức SL AI ({sl_price:.2f}).")
+            ctx["pending_pullback_order"] = None
+            if pk == self.active_profile_key:
+                self.pending_pullback_order = None
             return
 
         # 2. Nếu giá đã hồi về vùng cho phép: Khoảng cách SL hiện tại <= SL tối đa (hoặc max_sl_price == 0 là theo AI)
         if max_sl_price <= 0.0 or cur_sl_dist <= max_sl_price:
-            should_execute = self.auto_trade_var.get() or p.get("manual_queued", False)
+            is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
+            should_execute = is_auto_on or p.get("manual_queued", False)
             if not should_execute:
                 return
 
@@ -1983,18 +2362,23 @@ class KronosDesktopApp:
             if spread_usd > max_spread:
                 return
 
+            cached_tp_val = self.cached_tp if pk == self.active_profile_key else ctx.get("cached_tp")
             if rr > 0.0:
                 tp_dist = cur_sl_dist * rr
                 tp_price = round(cur_price + tp_dist, 2) if action == "BUY" else round(cur_price - tp_dist, 2)
-            elif self.cached_tp is not None:
-                tp_price = float(self.cached_tp)
+            elif cached_tp_val is not None:
+                tp_price = float(cached_tp_val)
             else:
                 tp_price = round(cur_price + cur_sl_dist * 1.5, 2) if action == "BUY" else round(cur_price - cur_sl_dist * 1.5, 2)
-            self.cached_tp = tp_price
+            ctx["cached_tp"] = tp_price
+            if pk == self.active_profile_key:
+                self.cached_tp = tp_price
 
-            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos)
-            self.pending_pullback_order = None
-            self.log(f"🎯 [Khớp Lệnh Chờ Hồi SL <= {max_sl_price:.1f} giá] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f} giá) -> {ord_msg}")
+            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
+            ctx["pending_pullback_order"] = None
+            if pk == self.active_profile_key:
+                self.pending_pullback_order = None
+            self.log(f"🎯 [{pk} - Khớp Lệnh Chờ Hồi SL <= {max_sl_price:.1f} giá] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f} giá) -> {ord_msg}")
 
     def _update_left_quick_info(self, symbol, tf_str, tick, pos_count, total_profit):
         bid_str = f"{tick.bid:.2f}" if tick else "---"
@@ -2036,7 +2420,7 @@ class KronosDesktopApp:
 
         pred_n = self.pred_len_var.get().strip() or "6"
         info_txt = (
-            f"• Mã & Khung   : {symbol} ({tf_display})\n"
+            f"• Tab đang chọn: {self.active_profile_key} ({symbol} - {tf_display})\n"
             f"• Bid / Ask    : {bid_str} / {ask_str} ({spr_str})\n"
             f"• Lệnh đang mở : {pos_count} lệnh ({total_profit:+.2f}$)\n"
             f"• Lãi/Lỗ Ngày  : {self.cached_daily_pnl:+.2f} USD\n"
@@ -2060,12 +2444,17 @@ class KronosDesktopApp:
                 return float(pnl)
         except Exception:
             pass
-        # Dự phòng tính theo chuẩn XAUUSD (1 lot = 100 oz)
+        # Dự phòng tính theo contract size của mã giao dịch
+        sym_info = mt5.symbol_info(pos.symbol) if MT5_AVAILABLE else None
+        contract_sz = float(sym_info.trade_contract_size) if (sym_info and sym_info.trade_contract_size > 0) else (1.0 if "BTC" in str(pos.symbol).upper() else 100.0)
         diff = (target_price - pos.price_open) if pos.type == mt5.POSITION_TYPE_BUY else (pos.price_open - target_price)
-        return float(diff * pos.volume * 100.0)
+        return float(diff * pos.volume * contract_sz)
 
-    def _get_pos_one_r_dist(self, pos) -> float:
+    def _get_pos_one_r_dist(self, pos, profile_key: str = None) -> float:
         """Tính khoảng cách 1R (|Entry - SL ban đầu|) của lệnh."""
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx[pk]
         is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
         # Nếu SL đang nằm ở vùng cắt lỗ ban đầu thì ghi nhận chính xác 1R = |Entry - SL|
         if is_buy and 0 < pos.sl < pos.price_open - 0.1:
@@ -2078,12 +2467,13 @@ class KronosDesktopApp:
 
         # Nếu cài R:R = 0 (TP Theo AI), ưu tiên lấy khoảng cách SL gần nhất do AI tính toán
         try:
-            raw_rr = float(self.rr_var.get())
+            raw_rr = float(cfg.get("rr", 2.0))
         except ValueError:
-            raw_rr = 1.5
+            raw_rr = 2.0
 
-        if raw_rr <= 0.0 and self.last_recommendation and self.last_recommendation.get("sl_dist", 0) > 0.5:
-            one_r = float(self.last_recommendation["sl_dist"])
+        last_rec = self.last_recommendation if pk == self.active_profile_key else ctx.get("last_recommendation")
+        if raw_rr <= 0.0 and last_rec and last_rec.get("sl_dist", 0) > 0.5:
+            one_r = float(last_rec["sl_dist"])
             self.initial_r_cache[pos.ticket] = one_r
             return one_r
 
@@ -2094,25 +2484,31 @@ class KronosDesktopApp:
             if one_r > 0.2:
                 self.initial_r_cache[pos.ticket] = one_r
                 return one_r
-        return 5.0
+        return 150.0 if "BTC" in str(pos.symbol).upper() else 5.0
 
-    def _update_open_positions_and_manage(self, symbol: str):
+    def _update_open_positions_and_manage(self, symbol: str, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx[pk]
+        tree_widget = self.pos_tree_by_profile.get(pk, self.pos_tree)
+        summary_widget = self.pos_summary_lbl_by_profile.get(pk, self.pos_summary_lbl)
+
         positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
         if positions is None:
             positions = []
 
-        selected_tickets = [self.pos_tree.item(item, "values")[0] for item in self.pos_tree.selection()]
-        for row in self.pos_tree.get_children():
-            self.pos_tree.delete(row)
+        selected_tickets = [tree_widget.item(item, "values")[0] for item in tree_widget.selection()]
+        for row in tree_widget.get_children():
+            tree_widget.delete(row)
 
         total_profit = 0.0
-        auto_be = self.auto_be_var.get()
-        auto_trail = self.auto_trail_var.get()
+        auto_be = bool(cfg.get("auto_be", True))
+        auto_trail = bool(cfg.get("auto_trail", True))
         try:
-            be_trigger_r = float(self.be_trigger_r_var.get())
-            trail_dist_r = float(self.trail_dist_r_var.get())
+            be_trigger_r = float(cfg.get("be_trigger_r", 1.0))
+            trail_dist_r = float(cfg.get("trail_dist_r", 0.35))
         except ValueError:
-            be_trigger_r, trail_dist_r = 1.0, 0.8
+            be_trigger_r, trail_dist_r = 1.0, 0.35
 
         for pos in positions:
             total_profit += pos.profit
@@ -2121,7 +2517,7 @@ class KronosDesktopApp:
             open_time = datetime.fromtimestamp(pos.time).strftime("%H:%M:%S")
             price_move = (pos.price_current - pos.price_open) if is_buy else (pos.price_open - pos.price_current)
 
-            one_r = self._get_pos_one_r_dist(pos)
+            one_r = self._get_pos_one_r_dist(pos, profile_key=pk)
             current_r = price_move / max(one_r, 0.1)
             trail_dist_price = one_r * trail_dist_r
 
@@ -2142,12 +2538,12 @@ class KronosDesktopApp:
                     ok_be, msg_be = self._close_single_pos(pos)
                     if ok_be:
                         self.pending_be_exit_tickets.discard(pos.ticket)
-                        self.log(f"🛡️ [Quy tắc 3 - Thoát Hòa Vốn] Giá đã hồi về Entry ({entry_exact:.2f}) -> {msg_be}")
+                        self.log(f"🛡️ [{pk} - Quy tắc 3 - Thoát Hòa Vốn] Giá đã hồi về Entry ({entry_exact:.2f}) -> {msg_be}")
                         continue
                 # Nếu TP chưa được đặt về Entry (do lúc trước giá quá sát Entry), tự động đặt TP = Entry khi đủ khoảng cách
                 elif abs(pos.tp - entry_exact) >= 0.05 and abs(pos.price_current - entry_exact) > 0.40:
                     if self._modify_position_sltp(pos, pos.sl, entry_exact):
-                        self.log(f"🎯 [Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về đúng Entry ({entry_exact:.2f}) để tự thoát hòa vốn")
+                        self.log(f"🎯 [{pk} - Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về đúng Entry ({entry_exact:.2f}) để tự thoát hòa vốn")
 
             if is_buy:
                 if abs(pos.sl - entry_exact) < 0.05:
@@ -2158,14 +2554,14 @@ class KronosDesktopApp:
                 if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < entry_exact - 0.02):
                     if entry_exact < pos.price_current - 0.50:
                         if self._modify_position_sltp(pos, entry_exact, pos.tp):
-                            self.log(f"🛡️ [Auto-Hòa Vốn {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} về Entry ({entry_exact:.2f})")
+                            self.log(f"🛡️ [{pk} - Auto-Hòa Vốn {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} về Entry ({entry_exact:.2f})")
                             status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current - trail_dist_price, digits)
                     if desired_sl > entry_exact and desired_sl > pos.sl + 0.40:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
-                            self.log(f"📈 [Trailing {current_r:.2f}R] Đã nâng SL lệnh BUY #{pos.ticket} lên {desired_sl:.2f}")
+                            self.log(f"📈 [{pk} - Trailing {current_r:.2f}R] Đã nâng SL lệnh BUY #{pos.ticket} lên {desired_sl:.2f}")
                             status_str = f"📈 Trailing ({current_r:+.2f}R)"
             else:
                 if pos.sl > 0 and abs(pos.sl - entry_exact) < 0.05:
@@ -2176,18 +2572,18 @@ class KronosDesktopApp:
                 if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > entry_exact + 0.02):
                     if entry_exact > pos.price_current + 0.50:
                         if self._modify_position_sltp(pos, entry_exact, pos.tp):
-                            self.log(f"🛡️ [Auto-Hòa Vốn {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} về Entry ({entry_exact:.2f})")
+                            self.log(f"🛡️ [{pk} - Auto-Hòa Vốn {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} về Entry ({entry_exact:.2f})")
                             status_str = f"🛡️ SL = Entry ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current + trail_dist_price, digits)
                     if desired_sl < entry_exact and (pos.sl == 0 or desired_sl < pos.sl - 0.40):
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
-                            self.log(f"📉 [Trailing {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {desired_sl:.2f}")
+                            self.log(f"📉 [{pk} - Trailing {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {desired_sl:.2f}")
                             status_str = f"📉 Trailing ({current_r:+.2f}R)"
 
             tag = "profit_pos" if pos.profit >= 0 else "profit_neg"
-            item_id = self.pos_tree.insert(
+            item_id = tree_widget.insert(
                 "", tk.END,
                 values=(
                     str(pos.ticket), open_time, pos.symbol, type_str, f"{pos.volume:.2f}",
@@ -2199,13 +2595,16 @@ class KronosDesktopApp:
                 tags=(tag,)
             )
             if str(pos.ticket) in selected_tickets:
-                self.pos_tree.selection_add(item_id)
+                tree_widget.selection_add(item_id)
 
         pnl_color = GREEN_UP if total_profit >= 0 else RED_DOWN
-        daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({self.daily_limit_reason})" if self._is_daily_limit_locked() else ""
-        self.pos_summary_lbl.config(
-            text=f"Đang mở: {len(positions)} lệnh  |  PnL nổi: {total_profit:+.2f}$  |  Lãi/Lỗ Hôm Nay: {self.cached_daily_pnl:+.2f}${daily_lock_tag}",
-            fg=GOLD_ACCENT if self._is_daily_limit_locked() else (pnl_color if len(positions) > 0 else CYAN_LIVE)
+        daily_pnl_val = self.cached_daily_pnl if pk == self.active_profile_key else ctx.get("cached_daily_pnl", 0.0)
+        daily_reason_val = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
+        is_locked = self._is_daily_limit_locked(pk)
+        daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
+        summary_widget.config(
+            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh  |  PnL nổi: {total_profit:+.2f}$  |  Lãi/Lỗ Hôm Nay: {daily_pnl_val:+.2f}${daily_lock_tag}",
+            fg=GOLD_ACCENT if is_locked else (pnl_color if len(positions) > 0 else CYAN_LIVE)
         )
         return len(positions), total_profit
 
@@ -2644,13 +3043,17 @@ class KronosDesktopApp:
         tr = pd.concat([high - low, (high - close).abs(), (low - close).abs()], axis=1).max(axis=1)
         return float(tr.iloc[-period:].mean())
 
-    def execute_mt5_order(self, symbol: str, action: str, lot: float, sl_price: float, tp_price: float, max_positions: int):
+    def execute_mt5_order(self, symbol: str, action: str, lot: float, sl_price: float, tp_price: float, max_positions: int, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx[pk]
         if not mt5.initialize():
             return False, "Chưa kết nối MT5."
-        if self._is_daily_limit_locked():
-            return False, f"🔒 Đã tự động dừng giao dịch hết hôm nay ({self.daily_limit_reason})."
-        if self._is_cooldown_active():
-            return False, f"{self._get_cooldown_remaining_str()} — Chưa được phép vào lệnh mới."
+        if self._is_daily_limit_locked(pk):
+            reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
+            return False, f"🔒 Đã tự động dừng giao dịch hết hôm nay ({reason})."
+        if self._is_cooldown_active(pk):
+            return False, f"{self._get_cooldown_remaining_str(pk)} — Chưa được phép vào lệnh mới."
         positions = mt5.positions_get(symbol=symbol)
         if positions is not None and len(positions) >= max_positions:
             return False, f"Đã có {len(positions)}/{max_positions} lệnh đang mở. Bỏ qua lệnh mới."
@@ -2664,12 +3067,11 @@ class KronosDesktopApp:
         order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
         price = tick.ask if action == "BUY" else tick.bid
 
-        # Kiểm tra cứng điều kiện khoảng cách SL tối đa (1 giá = 10 pip):
-        # Nếu cài > 0 thì không cho phép vào lệnh khi khoảng cách SL vượt quá SL tối đa; nếu = 0 là lấy 100% theo SL AI!
+        # Kiểm tra cứng điều kiện khoảng cách SL tối đa (nếu cài > 0 thì không cho phép vào lệnh khi khoảng cách SL vượt quá SL tối đa; nếu = 0 là lấy 100% theo SL AI)
         try:
-            max_sl_price = max(float(self.max_sl_price_var.get()), 0.0)
+            max_sl_price = max(float(cfg.get("max_sl_price", 6.0)), 0.0)
         except ValueError:
-            max_sl_price = 5.0
+            max_sl_price = 6.0
 
         actual_sl_dist = (price - sl_price) if action == "BUY" else (sl_price - price)
         if max_sl_price > 0.0 and actual_sl_dist > max_sl_price + 0.05:
@@ -2690,7 +3092,7 @@ class KronosDesktopApp:
             "tp": round(tp_price, digits),
             "deviation": 20,
             "magic": 202605,
-            "comment": "AI_Scalping_M5",
+            "comment": f"AI_{pk}",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
@@ -2702,23 +3104,30 @@ class KronosDesktopApp:
                 code = result.retcode if result else "None"
                 return False, f"MT5 từ chối lệnh (Mã lỗi: {code} - {getattr(result, 'comment', '')})"
 
-        return True, f"✅ ĐÃ KHỚP LỆNH {action} {lot} lot {symbol} @ {price:.2f} | SL: {sl_price:.2f} (-{actual_sl_dist:.2f} giá) | TP: {tp_price:.2f}"
+        return True, f"✅ [{pk}] ĐÃ KHỚP LỆNH {action} {lot} lot {symbol} @ {price:.2f} | SL: {sl_price:.2f} (-{actual_sl_dist:.2f} giá) | TP: {tp_price:.2f}"
 
-    def trigger_single_scan(self):
-        if self.is_analyzing:
+    def trigger_single_scan(self, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
+        is_ana = self.is_analyzing if pk == self.active_profile_key else self.profile_ctx[pk].get("is_analyzing", False)
+        if is_ana:
             return
-        threading.Thread(target=self._run_analysis_worker, daemon=True).start()
+        threading.Thread(target=self._run_analysis_worker, args=(pk,), daemon=True).start()
 
-    def _get_live_bot_status_text(self) -> str:
-        """Lấy chuỗi trạng thái thực tế của Bot để hiển thị đồng bộ trên thanh tín hiệu."""
-        if self._is_daily_limit_locked():
-            return f"🔒 Đã dừng giao dịch hết hôm nay ({self.daily_limit_reason})"
-        if self._is_cooldown_active():
-            return self._get_cooldown_remaining_str()
-        scalp_tf = self.tf_var.get().strip() or "M5"
-        if self.auto_loop_running:
-            return f"🟢 Bot ĐANG CHẠY (Đang canh nến {scalp_tf} tự động vào lệnh)"
-        return "⚪ Bot đang DỪNG (Gạt công tắc AUTO sang RUNNING để tự vào lệnh)"
+    def _get_live_bot_status_text(self, profile_key: str = None) -> str:
+        """Lấy chuỗi trạng thái thực tế của Bot theo đúng Tab để hiển thị đồng bộ trên thanh tín hiệu."""
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx[pk]
+        if self._is_daily_limit_locked(pk):
+            reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
+            return f"🔒 Đã dừng giao dịch hết hôm nay ({reason})"
+        if self._is_cooldown_active(pk):
+            return self._get_cooldown_remaining_str(pk)
+        scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+        is_running = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
+        if is_running:
+            return f"🟢 Bot {pk} ĐANG CHẠY (Đang canh nến {scalp_tf} tự động vào lệnh)"
+        return f"⚪ Bot {pk} đang DỪNG (Gạt công tắc AUTO sang RUNNING để tự vào lệnh)"
 
     def _sync_signal_detail_status(self):
         """Cập nhật ngay lập tức dòng trạng thái Bot trên thanh tín hiệu khi người dùng gạt công tắc AUTO."""
@@ -2726,387 +3135,427 @@ class KronosDesktopApp:
             self.signal_detail_lbl.config(text=f"{self._last_detail_prefix}{self._get_live_bot_status_text()}")
 
     def toggle_bot_start_stop(self):
-        """Gộp chung START và STOP trên 1 công tắc gạt thay đổi trạng thái (Bật/Tắt canh nến + Auto-Trade)."""
+        """Gộp chung START và STOP trên 1 công tắc gạt thay đổi trạng thái riêng cho Tab đang mở."""
         if self.auto_loop_running:
             self.stop_auto_scan()
         else:
             self.start_auto_scan()
 
     def start_auto_scan(self):
+        pk = self.active_profile_key
         if self.auto_loop_running:
             return
         self.auto_loop_running = True
+        self.profile_ctx[pk]["auto_loop_running"] = True
         self.auto_trade_var.set(True)
         self.last_candle_time = None
+        self.profile_ctx[pk]["last_candle_time"] = None
         self._draw_toggle_switch()
         self._sync_signal_detail_status()
+        sym = self.symbol_var.get().strip()
         tf_val = self.tf_var.get().strip()
-        self.log(f"▶️ Đã BẬT công tắc AUTO (Tự động canh nến {tf_val} & tự động vào lệnh)...")
-        threading.Thread(target=self._auto_loop_worker, daemon=True).start()
+        self.log(f"▶️ [{pk} - {sym}] Đã BẬT công tắc AUTO (Tự động canh nến {tf_val} & tự động vào lệnh)...")
+        threading.Thread(target=self._auto_loop_worker, args=(pk,), daemon=True).start()
 
     def stop_auto_scan(self):
+        pk = self.active_profile_key
         self.auto_loop_running = False
+        self.profile_ctx[pk]["auto_loop_running"] = False
         self.auto_trade_var.set(False)
         self.pending_pullback_order = None
+        self.profile_ctx[pk]["pending_pullback_order"] = None
         self._draw_toggle_switch()
         self._sync_signal_detail_status()
-        self.log("⏹️ Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
+        sym = self.symbol_var.get().strip()
+        self.log(f"⏹️ [{pk} - {sym}] Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
 
-    def _auto_loop_worker(self):
-        while self.auto_loop_running:
+    def _auto_loop_worker(self, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
+        while self.profile_ctx[pk].get("auto_loop_running", False):
             try:
-                symbol = self.symbol_var.get().strip()
-                tf = self.tf_var.get().strip()
+                cfg = self._get_profile_cfg(pk)
+                ctx = self.profile_ctx[pk]
+                symbol = str(cfg.get("symbol", "")).strip()
+                tf = str(cfg.get("tf", "M5")).strip()
                 df_check = self.fetch_mt5_candles(symbol, tf, 3, include_forming=False)
                 latest_time = df_check["timestamps"].iloc[-1]
-                if self.last_candle_time != latest_time and not self.is_analyzing:
-                    self.log(f"🔔 Nến {tf} mới vừa đóng ({latest_time}). Đang chạy phân tích AI...")
-                    self._run_analysis_worker()
+                last_ct = self.last_candle_time if pk == self.active_profile_key else ctx.get("last_candle_time")
+                is_ana = self.is_analyzing if pk == self.active_profile_key else ctx.get("is_analyzing", False)
+                if last_ct != latest_time and not is_ana:
+                    self.log(f"🔔 [{pk} - {symbol}] Nến {tf} mới vừa đóng ({latest_time}). Đang chạy phân tích AI...")
+                    self._run_analysis_worker(profile_key=pk)
             except Exception as e:
-                self.log(f"⚠️ Lỗi canh nến: {e}")
+                self.log(f"⚠️ [{pk}] Lỗi canh nến: {e}")
             time.sleep(2)
 
-    def _run_analysis_worker(self):
-        self.is_analyzing = True
-        self.root.after(0, self._start_scan_progress_anim)
+    def _run_analysis_worker(self, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
+        self.profile_ctx[pk]["is_analyzing"] = True
+        if pk == self.active_profile_key:
+            self.is_analyzing = True
+            self._ui_after(0, self._start_scan_progress_anim)
         try:
-            symbol = self.symbol_var.get().strip()
-            scalp_tf = self.tf_var.get().strip()
-            analysis_tf = self.analysis_tf_var.get().strip() or scalp_tf
-            tf = scalp_tf
-            tf_label = scalp_tf if analysis_tf == scalp_tf else f"AI:{analysis_tf} -> Scalp:{scalp_tf}"
-            lookback = int(self.lookback_var.get())
-            pred_len = int(self.pred_len_var.get())
-            num_scenarios = int(self.scenarios_var.get())
-            min_consensus = float(self.consensus_var.get())
-            min_move = float(self.min_move_var.get())
-            try:
-                rev_consensus = float(self.rev_consensus_var.get())
-            except ValueError:
-                rev_consensus = min_consensus
-            try:
-                rev_min_move = max(float(self.rev_min_move_var.get()), 0.0)
-            except ValueError:
-                rev_min_move = 0.0
-            max_spread = float(self.max_spread_var.get())
-            lot = float(self.lot_var.get())
-            sl_atr = float(self.sl_atr_var.get())
-            sl_buffer = max(float(self.sl_buffer_var.get()), 0.0)
-            max_sl_price = max(float(self.max_sl_price_var.get()), 0.0)
-            rr = max(float(self.rr_var.get()), 0.0)
-            max_pos = int(self.max_pos_var.get())
-            model_choice = self.model_var.get()
-            engine_mode = self.engine_var.get()
-            hf_space = self.hf_space_var.get().strip()
-            hf_token = self.hf_token_var.get().strip()
-
-            # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf): luôn nạp tối thiểu 400 nến để vẽ biểu đồ đầy đặn.
-            # Đặc biệt: Lấy cả cây nến đang hình thành (include_forming=True) nếu cây nến đó đã chạy > 20 giây (hoặc khi chạy đa khung M15->M5 / bấm Reload)
-            # để AI luôn nhìn thấy giá thực tế hiện tại trên biểu đồ thay vì bị trễ 15-60 phút ở giá đóng nến cũ!
-            self._set_loading_stage(28.0, f"Đang tải dữ liệu nến {symbol} ({analysis_tf}) từ MT5...")
-            chart_bars = max(lookback, 400)
-            df_with_forming = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars + 1, include_forming=True)
-            tick = mt5.symbol_info_tick(symbol)
-            server_now_ts = pd.to_datetime(int(tick.time), unit="s") if tick is not None else df_with_forming["timestamps"].iloc[-1]
-            forming_open_ts = df_with_forming["timestamps"].iloc[-1]
-            forming_age_sec = (server_now_ts - forming_open_ts).total_seconds()
-            # Nếu nến mới chỉ vừa mở < 15 giây (ngay thời điểm vừa đóng nến cũ), dùng nến vừa đóng làm mốc chuẩn;
-            # nếu nến hiện tại đã chạy >= 15 giây (hoặc khác khung M15->M5), đưa cả cây nến đang chạy vào để AI phân tích sát giá Live!
-            if forming_age_sec < 15.0 and len(df_with_forming) > 35:
-                df = df_with_forming.iloc[:-1].reset_index(drop=True)
-            else:
-                df = df_with_forming.iloc[-chart_bars:].reset_index(drop=True)
-
-            ai_lookback = min(lookback, 220) if lookback >= 350 else lookback
-            df_ai = df.iloc[-ai_lookback:].reset_index(drop=True)
-            last_close = float(df["close"].iloc[-1])
-
-            # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & kết hợp ATR đa khung
-            if analysis_tf == scalp_tf:
-                df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
-            else:
-                self._set_loading_stage(40.0, f"Đang đồng bộ khung vào lệnh Scalping ({scalp_tf})...")
-                df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
-
-            last_time = df_scalp["timestamps"].iloc[-1]
-            self.last_candle_time = last_time
-            atr_scalp = self.calculate_atr(df_scalp, 14)
-            atr_ana = self.calculate_atr(df, 14) if analysis_tf != scalp_tf else atr_scalp
-            atr = max(atr_scalp, atr_ana * 0.65)
-
-            spread_usd = (tick.ask - tick.bid) if tick else 0.0
-
-            x_timestamp = df_ai["timestamps"].reset_index(drop=True)
-            delta = x_timestamp.iloc[-1] - x_timestamp.iloc[-2] if len(x_timestamp) >= 2 else pd.Timedelta(minutes=5)
-            future_dates = [x_timestamp.iloc[-1] + delta * (i + 1) for i in range(pred_len)]
-            y_timestamp = pd.Series(pd.to_datetime(future_dates))
-
-            scenarios = None
-            used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local (KV-Cache)"
-
-            if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
+            with self._ai_scan_lock:
+                cfg = self._get_profile_cfg(pk)
+                ctx = self.profile_ctx[pk]
+                symbol = str(cfg.get("symbol", "XAUUSDm")).strip()
+                scalp_tf = str(cfg.get("tf", "M5")).strip()
+                analysis_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
+                tf = scalp_tf
+                tf_label = scalp_tf if analysis_tf == scalp_tf else f"AI:{analysis_tf} -> Scalp:{scalp_tf}"
+                lookback = int(cfg.get("lookback", 200))
+                pred_len = int(cfg.get("pred_len", 6))
+                num_scenarios = int(cfg.get("scenarios", 8))
+                min_consensus = float(cfg.get("consensus", 75.0))
+                min_move = float(cfg.get("min_move", 1.2))
                 try:
-                    self._set_loading_stage(55.0, f"Đang gọi Hugging Face Space ({hf_space})...")
-                    self.log(f"Đang gọi Hugging Face Space ({hf_space})...")
-                    client = Client(hf_space, hf_token=hf_token if hf_token else None)
-                    payload = df_ai.copy()
-                    payload["timestamps"] = payload["timestamps"].dt.strftime("%Y-%m-%d %H:%M:%S")
-                    hf_model_arg = model_choice.replace("AI-", "Kronos-", 1) if model_choice.startswith("AI-") else model_choice
-                    res_json = client.predict(
-                        candles_json=payload.to_json(orient="records"),
-                        model_choice=hf_model_arg,
+                    rev_consensus = float(cfg.get("rev_consensus", min_consensus))
+                except ValueError:
+                    rev_consensus = min_consensus
+                try:
+                    rev_min_move = max(float(cfg.get("rev_min_move", 0.0)), 0.0)
+                except ValueError:
+                    rev_min_move = 0.0
+                max_spread = float(cfg.get("max_spread", 0.35))
+                lot = float(cfg.get("lot", 0.01))
+                sl_atr = float(cfg.get("sl_atr", 1.5))
+                sl_buffer = max(float(cfg.get("sl_buffer", 0.5)), 0.0)
+                max_sl_price = max(float(cfg.get("max_sl_price", 6.0)), 0.0)
+                rr = max(float(cfg.get("rr", 2.0)), 0.0)
+                max_pos = int(cfg.get("max_pos", 5))
+                auto_rev_close = bool(cfg.get("auto_rev_close", True))
+                model_choice = str(cfg.get("model", "AI-base (102.3M - Mạnh nhất)"))
+                engine_mode = str(cfg.get("engine", "Chạy trực tiếp máy nhà"))
+                hf_space = str(cfg.get("hf_space", "")).strip()
+                hf_token = str(cfg.get("hf_token", "")).strip()
+
+                # 1. Lấy dữ liệu nến của Khung Phân Tích AI (analysis_tf): luôn nạp tối thiểu 400 nến để vẽ biểu đồ đầy đặn.
+                if pk == self.active_profile_key:
+                    self._set_loading_stage(28.0, f"Đang tải dữ liệu nến {symbol} ({analysis_tf}) từ MT5...")
+                chart_bars = max(lookback, 400)
+                df_with_forming = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars + 1, include_forming=True)
+                tick = mt5.symbol_info_tick(symbol)
+                server_now_ts = pd.to_datetime(int(tick.time), unit="s") if tick is not None else df_with_forming["timestamps"].iloc[-1]
+                forming_open_ts = df_with_forming["timestamps"].iloc[-1]
+                forming_age_sec = (server_now_ts - forming_open_ts).total_seconds()
+                # Nếu nến mới chỉ vừa mở < 15 giây (ngay thời điểm vừa đóng nến cũ), dùng nến vừa đóng làm mốc chuẩn;
+                # nếu nến hiện tại đã chạy >= 15 giây (hoặc khác khung M15->M5), đưa cả cây nến đang chạy vào để AI phân tích sát giá Live!
+                if forming_age_sec < 15.0 and len(df_with_forming) > 35:
+                    df = df_with_forming.iloc[:-1].reset_index(drop=True)
+                else:
+                    df = df_with_forming.iloc[-chart_bars:].reset_index(drop=True)
+
+                ai_lookback = min(lookback, 220) if lookback >= 350 else lookback
+                df_ai = df.iloc[-ai_lookback:].reset_index(drop=True)
+                last_close = float(df["close"].iloc[-1])
+
+                # 2. Nếu Khung Scalping khác Khung Phân tích AI -> Lấy nến Khung Scalping để canh thời điểm đóng nến & kết hợp ATR đa khung
+                if analysis_tf == scalp_tf:
+                    df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
+                else:
+                    if pk == self.active_profile_key:
+                        self._set_loading_stage(40.0, f"Đang đồng bộ khung vào lệnh Scalping ({scalp_tf})...")
+                    df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
+
+                last_time = df_scalp["timestamps"].iloc[-1]
+                ctx["last_candle_time"] = last_time
+                if pk == self.active_profile_key:
+                    self.last_candle_time = last_time
+                atr_scalp = self.calculate_atr(df_scalp, 14)
+                atr_ana = self.calculate_atr(df, 14) if analysis_tf != scalp_tf else atr_scalp
+                atr = max(atr_scalp, atr_ana * 0.65)
+
+                spread_usd = (tick.ask - tick.bid) if tick else 0.0
+
+                x_timestamp = df_ai["timestamps"].reset_index(drop=True)
+                delta = x_timestamp.iloc[-1] - x_timestamp.iloc[-2] if len(x_timestamp) >= 2 else pd.Timedelta(minutes=5)
+                future_dates = [x_timestamp.iloc[-1] + delta * (i + 1) for i in range(pred_len)]
+                y_timestamp = pd.Series(pd.to_datetime(future_dates))
+
+                scenarios = None
+                used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local (KV-Cache)"
+
+                if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
+                    try:
+                        if pk == self.active_profile_key:
+                            self._set_loading_stage(55.0, f"Đang gọi Hugging Face Space ({hf_space})...")
+                        self.log(f"[{pk}] Đang gọi Hugging Face Space ({hf_space})...")
+                        client = Client(hf_space, hf_token=hf_token if hf_token else None)
+                        payload = df_ai.copy()
+                        payload["timestamps"] = payload["timestamps"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                        hf_model_arg = model_choice.replace("AI-", "Kronos-", 1) if model_choice.startswith("AI-") else model_choice
+                        res_json = client.predict(
+                            candles_json=payload.to_json(orient="records"),
+                            model_choice=hf_model_arg,
+                            pred_len=pred_len,
+                            num_scenarios=num_scenarios,
+                            temperature=1.0,
+                            top_p=0.9,
+                            api_name="/scalping_m5"
+                        )
+                        data = json.loads(res_json)
+                        scenarios = []
+                        for s_rec in data["scenarios"]:
+                            s_df = pd.DataFrame(s_rec)
+                            s_df["timestamps"] = pd.to_datetime(s_df["timestamps"])
+                            scenarios.append(s_df)
+                        used_engine = "Hugging Face A100"
+                    except Exception as e:
+                        self.log(f"⚠️ [{pk}] Chuyển sang chạy trực tiếp trên máy nhà ({e})")
+
+                if scenarios is None:
+                    if pk == self.active_profile_key:
+                        self._set_loading_stage(62.0, f"Đang nạp mô hình {model_choice}...")
+                    predictor = self.get_local_predictor(model_choice)
+                    if pk == self.active_profile_key:
+                        self._set_loading_stage(82.0, f"Đang phân tích {num_scenarios} kịch bản xu hướng AI ({symbol})...")
+                    scenarios = self._fast_predict_scenarios(
+                        predictor=predictor,
+                        df_in=df_ai,
+                        x_timestamp=x_timestamp,
+                        y_timestamp=y_timestamp,
                         pred_len=pred_len,
                         num_scenarios=num_scenarios,
-                        temperature=1.0,
-                        top_p=0.9,
-                        api_name="/scalping_m5"
+                        T=1.0,
+                        top_k=0,
+                        top_p=0.9
                     )
-                    data = json.loads(res_json)
-                    scenarios = []
-                    for s_rec in data["scenarios"]:
-                        s_df = pd.DataFrame(s_rec)
-                        s_df["timestamps"] = pd.to_datetime(s_df["timestamps"])
-                        scenarios.append(s_df)
-                    used_engine = "Hugging Face A100"
-                except Exception as e:
-                    self.log(f"⚠️ Chuyển sang chạy trực tiếp trên máy nhà ({e})")
 
-            if scenarios is None:
-                self._set_loading_stage(62.0, f"Đang nạp mô hình {model_choice}...")
-                predictor = self.get_local_predictor(model_choice)
-                self._set_loading_stage(82.0, f"Đang phân tích {num_scenarios} kịch bản xu hướng AI...")
-                scenarios = self._fast_predict_scenarios(
-                    predictor=predictor,
-                    df_in=df_ai,
-                    x_timestamp=x_timestamp,
-                    y_timestamp=y_timestamp,
-                    pred_len=pred_len,
-                    num_scenarios=num_scenarios,
-                    T=1.0,
-                    top_k=0,
-                    top_p=0.9
-                )
+                bull_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_close)
+                bear_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) < last_close)
+                total = len(scenarios)
+                bull_pct = (bull_count / total) * 100.0
+                bear_pct = (bear_count / total) * 100.0
 
-            bull_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_close)
-            bear_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) < last_close)
-            total = len(scenarios)
-            bull_pct = (bull_count / total) * 100.0
-            bear_pct = (bear_count / total) * 100.0
+                # Tính đường giá đóng cửa trung bình của cả 8 kịch bản
+                mean_closes = np.mean([s["close"].values for s in scenarios], axis=0)
+                avg_end_close = float(mean_closes[-1])
 
-            # Tính đường giá đóng cửa trung bình của cả 8 kịch bản
-            mean_closes = np.mean([s["close"].values for s in scenarios], axis=0)
-            avg_end_close = float(mean_closes[-1])
+                # Chọn Kịch bản Đại diện Chuẩn nhất (Medoid)
+                best_idx = int(np.argmin([np.mean(np.abs(s["close"].values - mean_closes)) for s in scenarios]))
+                mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy()
 
-            # Chọn Kịch bản Đại diện Chuẩn nhất (Medoid - kịch bản có đường đi sát với trung tâm đám đông nhất)
-            # Giúp giữ nguyên hình thái thân nến thực tế của Kronos AI thay vì cộng trung bình làm thân nến bị triệt tiêu thành Doji!
-            best_idx = int(np.argmin([np.mean(np.abs(s["close"].values - mean_closes)) for s in scenarios]))
-            mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy()
+                expected_move = avg_end_close - last_close
+                ai_pred_high = float(mean_df["high"].max())
+                ai_pred_low = float(mean_df["low"].min())
+                ai_swing_low_dist = max(last_close - ai_pred_low, 0.0)
+                ai_swing_high_dist = max(ai_pred_high - last_close, 0.0)
+                base_atr_sl = max(atr * sl_atr, 1.0)
 
-            expected_move = avg_end_close - last_close
-            ai_pred_high = float(mean_df["high"].max())
-            ai_pred_low = float(mean_df["low"].min())
-            ai_swing_low_dist = max(last_close - ai_pred_low, 0.0)
-            ai_swing_high_dist = max(ai_pred_high - last_close, 0.0)
-            base_atr_sl = max(atr * sl_atr, 1.0)
+                ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), 1.5)
+                ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), 1.5)
 
-            ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), 1.5)
-            ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), 1.5)
-
-            action = None
-            sig_color = GOLD_ACCENT
-            ref_tag = ""
-            if bull_pct >= min_consensus and expected_move >= min_move:
-                action = "BUY"
-                sig_color = GREEN_UP
-                entry_ref = tick.ask if tick else last_close
-                sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
-                total_sl_dist = sl_ai_raw_dist + sl_buffer
-                # SL lấy theo vùng Đáy dự báo của AI kết hợp ATR và cộng thêm khoảng giá an toàn (lùi xuống thêm sl_buffer giá)
-                sl_price = round(entry_ref - total_sl_dist, 2)
-                eff_entry = min(entry_ref, round(sl_price + max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
-                if rr > 0.0:
-                    tp_price = round(eff_entry + (eff_entry - sl_price) * rr, 2)
-                else:
-                    # R:R = 0 -> Lấy TP trực tiếp theo mục tiêu đỉnh/giá dự báo của AI
-                    tp_price = round(max(ai_pred_high, eff_entry + ai_tp_dist_up), 2)
-                sig_title = f"🟢 TÍN HIỆU: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total} kịch bản)"
-            elif bear_pct >= min_consensus and (-expected_move) >= min_move:
-                action = "SELL"
-                sig_color = RED_DOWN
-                entry_ref = tick.bid if tick else last_close
-                sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
-                total_sl_dist = sl_ai_raw_dist + sl_buffer
-                # SL lấy theo vùng Đỉnh dự báo của AI kết hợp ATR và cộng thêm khoảng giá an toàn (nâng lên thêm sl_buffer giá)
-                sl_price = round(entry_ref + total_sl_dist, 2)
-                eff_entry = max(entry_ref, round(sl_price - max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
-                if rr > 0.0:
-                    tp_price = round(eff_entry - (sl_price - eff_entry) * rr, 2)
-                else:
-                    # R:R = 0 -> Lấy TP trực tiếp theo mục tiêu đáy/giá dự báo của AI
-                    tp_price = round(min(ai_pred_low, eff_entry - ai_tp_dist_down), 2)
-                sig_title = f"🔴 TÍN HIỆU: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total} kịch bản)"
-            else:
-                entry_ref = last_close
-                is_bear_bias = (bear_pct > bull_pct) or (bear_pct == bull_pct and expected_move < 0)
-                if is_bear_bias:
-                    ref_tag = " (Tham khảo SELL)"
-                    sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
-                    total_sl_dist = sl_ai_raw_dist + sl_buffer
-                    eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
-                    tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_down
-                    sl_price = round(last_close + total_sl_dist, 2)
-                    tp_price = round(last_close - tp_dist, 2)
-                else:
-                    ref_tag = " (Tham khảo BUY)"
+                action = None
+                sig_color = GOLD_ACCENT
+                ref_tag = ""
+                if bull_pct >= min_consensus and expected_move >= min_move:
+                    action = "BUY"
+                    sig_color = GREEN_UP
+                    entry_ref = tick.ask if tick else last_close
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
-                    eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
-                    tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_up
-                    sl_price = round(last_close - total_sl_dist, 2)
-                    tp_price = round(last_close + tp_dist, 2)
-                sig_title = f"⚪ ĐỨNG NGOÀI ({tf_label}) — Tăng: {bull_pct:.0f}% | Giảm: {bear_pct:.0f}% | Biên độ dự kiến: {expected_move:+.2f}$"
-
-            eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
-            tp_dist = abs(tp_price - entry_ref)
-            self.last_recommendation = {"sl_dist": sl_ai_raw_dist, "tp_dist": tp_dist}
-
-            self.cached_scenarios = scenarios
-            self.cached_mean_df = mean_df
-            self.cached_action = action
-            self.cached_sl = sl_price
-            self.cached_tp = tp_price
-
-            # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
-            # Sử dụng ngưỡng riêng (rev_consensus & rev_min_move) trong Mục 3 để kích hoạt ngay cả khi bộ lọc vào lệnh chính đang ĐỨNG NGOÀI!
-            rev_action = action
-            if rev_action is None:
-                if bull_pct >= rev_consensus and (rev_min_move <= 0.0 or expected_move >= rev_min_move):
-                    rev_action = "BUY"
-                elif bear_pct >= rev_consensus and (rev_min_move <= 0.0 or (-expected_move) >= rev_min_move):
-                    rev_action = "SELL"
-
-            has_losing_opposite_pos = False
-            if rev_action is not None:
-                open_positions = mt5.positions_get(symbol=symbol)
-                if open_positions:
-                    sym_info = mt5.symbol_info(symbol)
-                    digits = sym_info.digits if sym_info else 2
-                    for pos in open_positions:
-                        is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
-                        is_opposite = (rev_action == "BUY" and not is_buy_pos) or (rev_action == "SELL" and is_buy_pos)
-                        if not is_opposite:
-                            continue
-
-                        # QUY TẮC 1: Lệnh ngược chiều đang CÓ LÃI (> 0$) -> Chốt lời ngay để đảo chiều
-                        if pos.profit > 0.0:
-                            if self.auto_rev_close_var.get():
-                                ok_c, msg_c = self._close_single_pos(pos)
-                                self.pending_be_exit_tickets.discard(pos.ticket)
-                                self.log(f"🔄 [Quy tắc 1 - AI Đảo Chiều sang {rev_action}] Lệnh cũ đang lãi -> {msg_c}")
-                        else:
-                            # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$)
-                            # -> KHÔNG cắt lỗ non, KHÔNG mở lệnh ngược chiều mới, và kéo TP về đúng Entry để chờ hồi hòa vốn thoát!
-                            has_losing_opposite_pos = True
-                            if self.auto_rev_close_var.get():
-                                entry_exact = round(pos.price_open, digits)
-                                self.pending_be_exit_tickets.add(pos.ticket)
-                                if abs(pos.tp - entry_exact) >= 0.05:
-                                    if self._modify_position_sltp(pos, pos.sl, entry_exact):
-                                        self.log(
-                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
-                                            f"đã kéo TP về đúng Entry ({entry_exact:.2f}) chờ hồi Hòa Vốn thoát!"
-                                        )
-                                    else:
-                                        self.log(
-                                            f"⏳ [Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
-                                            f"tự động thoát ngay khi giá hồi về Entry ({entry_exact:.2f})!"
-                                        )
-
-            # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL (1 GIÁ = 10 PIP; NẾU = 0 LÀ THEO AI)
-            cur_sl_dist = abs(entry_ref - sl_price)
-            limit_entry_price = round((sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price), 2) if max_sl_price > 0.0 else entry_ref
-
-            trade_msg = self._get_live_bot_status_text()
-            if action is not None:
-                if self._is_daily_limit_locked():
-                    self.pending_pullback_order = None
-                    trade_msg = f"🔒 Đã dừng giao dịch hết hôm nay ({self.daily_limit_reason})"
-                    self.log(trade_msg)
-                elif self._is_cooldown_active():
-                    self.pending_pullback_order = None
-                    trade_msg = self._get_cooldown_remaining_str()
-                    self.log(trade_msg)
-                elif has_losing_opposite_pos:
-                    self.pending_pullback_order = None
-                    trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Không mở {action} đè)"
-                    self.log(f"⏳ [Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
-                elif max_sl_price > 0.0 and cur_sl_dist > max_sl_price + 0.05:
-                    # SL vượt quá số giá tối đa người dùng cài -> Bắt buộc chờ giá hồi về <= max_sl_price mới vào lệnh!
-                    self.pending_pullback_order = {
-                        "symbol": symbol,
-                        "action": action,
-                        "sl_price": sl_price,
-                        "manual_queued": False,
-                    }
-                    cond_op = "<=" if action == "BUY" else ">="
-                    trade_msg = (
-                        f"⏳ SL = {cur_sl_dist:.2f} giá > Max ({max_sl_price:.1f} giá) -> "
-                        f"Đang chờ giá hồi về {cond_op} {limit_entry_price:.2f} mới vào {action}"
-                    )
-                    self.log(
-                        f"⏳ [Chờ Giá Hồi <= SL Max] AI báo {action} (SL AI+{sl_buffer:.1f} = {sl_price:.2f}, cách {cur_sl_dist:.2f} giá > SL Max {max_sl_price:.2f} giá). "
-                        f"Đang canh giá hồi về {cond_op} {limit_entry_price:.2f} mới vào lệnh!"
-                    )
-                elif spread_usd > max_spread:
-                    trade_msg = f"⚠️ Khóa lệnh do Spread cao ({spread_usd:.2f}$ > {max_spread}$)"
-                    self.log(trade_msg)
-                elif self.auto_trade_var.get():
-                    self.pending_pullback_order = None
-                    ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos)
-                    trade_msg = ord_msg
-                    self.log(ord_msg)
+                    sl_price = round(entry_ref - total_sl_dist, 2)
+                    eff_entry = min(entry_ref, round(sl_price + max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
+                    if rr > 0.0:
+                        tp_price = round(eff_entry + (eff_entry - sl_price) * rr, 2)
+                    else:
+                        tp_price = round(max(ai_pred_high, eff_entry + ai_tp_dist_up), 2)
+                    sig_title = f"🟢 TÍN HIỆU [{pk}]: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total} kịch bản)"
+                elif bear_pct >= min_consensus and (-expected_move) >= min_move:
+                    action = "SELL"
+                    sig_color = RED_DOWN
+                    entry_ref = tick.bid if tick else last_close
+                    sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
+                    total_sl_dist = sl_ai_raw_dist + sl_buffer
+                    sl_price = round(entry_ref + total_sl_dist, 2)
+                    eff_entry = max(entry_ref, round(sl_price - max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
+                    if rr > 0.0:
+                        tp_price = round(eff_entry - (sl_price - eff_entry) * rr, 2)
+                    else:
+                        tp_price = round(min(ai_pred_low, eff_entry - ai_tp_dist_down), 2)
+                    sig_title = f"🔴 TÍN HIỆU [{pk}]: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total} kịch bản)"
                 else:
-                    self.pending_pullback_order = None
-                    self.log(f"Có tín hiệu {action} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh.")
-            else:
-                self.pending_pullback_order = None
-                self.log(f"Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
+                    entry_ref = last_close
+                    is_bear_bias = (bear_pct > bull_pct) or (bear_pct == bull_pct and expected_move < 0)
+                    if is_bear_bias:
+                        ref_tag = " (Tham khảo SELL)"
+                        sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
+                        total_sl_dist = sl_ai_raw_dist + sl_buffer
+                        eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
+                        tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_down
+                        sl_price = round(last_close + total_sl_dist, 2)
+                        tp_price = round(last_close - tp_dist, 2)
+                    else:
+                        ref_tag = " (Tham khảo BUY)"
+                        sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
+                        total_sl_dist = sl_ai_raw_dist + sl_buffer
+                        eff_sl_for_tp = min(total_sl_dist, max_sl_price) if max_sl_price > 0.0 else total_sl_dist
+                        tp_dist = (eff_sl_for_tp * rr) if rr > 0.0 else ai_tp_dist_up
+                        sl_price = round(last_close - total_sl_dist, 2)
+                        tp_price = round(last_close + tp_dist, 2)
+                    sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI ({tf_label}) — Tăng: {bull_pct:.0f}% | Giảm: {bear_pct:.0f}% | Biên độ dự kiến: {expected_move:+.2f}$"
 
-            max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
-            self._last_detail_prefix = (
-                f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  SL AI (+{sl_buffer:.1f} giá): {cur_sl_dist:.2f} giá ({max_sl_str})\n"
-                f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   "
-            )
-            detail_text = f"{self._last_detail_prefix}{trade_msg}"
+                tp_dist = abs(tp_price - entry_ref)
+                ctx["last_recommendation"] = {"sl_dist": sl_ai_raw_dist, "tp_dist": tp_dist}
+                ctx["cached_scenarios"] = scenarios
+                ctx["cached_mean_df"] = mean_df
+                ctx["cached_action"] = action
+                ctx["cached_sl"] = sl_price
+                ctx["cached_tp"] = tp_price
+                ctx["_sig_title"] = sig_title
+                ctx["_sig_color"] = sig_color
 
-            self._set_loading_stage(96.0, "Đang dựng biểu đồ nến Real-Time...")
-            chart_bars = min(max(lookback, 400), 500)
-            df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, chart_bars, include_forming=True)
-            df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=True)
-            self.cached_df_hist = df_live_scalp
-            self.cached_df_analysis = df_live_ana
+                # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
+                rev_action = action
+                if rev_action is None:
+                    if bull_pct >= rev_consensus and (rev_min_move <= 0.0 or expected_move >= rev_min_move):
+                        rev_action = "BUY"
+                    elif bear_pct >= rev_consensus and (rev_min_move <= 0.0 or (-expected_move) >= rev_min_move):
+                        rev_action = "SELL"
+
+                has_losing_opposite_pos = False
+                if rev_action is not None:
+                    open_positions = mt5.positions_get(symbol=symbol)
+                    if open_positions:
+                        sym_info = mt5.symbol_info(symbol)
+                        digits = sym_info.digits if sym_info else 2
+                        for pos in open_positions:
+                            is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
+                            is_opposite = (rev_action == "BUY" and not is_buy_pos) or (rev_action == "SELL" and is_buy_pos)
+                            if not is_opposite:
+                                continue
+
+                            # QUY TẮC 1: Lệnh ngược chiều đang CÓ LÃI (> 0$) -> Chốt lời ngay để đảo chiều
+                            if pos.profit > 0.0:
+                                if auto_rev_close:
+                                    ok_c, msg_c = self._close_single_pos(pos)
+                                    self.pending_be_exit_tickets.discard(pos.ticket)
+                                    self.log(f"🔄 [{pk} - Quy tắc 1 - AI Đảo Chiều sang {rev_action}] Lệnh cũ đang lãi -> {msg_c}")
+                            else:
+                                # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$) -> Chờ hồi về Entry thoát hòa vốn
+                                has_losing_opposite_pos = True
+                                if auto_rev_close:
+                                    entry_exact = round(pos.price_open, digits)
+                                    self.pending_be_exit_tickets.add(pos.ticket)
+                                    if abs(pos.tp - entry_exact) >= 0.05:
+                                        if self._modify_position_sltp(pos, pos.sl, entry_exact):
+                                            self.log(
+                                                f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
+                                                f"đã kéo TP về đúng Entry ({entry_exact:.2f}) chờ hồi Hòa Vốn thoát!"
+                                            )
+                                        else:
+                                            self.log(
+                                                f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
+                                                f"tự động thoát ngay khi giá hồi về Entry ({entry_exact:.2f})!"
+                                            )
+
+                # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL
+                cur_sl_dist = abs(entry_ref - sl_price)
+                limit_entry_price = round((sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price), 2) if max_sl_price > 0.0 else entry_ref
+                is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
+
+                trade_msg = self._get_live_bot_status_text(pk)
+                if action is not None:
+                    if self._is_daily_limit_locked(pk):
+                        ctx["pending_pullback_order"] = None
+                        reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
+                        trade_msg = f"🔒 Đã dừng giao dịch hết hôm nay ({reason})"
+                        self.log(f"[{pk}] {trade_msg}")
+                    elif self._is_cooldown_active(pk):
+                        ctx["pending_pullback_order"] = None
+                        trade_msg = self._get_cooldown_remaining_str(pk)
+                        self.log(f"[{pk}] {trade_msg}")
+                    elif has_losing_opposite_pos:
+                        ctx["pending_pullback_order"] = None
+                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Không mở {action} đè)"
+                        self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
+                    elif max_sl_price > 0.0 and cur_sl_dist > max_sl_price + 0.05:
+                        ctx["pending_pullback_order"] = {
+                            "symbol": symbol,
+                            "action": action,
+                            "sl_price": sl_price,
+                            "manual_queued": False,
+                        }
+                        cond_op = "<=" if action == "BUY" else ">="
+                        trade_msg = (
+                            f"⏳ SL = {cur_sl_dist:.2f} giá > Max ({max_sl_price:.1f} giá) -> "
+                            f"Đang chờ giá hồi về {cond_op} {limit_entry_price:.2f} mới vào {action}"
+                        )
+                        self.log(
+                            f"⏳ [{pk} - Chờ Giá Hồi <= SL Max] AI báo {action} (SL AI+{sl_buffer:.1f} = {sl_price:.2f}, cách {cur_sl_dist:.2f} giá > SL Max {max_sl_price:.2f} giá). "
+                            f"Đang canh giá hồi về {cond_op} {limit_entry_price:.2f} mới vào lệnh!"
+                        )
+                    elif spread_usd > max_spread:
+                        trade_msg = f"⚠️ Khóa lệnh do Spread cao ({spread_usd:.2f}$ > {max_spread}$)"
+                        self.log(f"[{pk}] {trade_msg}")
+                    elif is_auto_on:
+                        ctx["pending_pullback_order"] = None
+                        ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
+                        trade_msg = ord_msg
+                        self.log(ord_msg)
+                    else:
+                        ctx["pending_pullback_order"] = None
+                        self.log(f"[{pk}] Có tín hiệu {action} {symbol} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh.")
+                else:
+                    ctx["pending_pullback_order"] = None
+                    self.log(f"[{pk} - {symbol}] Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
+
+                max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
+                detail_prefix = (
+                    f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  SL AI (+{sl_buffer:.1f} giá): {cur_sl_dist:.2f} giá ({max_sl_str})\n"
+                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f}   |   🎯 TP: {tp_price:.2f}   |   "
+                )
+                ctx["_last_detail_prefix"] = detail_prefix
+                detail_text = f"{detail_prefix}{trade_msg}"
+
+                if pk == self.active_profile_key:
+                    self._set_loading_stage(96.0, f"Đang dựng biểu đồ nến Real-Time ({symbol})...")
+                chart_bars = min(max(lookback, 400), 500)
+                df_live_scalp = self.fetch_mt5_candles(symbol, scalp_tf, chart_bars, include_forming=True)
+                df_live_ana = df_live_scalp if analysis_tf == scalp_tf else self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=True)
+                ctx["cached_df_hist"] = df_live_scalp
+                ctx["cached_df_analysis"] = df_live_ana
+
+                if pk == self.active_profile_key:
+                    for attr in (
+                        "last_recommendation", "pending_pullback_order", "cached_scenarios",
+                        "cached_mean_df", "cached_action", "cached_sl", "cached_tp",
+                        "cached_df_hist", "cached_df_analysis", "_last_detail_prefix",
+                        "_sig_title", "_sig_color"
+                    ):
+                        setattr(self, attr, ctx[attr])
+
+                self._ui_after(
+                    0, self._update_ui_results, pk, df_live_scalp, df_live_ana,
+                    scenarios, mean_df, sig_title, sig_color, detail_text,
+                    action, sl_price, tp_price, symbol, scalp_tf, analysis_tf
+                )
+        except Exception as e:
+            self.log(f"❌ [{pk}] Lỗi phân tích: {e}")
+            if self._is_initial_loading:
+                self._ui_after(0, self._finish_startup_loading)
+        finally:
+            self.profile_ctx[pk]["is_analyzing"] = False
+            if pk == self.active_profile_key:
+                self.is_analyzing = False
+                self._ui_after(0, self._finish_scan_progress_anim)
+
+    def _update_ui_results(self, profile_key, df_live_scalp, df_live_ana, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, scalp_tf, analysis_tf):
+        # Chỉ cập nhật lên giao diện chính nếu kết quả thuộc về đúng Tab mà người dùng đang mở!
+        if profile_key == self.active_profile_key:
+            self.signal_title_lbl.config(text=sig_title, fg=sig_color)
+            self.signal_detail_lbl.config(text=detail_text)
+
+            for row in self.tree.get_children():
+                self.tree.delete(row)
+            for _, r in mean_df.iterrows():
+                ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
+                self.tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
+
             chart_df = df_live_ana if self.chart_mode == "AI_FORECAST" else df_live_scalp
             chart_tf = analysis_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
-            self.root.after(0, self._update_ui_results, chart_df, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, chart_tf)
-        except Exception as e:
-            self.log(f"❌ Lỗi phân tích: {e}")
-            if self._is_initial_loading:
-                self.root.after(0, self._finish_startup_loading)
-        finally:
-            self.is_analyzing = False
-            self.root.after(0, self._finish_scan_progress_anim)
+            self._draw_candlestick_chart(chart_df, scenarios, mean_df, action, sl_price, tp_price, symbol, chart_tf, has_forming_candle=True)
 
-    def _update_ui_results(self, df_live, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, tf):
-        self.signal_title_lbl.config(text=sig_title, fg=sig_color)
-        self.signal_detail_lbl.config(text=detail_text)
-
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-        for _, r in mean_df.iterrows():
-            ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
-            self.tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
-
-        self._draw_candlestick_chart(df_live, scenarios, mean_df, action, sl_price, tp_price, symbol, tf, has_forming_candle=True)
         if self._is_initial_loading:
             self._finish_startup_loading()
 
@@ -3309,8 +3758,10 @@ class KronosDesktopApp:
                     lot_val = float(self.lot_var.get())
                 except ValueError:
                     lot_val = 0.01
-                est_sl_usd = -abs(live_price - sl_price) * lot_val * 100.0
-                est_tp_usd = abs(tp_price - live_price) * lot_val * 100.0
+                sym_info = mt5.symbol_info(symbol) if MT5_AVAILABLE else None
+                contract_sz = float(sym_info.trade_contract_size) if (sym_info and sym_info.trade_contract_size > 0) else (1.0 if "BTC" in str(symbol).upper() else 100.0)
+                est_sl_usd = -abs(live_price - sl_price) * lot_val * contract_sz
+                est_tp_usd = abs(tp_price - live_price) * lot_val * contract_sz
                 self.ax.axhline(y=sl_price, color=RED_DOWN, linestyle=":", linewidth=1.3, label=f"SL: {sl_price:.2f} ({est_sl_usd:+.1f}$)")
                 self.ax.axhline(y=tp_price, color=GREEN_UP, linestyle=":", linewidth=1.3, label=f"TP: {tp_price:.2f} ({est_tp_usd:+.1f}$)")
 
@@ -3393,38 +3844,10 @@ def run_first_time_setup():
     """Thiết lập thông số mặc định và tự động tạo Shortcut chạy phần mềm trong thư mục & ngoài Desktop."""
     import subprocess
     os.makedirs(SETTINGS_DIR, exist_ok=True)
-    default_settings = {
-        "symbol": "XAUUSDm",
-        "analysis_tf": "M15",
-        "tf": "M5",
-        "lot": "0.01",
-        "max_pos": "5",
-        "scenarios": "8",
-        "consensus": "75",
-        "min_move": "1.2",
-        "max_spread": "0.35",
-        "sl_atr": "1.5",
-        "sl_buffer": "0.5",
-        "max_sl_price": "6.0",
-        "rr": "2.0",
-        "auto_be": True,
-        "be_trigger_r": "1.0",
-        "auto_trail": True,
-        "trail_dist_r": "0.8",
-        "auto_rev_close": True,
-        "rev_consensus": "75",
-        "rev_min_move": "0",
-        "daily_tp_usd": "0",
-        "daily_sl_usd": "0",
-        "max_consec_loss": "0",
-        "cooldown_mins": "30",
-        "engine": "Chạy trực tiếp máy nhà",
-        "model": "AI-base (102.3M - Mạnh nhất)",
-        "hf_space": "tranvankha2807/Kronos_Xau",
-        "hf_token": "",
-        "lookback": "200",
-        "pred_len": "6",
-        "realtime_chart": True,
+    default_settings = dict(DEFAULT_PROFILE_SETTINGS["XAUUSD"])
+    default_settings["profiles"] = {
+        "XAUUSD": dict(DEFAULT_PROFILE_SETTINGS["XAUUSD"]),
+        "BTCUSD": dict(DEFAULT_PROFILE_SETTINGS["BTCUSD"]),
     }
     if not os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
