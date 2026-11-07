@@ -66,20 +66,31 @@ except Exception:
     pass
 
 MODEL_CONFIGS = {
+    "AI-Gold-Exness (Chuyên sâu Exness)": {
+        "model": "Kronos-Gold-Exness",
+        "tokenizer": "Kronos-Tokenizer-Gold-Exness",
+        "fallback_model": "NeoQuasar/Kronos-base",
+        "fallback_tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
+        "max_context": 512,
+        "is_custom": True,
+    },
     "AI-base (102.3M - Mạnh nhất)": {
         "model": "NeoQuasar/Kronos-base",
         "tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
-        "max_context": 512
+        "max_context": 512,
+        "is_custom": False,
     },
     "AI-small (24.7M - Nhanh)": {
         "model": "NeoQuasar/Kronos-small",
         "tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
-        "max_context": 512
+        "max_context": 512,
+        "is_custom": False,
     },
     "AI-mini (4.1M - Siêu nhẹ)": {
         "model": "NeoQuasar/Kronos-mini",
         "tokenizer": "NeoQuasar/Kronos-Tokenizer-2k",
-        "max_context": 2048
+        "max_context": 2048,
+        "is_custom": False,
     }
 }
 
@@ -3212,11 +3223,16 @@ class KronosDesktopApp:
             local_tok_dir = os.path.join(weights_root, tok_name)
             local_mod_dir = os.path.join(weights_root, mod_name)
 
+            fb_tok = cfg.get("fallback_tokenizer", cfg["tokenizer"])
+            fb_mod = cfg.get("fallback_model", cfg["model"])
+
             self.log(f"Đang nạp mô hình {norm_choice} vào {device.upper()}...")
             if os.path.exists(os.path.join(local_tok_dir, "model.safetensors")):
                 tokenizer = KronosTokenizer.from_pretrained(local_tok_dir)
             else:
-                tokenizer = KronosTokenizer.from_pretrained(cfg["tokenizer"])
+                if cfg.get("is_custom", False):
+                    self.log(f"ℹ️ Chưa có trọng số fine-tune '{tok_name}', tự động dùng '{fb_tok}'.")
+                tokenizer = KronosTokenizer.from_pretrained(fb_tok)
                 try:
                     tokenizer.save_pretrained(local_tok_dir)
                 except Exception:
@@ -3225,7 +3241,9 @@ class KronosDesktopApp:
             if os.path.exists(os.path.join(local_mod_dir, "model.safetensors")):
                 model = Kronos.from_pretrained(local_mod_dir)
             else:
-                model = Kronos.from_pretrained(cfg["model"])
+                if cfg.get("is_custom", False):
+                    self.log(f"ℹ️ Chưa có trọng số fine-tune '{mod_name}', tự động dùng '{fb_mod}'.")
+                model = Kronos.from_pretrained(fb_mod)
                 try:
                     model.save_pretrained(local_mod_dir)
                 except Exception:
