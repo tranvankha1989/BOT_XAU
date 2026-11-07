@@ -2320,7 +2320,8 @@ class KronosDesktopApp:
         mt5_err_str = ""
         if MT5_AVAILABLE:
             try:
-                mt5_err_str = f" | MT5 last_error={mt5.last_error()}"
+                with self._mt5_lock:
+                    mt5_err_str = f" | MT5 last_error={mt5.last_error()}"
             except Exception:
                 pass
         err_msg = f"❌ [LỖI - {context}] {err if err is not None else ''}{ (' | ' + extra_info) if extra_info else ''}{mt5_err_str}"
