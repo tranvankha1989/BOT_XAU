@@ -1234,49 +1234,7 @@ class KronosDesktopApp:
             menu_top_card, text="Đang kết nối MT5...", bg="#121722", fg=GOLD_ACCENT,
             font=("Segoe UI", 8, "bold"), anchor="w"
         )
-        self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 4))
-
-        # NÚT LƯU CÀI ĐẶT NGAY NỔI BẬT (MÀU XANH LÁ RÕ RÀNG) & TRẠNG THÁI LƯU THỜI GIAN THỰC
-        self.save_settings_btn = tk.Button(
-            menu_top_card,
-            text="💾 LƯU CÀI ĐẶT NGAY (SAVE)",
-            bg="#0d7a46",
-            fg="#ffffff",
-            activebackground="#159f54",
-            activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"),
-            relief=tk.FLAT,
-            padx=10,
-            pady=4,
-            cursor="hand2",
-            command=self.manual_save_user_settings
-        )
-        self.save_settings_btn.pack(fill=tk.X, pady=(2, 2))
-
-        self.save_status_lbl = tk.Label(
-            menu_top_card,
-            text="✓ Tự động lưu: ĐÃ BẬT (Sẵn sàng)",
-            bg="#121722",
-            fg="#10b981",
-            font=("Consolas", 7, "bold"),
-            anchor="center"
-        )
-        self.save_status_lbl.pack(fill=tk.X, pady=(0, 4))
-
-        tk.Button(
-            menu_top_card,
-            text="↺ Khôi phục TẤT CẢ thông số về mặc định",
-            bg="#182030",
-            fg="#cbd5e1",
-            activebackground="#2b3952",
-            activeforeground=GOLD_ACCENT,
-            font=("Segoe UI", 7, "bold"),
-            relief=tk.FLAT,
-            padx=8,
-            pady=3,
-            cursor="hand2",
-            command=self.reset_all_settings
-        ).pack(fill=tk.X, pady=(2, 0))
+        self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 2))
 
         self.accordion_sections = []
 
@@ -1391,26 +1349,39 @@ class KronosDesktopApp:
             command=lambda: self.reset_section_settings(4)
         ).pack(fill=tk.X, pady=(6, 2))
 
-        # Nút Lưu Cài Đặt bổ sung ở đáy danh sách các mục cài đặt
-        self.save_settings_bottom_btn = tk.Button(
-            left_panel,
+        # KHỐI LƯU CÀI ĐẶT DUY NHẤT Ở ĐÁY CÙNG MENU TRÁI (DƯỚI CÙNG GIAO DIỆN)
+        save_card = tk.Frame(left_panel, bg="#121722", padx=8, pady=6, highlightthickness=1, highlightbackground="#263147")
+        save_card.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 4))
+
+        self.save_settings_btn = tk.Button(
+            save_card,
             text="💾 LƯU CÀI ĐẶT NGAY (SAVE)",
             bg="#0d7a46",
             fg="#ffffff",
             activebackground="#159f54",
             activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"),
+            font=("Segoe UI", 9, "bold"),
             relief=tk.FLAT,
             padx=10,
-            pady=4,
+            pady=5,
             cursor="hand2",
             command=self.manual_save_user_settings
         )
-        self.save_settings_bottom_btn.pack(fill=tk.X, pady=(4, 2))
+        self.save_settings_btn.pack(fill=tk.X, pady=(1, 2))
 
-        # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM DƯỚI CÙNG CỦA MENU TRÁI
+        self.save_status_lbl = tk.Label(
+            save_card,
+            text="✓ Tự động lưu: ĐÃ BẬT (Sẵn sàng)",
+            bg="#121722",
+            fg="#10b981",
+            font=("Consolas", 7, "bold"),
+            anchor="center"
+        )
+        self.save_status_lbl.pack(fill=tk.X, pady=(0, 2))
+
+        # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM Ở GIỮA MENU TRÁI (CO GIÃN TỰ NHIÊN)
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
-        info_card.pack(fill=tk.BOTH, expand=True, pady=(6, 4))
+        info_card.pack(fill=tk.BOTH, expand=True, pady=(4, 4))
 
         info_top_row = tk.Frame(info_card, bg="#131822")
         info_top_row.pack(fill=tk.X, pady=(0, 6))
