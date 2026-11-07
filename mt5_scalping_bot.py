@@ -4070,7 +4070,20 @@ class KronosDesktopApp:
                         if pk == self.active_profile_key:
                             self._set_loading_stage(55.0, f"Đang gọi Hugging Face Space ({hf_space})...")
                         self.log(f"[{pk}] Đang gọi Hugging Face Space ({hf_space})...")
-                        client = Client(hf_space, hf_token=hf_token if hf_token else None)
+                        client_kwargs = {}
+                        if hf_token:
+                            try:
+                                import inspect
+                                params = inspect.signature(Client.__init__).parameters
+                                if "token" in params:
+                                    client_kwargs["token"] = hf_token
+                                elif "hf_token" in params:
+                                    client_kwargs["hf_token"] = hf_token
+                                else:
+                                    client_kwargs["headers"] = {"Authorization": f"Bearer {hf_token}"}
+                            except Exception:
+                                client_kwargs["token"] = hf_token
+                        client = Client(hf_space, **client_kwargs)
                         payload = df_ai.copy(deep=True)
                         payload["timestamps"] = payload["timestamps"].dt.strftime("%Y-%m-%d %H:%M:%S")
                         hf_model_arg = model_choice.replace("AI-", "Kronos-", 1) if model_choice.startswith("AI-") else model_choice
