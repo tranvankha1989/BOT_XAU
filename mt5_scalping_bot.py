@@ -4382,12 +4382,12 @@ class KronosDesktopApp:
                 ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), tols["min_tp_floor"])
 
                 action = None
-                sig_color = GOLD_ACCENT
+                sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                 ref_tag = ""
                 if bull_pct >= min_consensus and expected_move >= min_move:
                     if is_high_uncertainty:
                         action = None
-                        sig_color = GOLD_ACCENT
+                        sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
                     else:
                         action = "BUY"
@@ -4405,7 +4405,7 @@ class KronosDesktopApp:
                 elif bear_pct >= min_consensus and (-expected_move) >= min_move:
                     if is_high_uncertainty:
                         action = None
-                        sig_color = GOLD_ACCENT
+                        sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
                     else:
                         action = "SELL"
