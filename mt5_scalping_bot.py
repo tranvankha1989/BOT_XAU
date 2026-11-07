@@ -136,7 +136,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
-        "hf_token": "",
+        "hf_token": "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",
         "lookback": "450",
         "pred_len": "6",
         "realtime_chart": True,
@@ -172,7 +172,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
-        "hf_token": "",
+        "hf_token": "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",
         "lookback": "450",
         "pred_len": "6",
         "realtime_chart": True,
@@ -620,6 +620,7 @@ class KronosDesktopApp:
             self._sync_self_to_active_ctx(include_ai_state=False)
             self.active_profile_key = target_key
             self._sync_active_ctx_to_self()
+            self.save_user_settings()
         else:
             if target_key in self.pos_tree_by_profile:
                 self.pos_tree = self.pos_tree_by_profile[target_key]
@@ -1222,6 +1223,33 @@ class KronosDesktopApp:
         )
         self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 4))
 
+        # NÚT LƯU CÀI ĐẶT NGAY NỔI BẬT (MÀU XANH LÁ RÕ RÀNG) & TRẠNG THÁI LƯU THỜI GIAN THỰC
+        self.save_settings_btn = tk.Button(
+            menu_top_card,
+            text="💾 LƯU CÀI ĐẶT NGAY (SAVE)",
+            bg="#0d7a46",
+            fg="#ffffff",
+            activebackground="#159f54",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self.manual_save_user_settings
+        )
+        self.save_settings_btn.pack(fill=tk.X, pady=(2, 2))
+
+        self.save_status_lbl = tk.Label(
+            menu_top_card,
+            text="✓ Tự động lưu: ĐÃ BẬT (Sẵn sàng)",
+            bg="#121722",
+            fg="#10b981",
+            font=("Consolas", 7, "bold"),
+            anchor="center"
+        )
+        self.save_status_lbl.pack(fill=tk.X, pady=(0, 4))
+
         tk.Button(
             menu_top_card,
             text="↺ Khôi phục TẤT CẢ thông số về mặc định",
@@ -1349,6 +1377,23 @@ class KronosDesktopApp:
             font=("Segoe UI", 7, "bold"), relief=tk.FLAT, pady=2, cursor="hand2",
             command=lambda: self.reset_section_settings(4)
         ).pack(fill=tk.X, pady=(6, 2))
+
+        # Nút Lưu Cài Đặt bổ sung ở đáy danh sách các mục cài đặt
+        self.save_settings_bottom_btn = tk.Button(
+            left_panel,
+            text="💾 LƯU CÀI ĐẶT NGAY (SAVE)",
+            bg="#0d7a46",
+            fg="#ffffff",
+            activebackground="#159f54",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self.manual_save_user_settings
+        )
+        self.save_settings_bottom_btn.pack(fill=tk.X, pady=(4, 2))
 
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM DƯỚI CÙNG CỦA MENU TRÁI
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
@@ -1663,18 +1708,37 @@ class KronosDesktopApp:
             "realtime_chart": self.realtime_chart_var,
         }
 
-    def save_user_settings(self, *args):
+    def manual_save_user_settings(self):
+        """Người dùng nhấn nút Lưu cài đặt thủ công: Ghi ngay ra file và hiển thị thông báo phản hồi trực quan tức thì."""
+        saved_ok = self.save_user_settings(show_feedback=True)
+        if saved_ok:
+            now_str = datetime.now().strftime("%H:%M:%S")
+            self.log(f"[CÀI ĐẶT] ✓ Đã lưu thành công toàn bộ thông số và Token của Tab {self.active_profile_key} vào ổ cứng ({now_str}).")
+
+    def save_user_settings(self, *args, show_feedback: bool = False) -> bool:
+        """Lưu toàn bộ cài đặt của cả 2 Tab (XAUUSD & BTCUSD) và ghi nhớ Tab đang mở (last_active_tab)."""
         if self._loading_settings:
-            return
+            return False
         try:
             os.makedirs(SETTINGS_DIR, exist_ok=True)
             cur_data = {k: v.get() for k, v in self._get_settings_vars_map().items()}
             self.profile_settings[self.active_profile_key] = dict(cur_data)
 
-            # Đồng bộ các thông tin xác thực & kết nối chung (HF Token, HF Space) cho cả 2 tab
-            # để khi đổi giữa XAUUSD và BTCUSD hoặc khi mở lại app không bao giờ bị mất Token
+            # Lấy HF Token và Space ID từ UI hoặc từ profile đã lưu
             token_val = str(self.hf_token_var.get()).strip()
             space_val = str(self.hf_space_var.get()).strip()
+
+            # Nếu ô nhập trên UI rỗng nhưng trong profile_settings đã có token thì giữ nguyên, không để bị xóa mất
+            if not token_val:
+                for pk in ("XAUUSD", "BTCUSD"):
+                    t_cand = str(self.profile_settings.get(pk, {}).get("hf_token", "")).strip()
+                    if t_cand:
+                        token_val = t_cand
+                        break
+            if not token_val:
+                token_val = str(DEFAULT_PROFILE_SETTINGS["XAUUSD"].get("hf_token", "")).strip()
+
+            # Đồng bộ các thông tin xác thực & kết nối chung (HF Token, HF Space) cho cả 2 tab
             for pk in ("XAUUSD", "BTCUSD"):
                 if pk in self.profile_settings:
                     if token_val:
@@ -1682,17 +1746,40 @@ class KronosDesktopApp:
                     if space_val:
                         self.profile_settings[pk]["hf_space"] = space_val
 
-            payload = dict(self.profile_settings.get("XAUUSD", cur_data))
+            # Nếu token_val có nhưng ô nhập UI đang trống (ví dụ vừa nạp), tự động điền lại lên UI
+            if token_val and not str(self.hf_token_var.get()).strip():
+                self._loading_settings = True
+                try:
+                    self.hf_token_var.set(token_val)
+                finally:
+                    self._loading_settings = False
+
+            payload = dict(self.profile_settings.get(self.active_profile_key, cur_data))
             payload["hf_token"] = token_val
             payload["hf_space"] = space_val
+            payload["last_active_tab"] = self.active_profile_key
             payload["profiles"] = {
                 "XAUUSD": dict(self.profile_settings["XAUUSD"]),
                 "BTCUSD": dict(self.profile_settings["BTCUSD"]),
             }
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+
+            now_str = datetime.now().strftime("%H:%M:%S")
+            if hasattr(self, "save_status_lbl"):
+                self.save_status_lbl.config(
+                    text=f"✓ Đã lưu ({self.active_profile_key}) lúc {now_str}",
+                    fg="#10b981"
+                )
+            return True
+        except Exception as e:
+            now_str = datetime.now().strftime("%H:%M:%S")
+            if hasattr(self, "save_status_lbl"):
+                self.save_status_lbl.config(
+                    text=f"⚠️ Lỗi lưu file: {e} ({now_str})",
+                    fg="#ef4444"
+                )
+            return False
 
     def load_user_settings(self):
         if not os.path.exists(SETTINGS_FILE):
@@ -1754,7 +1841,7 @@ class KronosDesktopApp:
                     except Exception:
                         pass
 
-            # Trích xuất và nạp HF Token từ bất kỳ đâu có lưu (profile hoặc root)
+            # Trích xuất và nạp HF Token từ bất kỳ đâu có lưu (profile hoặc root hoặc mặc định)
             token_saved = ""
             for pk in ("XAUUSD", "BTCUSD"):
                 t = str(self.profile_settings.get(pk, {}).get("hf_token", "")).strip()
@@ -1763,18 +1850,32 @@ class KronosDesktopApp:
                     break
             if not token_saved and isinstance(data, dict):
                 token_saved = str(data.get("hf_token", "")).strip()
+            if not token_saved:
+                token_saved = DEFAULT_PROFILE_SETTINGS["XAUUSD"].get("hf_token", "").strip()
 
             if token_saved:
                 for pk in ("XAUUSD", "BTCUSD"):
                     if pk in self.profile_settings:
                         self.profile_settings[pk]["hf_token"] = token_saved
 
-            # Mặc định khi mở phần mềm luôn hiển thị Tab XAUUSD đầu tiên
-            self.active_profile_key = "XAUUSD"
+            # Khôi phục chính xác Tab người dùng đang mở trước khi tắt App (XAUUSD hoặc BTCUSD)
+            last_tab = data.get("last_active_tab", "XAUUSD") if isinstance(data, dict) else "XAUUSD"
+            if last_tab not in ("XAUUSD", "BTCUSD"):
+                last_tab = "XAUUSD"
+            self.active_profile_key = last_tab
             self._sync_active_ctx_to_self()
-            self.log("Đã khôi phục hồ sơ cài đặt riêng cho Tab XAUUSD và Tab BTCUSD.")
-        except Exception:
-            pass
+
+            if hasattr(self, "bottom_notebook"):
+                try:
+                    self.bottom_notebook.select(1 if last_tab == "BTCUSD" else 0)
+                except Exception:
+                    pass
+
+            self.log(f"Đã khôi phục hồ sơ cài đặt riêng cho Tab {last_tab} (XAUUSD & BTCUSD độc lập).")
+            if token_saved:
+                self.log(f"🔑 Hugging Face Token đã sẵn sàng ({token_saved[:5]}...{token_saved[-4:]}).")
+        except Exception as e:
+            self.log(f"⚠️ Lỗi đọc file cài đặt user_settings.json: {e}")
         finally:
             self._loading_settings = False
             self.save_user_settings()
@@ -1937,6 +2038,7 @@ class KronosDesktopApp:
         else:
             self.menu_toggle_btn.config(bg="#252f42", fg="#ffffff")
             target_x = -self.drawer_width - 5
+            self.save_user_settings()
 
         self._animate_drawer_step(target_x)
 
@@ -2421,6 +2523,8 @@ class KronosDesktopApp:
             justify="center" if entry_width <= 12 else "left"
         )
         entry.pack(side=tk.RIGHT)
+        entry.bind("<FocusOut>", lambda e: self.save_user_settings())
+        entry.bind("<Return>", lambda e: self.save_user_settings())
         return var
 
     def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=15):
@@ -2430,6 +2534,7 @@ class KronosDesktopApp:
         var = tk.StringVar(value=default_val)
         cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8), width=combo_width)
         cb.pack(side=tk.RIGHT)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.save_user_settings())
         return var
 
     def _style_axes(self):
