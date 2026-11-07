@@ -110,7 +110,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "analysis_tf": "M15",
         "tf": "M5",
         "lot": "0.01",
-        "max_pos": "5",
+        "max_pos": "3",
         "magic_number": "20260501",
         "scenarios": "8",
         "consensus": "75",
@@ -119,7 +119,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "max_spread": "0.35",
         "sl_atr": "1.5",
         "sl_buffer": "0.5",
-        "max_sl_price": "6.0",
+        "max_sl_price": "5.0",
         "rr": "2.0",
         "auto_be": True,
         "be_trigger_r": "1.0",
@@ -143,19 +143,19 @@ DEFAULT_PROFILE_SETTINGS = {
     },
     "BTCUSD": {
         "symbol": "BTCUSDm",
-        "analysis_tf": "M5",
+        "analysis_tf": "M15",
         "tf": "M5",
         "lot": "0.01",
-        "max_pos": "5",
+        "max_pos": "3",
         "magic_number": "20260502",
         "scenarios": "8",
         "consensus": "75",
         "max_dispersion": "2.5",
-        "min_move": "150",
-        "max_spread": "25.0",
+        "min_move": "60.0",
+        "max_spread": "30.0",
         "sl_atr": "1.5",
-        "sl_buffer": "25.0",
-        "max_sl_price": "250.0",
+        "sl_buffer": "20.0",
+        "max_sl_price": "350.0",
         "rr": "2.0",
         "auto_be": True,
         "be_trigger_r": "1.0",
@@ -226,17 +226,21 @@ AI_MANAGED_STATE_ATTRS = frozenset({
 
 class CollapsibleSection(tk.Frame):
     """Mục giao diện có thể thu gọn / sổ xuống theo kiểu Accordion (mặc định thu gọn)."""
-    def __init__(self, parent, title: str, initially_open: bool = False, group_list: list = None):
+    def __init__(self, parent, title: str, initially_open: bool = False, group_list: list = None, on_reset: callable = None):
         super().__init__(parent, bg=PANEL_BG)
         self.pack(fill=tk.X, pady=2)
         self.title = title
         self.is_open = initially_open
         self.group_list = group_list
+        self.on_reset = on_reset
         if self.group_list is not None:
             self.group_list.append(self)
 
+        self.header_frame = tk.Frame(self, bg=SECTION_HEADER_BG)
+        self.header_frame.pack(fill=tk.X)
+
         self.header_btn = tk.Button(
-            self,
+            self.header_frame,
             text=self._get_header_text(),
             bg=SECTION_HEADER_BG,
             fg=GOLD_ACCENT,
@@ -249,7 +253,24 @@ class CollapsibleSection(tk.Frame):
             pady=4,
             command=self.toggle
         )
-        self.header_btn.pack(fill=tk.X)
+        self.header_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        if self.on_reset is not None:
+            self.reset_btn = tk.Button(
+                self.header_frame,
+                text="↺ Mặc định",
+                bg="#1a2333",
+                fg="#94a3b8",
+                activebackground="#26344d",
+                activeforeground=GOLD_ACCENT,
+                font=("Segoe UI", 7, "bold"),
+                relief=tk.FLAT,
+                padx=6,
+                pady=2,
+                cursor="hand2",
+                command=self.on_reset
+            )
+            self.reset_btn.pack(side=tk.RIGHT, padx=4, pady=2)
 
         self.content = tk.Frame(self, bg=PANEL_BG, padx=6, pady=3)
         if self.is_open:
@@ -1199,21 +1220,50 @@ class KronosDesktopApp:
             menu_top_card, text="Đang kết nối MT5...", bg="#121722", fg=GOLD_ACCENT,
             font=("Segoe UI", 8, "bold"), anchor="w"
         )
-        self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 0))
+        self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 4))
+
+        tk.Button(
+            menu_top_card,
+            text="↺ Khôi phục TẤT CẢ thông số về mặc định",
+            bg="#182030",
+            fg="#cbd5e1",
+            activebackground="#2b3952",
+            activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 7, "bold"),
+            relief=tk.FLAT,
+            padx=8,
+            pady=3,
+            cursor="hand2",
+            command=self.reset_all_settings
+        ).pack(fill=tk.X, pady=(2, 0))
 
         self.accordion_sections = []
 
         # Mục 1: 1. Cài đặt (Mặc định thu gọn)
-        sec1 = CollapsibleSection(left_panel, "1. Cài đặt", initially_open=False, group_list=self.accordion_sections)
+        sec1 = CollapsibleSection(
+            left_panel, "1. Cài đặt", initially_open=False,
+            group_list=self.accordion_sections,
+            on_reset=lambda: self.reset_section_settings(1)
+        )
         self.symbol_var = self._add_labeled_entry(sec1.content, "Mã giao dịch MT5:", "XAUUSDm")
         self.analysis_tf_var = self._add_labeled_combo(sec1.content, "Khung phân tích AI:", ["M1", "M5", "M15", "H1"], "M15")
         self.tf_var = self._add_labeled_combo(sec1.content, "Khung vào lệnh (Scalp):", ["M1", "M5", "M15", "H1"], "M5")
         self.lot_var = self._add_labeled_entry(sec1.content, "Khối lượng (Lot):", "0.01")
-        self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "5")
+        self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "3")
         self.magic_number_var = self._add_labeled_entry(sec1.content, "Magic Number (Mã lệnh):", "20260501")
+        tk.Button(
+            sec1.content, text="↺ Khôi phục mặc định Mục 1 (Cài đặt)", bg="#161e2e", fg="#94a3b8",
+            activebackground="#25334c", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, pady=2, cursor="hand2",
+            command=lambda: self.reset_section_settings(1)
+        ).pack(fill=tk.X, pady=(6, 2))
 
         # Mục 2: 2. Bộ lọc entry (Mặc định thu gọn)
-        sec2 = CollapsibleSection(left_panel, "2. Bộ lọc entry", initially_open=False, group_list=self.accordion_sections)
+        sec2 = CollapsibleSection(
+            left_panel, "2. Bộ lọc entry", initially_open=False,
+            group_list=self.accordion_sections,
+            on_reset=lambda: self.reset_section_settings(2)
+        )
         self.scenarios_var = self._add_labeled_entry(sec2.content, "Số kịch bản AI (Ensemble):", "8")
         self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75")
         self.max_dispersion_var = self._add_labeled_entry(sec2.content, "Độ phân tán tối đa (x ATR, 0=Tắt):", "2.5")
@@ -1221,11 +1271,21 @@ class KronosDesktopApp:
         self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35")
         self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5")
         self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5")
-        self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "6.0")
+        self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "5.0")
         self.rr_var = self._add_labeled_entry(sec2.content, "Tỷ lệ R:R (0=TP Theo AI):", "2.0")
+        tk.Button(
+            sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc entry)", bg="#161e2e", fg="#94a3b8",
+            activebackground="#25334c", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, pady=2, cursor="hand2",
+            command=lambda: self.reset_section_settings(2)
+        ).pack(fill=tk.X, pady=(6, 2))
 
         # Mục 3: 3. Quản lý lệnh (Mặc định thu gọn)
-        sec3 = CollapsibleSection(left_panel, "3. Quản lý lệnh", initially_open=False, group_list=self.accordion_sections)
+        sec3 = CollapsibleSection(
+            left_panel, "3. Quản lý lệnh", initially_open=False,
+            group_list=self.accordion_sections,
+            on_reset=lambda: self.reset_section_settings(3)
+        )
         self.auto_be_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
             sec3.content, text="Tự dời SL về đúng Entry theo R:R:",
@@ -1256,9 +1316,19 @@ class KronosDesktopApp:
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0")
         self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0")
         self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30")
+        tk.Button(
+            sec3.content, text="↺ Khôi phục mặc định Mục 3 (Quản lý lệnh)", bg="#161e2e", fg="#94a3b8",
+            activebackground="#25334c", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, pady=2, cursor="hand2",
+            command=lambda: self.reset_section_settings(3)
+        ).pack(fill=tk.X, pady=(6, 2))
 
         # Mục 4: 4. Phân tích AI (Mặc định thu gọn)
-        sec4 = CollapsibleSection(left_panel, "4. Phân tích AI", initially_open=False, group_list=self.accordion_sections)
+        sec4 = CollapsibleSection(
+            left_panel, "4. Phân tích AI", initially_open=False,
+            group_list=self.accordion_sections,
+            on_reset=lambda: self.reset_section_settings(4)
+        )
         self.engine_var = self._add_labeled_combo(
             sec4.content, "Chế độ chạy:",
             ["Ưu tiên Hugging Face -> GTX 1650", "Chạy trực tiếp máy Local"],
@@ -1273,6 +1343,12 @@ class KronosDesktopApp:
         self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18)
         self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6")
+        tk.Button(
+            sec4.content, text="↺ Khôi phục mặc định Mục 4 (Phân tích AI)", bg="#161e2e", fg="#94a3b8",
+            activebackground="#25334c", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, pady=2, cursor="hand2",
+            command=lambda: self.reset_section_settings(4)
+        ).pack(fill=tk.X, pady=(6, 2))
 
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM DƯỚI CÙNG CỦA MENU TRÁI
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
@@ -1632,7 +1708,7 @@ class KronosDesktopApp:
                 shared_keys = (
                     "lot", "max_pos", "scenarios", "consensus", "max_dispersion", "sl_atr", "rr",
                     "auto_be", "be_trigger_r", "auto_trail", "trail_dist_r",
-                    "auto_rev_close", "rev_consensus", "rev_min_move",
+                    "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price",
                     "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins",
                     "engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "realtime_chart"
                 )
@@ -1656,11 +1732,11 @@ class KronosDesktopApp:
                     for k in sym_specific_keys:
                         if k in data:
                             self.profile_settings["XAUUSD"][k] = data[k]
-                    # Nếu trước đó người dùng thử nghiệm thông số SL tối đa của BTC (>= 50 giá) trên mã Vàng -> Tách riêng cho BTCUSD và trả Vàng về 6.0 giá
+                    # Nếu trước đó người dùng thử nghiệm thông số SL tối đa của BTC (>= 50 giá) trên mã Vàng -> Tách riêng cho BTCUSD và trả Vàng về 5.0 giá
                     try:
-                        if float(self.profile_settings["XAUUSD"].get("max_sl_price", 6.0)) >= 50.0:
+                        if float(self.profile_settings["XAUUSD"].get("max_sl_price", 5.0)) >= 50.0:
                             self.profile_settings["BTCUSD"]["max_sl_price"] = str(self.profile_settings["XAUUSD"]["max_sl_price"])
-                            self.profile_settings["XAUUSD"]["max_sl_price"] = "6.0"
+                            self.profile_settings["XAUUSD"]["max_sl_price"] = "5.0"
                     except Exception:
                         pass
 
@@ -1673,6 +1749,60 @@ class KronosDesktopApp:
         finally:
             self._loading_settings = False
             self.save_user_settings()
+
+    def reset_section_settings(self, section_num: int):
+        """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
+        section_map = {
+            1: ("Mục 1: Cài đặt", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
+            2: ("Mục 2: Bộ lọc entry", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr"]),
+            3: ("Mục 3: Quản lý lệnh", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins"]),
+            4: ("Mục 4: Phân tích AI", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
+        }
+        if section_num not in section_map:
+            return
+
+        sec_title, keys = section_map[section_num]
+        pk = self.active_profile_key
+        defaults = DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"])
+        smap = self._get_settings_vars_map()
+
+        self._loading_settings = True
+        try:
+            for k in keys:
+                if k in smap and k in defaults:
+                    smap[k].set(defaults[k])
+                    if pk in self.profile_settings:
+                        self.profile_settings[pk][k] = defaults[k]
+        finally:
+            self._loading_settings = False
+
+        self.save_user_settings()
+        self.log(f"[CÀI ĐẶT] Đã khôi phục thông số mặc định tối ưu cho {sec_title} ({pk}).")
+
+    def reset_all_settings(self):
+        """Khôi phục toàn bộ thông số của Tab đang chọn về cấu hình mặc định tối ưu."""
+        pk = self.active_profile_key
+        if not messagebox.askyesno(
+            "Xác nhận khôi phục",
+            f"Bạn có chắc chắn muốn khôi phục TẤT CẢ thông số cài đặt của tab {pk} về giá trị mặc định tối ưu?"
+        ):
+            return
+
+        defaults = DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"])
+        smap = self._get_settings_vars_map()
+
+        self._loading_settings = True
+        try:
+            for k, val in defaults.items():
+                if k in smap:
+                    smap[k].set(val)
+                    if pk in self.profile_settings:
+                        self.profile_settings[pk][k] = val
+        finally:
+            self._loading_settings = False
+
+        self.save_user_settings()
+        self.log(f"[CÀI ĐẶT] Đã khôi phục TOÀN BỘ thông số mặc định tối ưu cho tab {pk}.")
 
     def _bind_auto_save_settings(self):
         for var in self._get_settings_vars_map().values():
@@ -2767,13 +2897,13 @@ class KronosDesktopApp:
 
         cfg = self._get_profile_cfg(pk)
         try:
-            max_sl_price = max(float(cfg.get("max_sl_price", 6.0)), 0.0)
+            max_sl_price = max(float(cfg.get("max_sl_price", 5.0)), 0.0)
             max_spread = float(cfg.get("max_spread", 0.35))
             lot = float(cfg.get("lot", 0.01))
-            max_pos = int(cfg.get("max_pos", 5))
+            max_pos = int(cfg.get("max_pos", 3))
             rr = max(float(cfg.get("rr", 2.0)), 0.0)
         except ValueError:
-            max_sl_price, max_spread, lot, max_pos, rr = 6.0, 0.35, 0.01, 5, 2.0
+            max_sl_price, max_spread, lot, max_pos, rr = 5.0, 0.35, 0.01, 3, 2.0
 
         action = p["action"]
         sl_price = float(p["sl_price"])
@@ -3608,9 +3738,9 @@ class KronosDesktopApp:
 
                 # Kiểm tra cứng điều kiện khoảng cách SL tối đa (nếu cài > 0 thì không cho phép vào lệnh khi khoảng cách SL vượt quá SL tối đa; nếu = 0 là lấy 100% theo SL AI)
                 try:
-                    max_sl_price = max(float(cfg.get("max_sl_price", 6.0)), 0.0)
+                    max_sl_price = max(float(cfg.get("max_sl_price", 5.0)), 0.0)
                 except ValueError:
-                    max_sl_price = 6.0
+                    max_sl_price = 5.0
 
                 tols = self._get_symbol_tolerances(symbol, tick)
                 actual_sl_dist = (price - sl_price) if action == "BUY" else (sl_price - price)
@@ -3875,9 +4005,9 @@ class KronosDesktopApp:
                 lot = float(cfg.get("lot", 0.01))
                 sl_atr = float(cfg.get("sl_atr", 1.5))
                 sl_buffer = max(float(cfg.get("sl_buffer", 0.5)), 0.0)
-                max_sl_price = max(float(cfg.get("max_sl_price", 6.0)), 0.0)
+                max_sl_price = max(float(cfg.get("max_sl_price", 5.0)), 0.0)
                 rr = max(float(cfg.get("rr", 2.0)), 0.0)
-                max_pos = int(cfg.get("max_pos", 5))
+                max_pos = int(cfg.get("max_pos", 3))
                 auto_rev_close = bool(cfg.get("auto_rev_close", True))
                 model_choice = str(cfg.get("model", "AI-base (102.3M - Mạnh nhất)"))
                 engine_mode = str(cfg.get("engine", "Chạy trực tiếp máy Local"))
