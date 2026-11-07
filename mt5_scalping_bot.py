@@ -4070,6 +4070,22 @@ class KronosDesktopApp:
                         if pk == self.active_profile_key:
                             self._set_loading_stage(55.0, f"Đang gọi Hugging Face Space ({hf_space})...")
                         self.log(f"[{pk}] Đang gọi Hugging Face Space ({hf_space})...")
+
+                        # TỰ ĐỘNG ĐÁNH THỨC SPACE NẾU ĐANG NGỦ (AUTO-WAKE SPACE)
+                        if hf_token:
+                            try:
+                                from huggingface_hub import HfApi
+                                hf_api = HfApi(token=hf_token)
+                                runtime = hf_api.get_space_runtime(hf_space)
+                                if runtime and getattr(runtime, "stage", None) in ("PAUSED", "SLEEPING", "STOPPED"):
+                                    self.log(f"🔔 [{pk}] Phát hiện HF Space đang ngủ ({runtime.stage}) -> Đã gửi lệnh tự động đánh thức!")
+                                    hf_api.restart_space(hf_space)
+                                    self.log(f"⏳ [{pk}] Máy chủ HF đang khởi động (ước tính 30-45s)... Tạm chuyển sang Local CPU để không lỡ nhịp nến!")
+                                    raise RuntimeError(f"HF Space đang được đánh thức ({runtime.stage}), tạm chuyển Local")
+                            except Exception as wake_err:
+                                if "đang được đánh thức" in str(wake_err):
+                                    raise
+
                         client_kwargs = {}
                         if hf_token:
                             try:
@@ -4104,7 +4120,13 @@ class KronosDesktopApp:
                             scenarios.append(s_df)
                         used_engine = "Hugging Face A100"
                     except Exception as e:
-                        self.log(f"⚠️ [{pk}] Chuyển sang chạy trực tiếp trên máy nhà ({e})")
+                        err_str = str(e)
+                        if "401" in err_str or "Repository Not Found" in err_str:
+                            self.log(f"⚠️ [{pk}] Space '{hf_space}' là Private nhưng chưa nhập HF Token -> Chuyển sang chạy Local máy nhà")
+                        elif "đang được đánh thức" in err_str:
+                            pass
+                        else:
+                            self.log(f"⚠️ [{pk}] Chuyển sang chạy trực tiếp trên máy nhà ({err_str})")
 
                 if scenarios is None:
                     if pk == self.active_profile_key:
