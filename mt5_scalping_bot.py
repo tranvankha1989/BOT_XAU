@@ -255,22 +255,8 @@ class CollapsibleSection(tk.Frame):
         )
         self.header_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        if self.on_reset is not None:
-            self.reset_btn = tk.Button(
-                self.header_frame,
-                text="↺ Mặc định",
-                bg="#1a2333",
-                fg="#94a3b8",
-                activebackground="#26344d",
-                activeforeground=GOLD_ACCENT,
-                font=("Segoe UI", 7, "bold"),
-                relief=tk.FLAT,
-                padx=6,
-                pady=2,
-                cursor="hand2",
-                command=self.on_reset
-            )
-            self.reset_btn.pack(side=tk.RIGHT, padx=4, pady=2)
+        # Nút "↺ Mặc định" bên phải tiêu đề đã được ẩn theo yêu cầu; mỗi mục vẫn có nút khôi phục mặc định ở cuối mục.
+        self.reset_btn = None
 
         self.content = tk.Frame(self, bg=PANEL_BG, padx=6, pady=3)
         if self.is_open:
