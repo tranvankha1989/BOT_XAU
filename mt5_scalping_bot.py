@@ -348,7 +348,7 @@ class KronosDesktopApp:
         self._drag_start_xlim = None
         self._drag_start_ylim = None
         self._drag_mode = None  # "PAN", "Y_SCALE", hoặc "X_SCALE"
-        self._chart_visible_bars = 75
+        self._chart_visible_bars = 85
         self._chart_hist_df = None
         self._chart_mean_df = None
         self._chart_all_times = []
@@ -1536,7 +1536,7 @@ class KronosDesktopApp:
         self.canvas.mpl_connect("resize_event", lambda e: setattr(self, "_chart_bg_bbox", None))
 
         # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB (XAUUSD | BTCUSD | DỰ BÁO AI & NHẬT KÝ)
-        self.bottom_notebook = ttk.Notebook(right_panel, height=200)
+        self.bottom_notebook = ttk.Notebook(right_panel, height=188)
         self.bottom_notebook.pack(fill=tk.X)
 
         # TAB 0 (Mặc định khi mở App): XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
@@ -2156,7 +2156,7 @@ class KronosDesktopApp:
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
-        self._chart_visible_bars = 55 if self.chart_mode == "AI_FORECAST" else 75
+        self._chart_visible_bars = 60 if self.chart_mode == "AI_FORECAST" else 85
         active_df = (
             self.cached_df_analysis
             if (self.chart_mode == "AI_FORECAST" and self.cached_df_analysis is not None)
@@ -2197,7 +2197,10 @@ class KronosDesktopApp:
         self._request_canvas_redraw()
 
     def _compute_visible_ylim(self, x0: float, x1: float):
-        """Tính giới hạn trục giá Y (ylim) tự động ôm sát các cây nến nằm trong vùng hiển thị [x0, x1]."""
+        """
+        Tính giới hạn trục giá Y (ylim) tự động ôm sát các cây nến nằm trong vùng hiển thị [x0, x1].
+        Đã tăng chiều cao nến lên thêm 50% (thu hẹp y_span theo tỉ lệ 1.5x) và neo tâm theo diễn biến giá mới nhất.
+        """
         hist = self._chart_hist_df
         if hist is None or len(hist) == 0:
             return None
@@ -2220,8 +2223,34 @@ class KronosDesktopApp:
                 highs.append(float(self.cached_tp))
         y_min = min(lows)
         y_max = max(highs)
-        pad = max((y_max - y_min) * 0.14, 0.8)
-        return (y_min - pad, y_max + pad)
+        raw_span = max(y_max - y_min, 0.5)
+
+        # TĂNG CHIỀU CAO NẾN LÊN THÊM 50%:
+        # Chiều cao nến (pixel) tỉ lệ nghịch với độ rộng dải giá Y (y_span).
+        # Khi thu hẹp độ rộng Y hiển thị theo tỉ lệ 1 / 1.5 = 0.667, mỗi cây nến sẽ cao hơn chính xác 50% (1.5x)!
+        scaled_span = max((raw_span * 1.15) / 1.5, 0.8)
+
+        # Neo tâm vùng nhìn Y theo giá Live và các nến gần nhất để nến biến động sinh động, rõ nét
+        live_p = float(hist["close"].iloc[-1])
+        recent_cnt = max(5, min(len(sub), 25))
+        recent_sub = sub.iloc[-recent_cnt:]
+        recent_mid = (float(recent_sub["high"].max()) + float(recent_sub["low"].min())) * 0.5
+        center_y = live_p * 0.5 + recent_mid * 0.5
+
+        half_span = scaled_span * 0.5
+        target_y0 = center_y - half_span
+        target_y1 = center_y + half_span
+
+        # Giữ giá Live và các nến gần nhất luôn nằm trong tầm nhìn an toàn (cách lề tối thiểu 8%)
+        margin_safe = scaled_span * 0.08
+        if live_p < target_y0 + margin_safe:
+            target_y0 = live_p - margin_safe
+            target_y1 = target_y0 + scaled_span
+        elif live_p > target_y1 - margin_safe:
+            target_y1 = live_p + margin_safe
+            target_y0 = target_y1 - scaled_span
+
+        return (target_y0, target_y1)
 
     def _sync_xlim_dependents(self, xlim):
         """Cập nhật mật độ nhãn thời gian trục X và vị trí nhãn Entry/SL/TP khi thu phóng hoặc kéo biểu đồ."""
@@ -4586,7 +4615,7 @@ class KronosDesktopApp:
         self._chart_n_hist = n_hist
         self._chart_total_x = total_x
 
-        default_vis = 55 if self.chart_mode == "AI_FORECAST" else 75
+        default_vis = 60 if self.chart_mode == "AI_FORECAST" else 85
         if self.user_zoomed and self.saved_xlim is not None:
             view_xlim = self.saved_xlim
         else:
@@ -4608,18 +4637,19 @@ class KronosDesktopApp:
             colors_c = [GREEN_UP if c_c[k] >= o_c[k] else RED_DOWN for k in range(n_closed)]
 
             wick_segs = [((xs_c[k], l_c[k]), (xs_c[k], h_c[k])) for k in range(n_closed)]
-            wick_coll = LineCollection(wick_segs, colors=colors_c, linewidths=0.9, zorder=2)
+            wick_coll = LineCollection(wick_segs, colors=colors_c, linewidths=1.2, zorder=2)
             self.ax.add_collection(wick_coll)
 
             bottoms_c = np.minimum(o_c, c_c)
             heights_c = np.maximum(np.abs(c_c - o_c), 0.05)
             tops_c = bottoms_c + heights_c
+            # Thân nến rộng 0.66 (±0.33) giúp khoảng cách giữa các cây nến gần lại 50% (từ 0.68 xuống 0.34)
             body_verts = [
                 [
-                    (xs_c[k] - 0.16, bottoms_c[k]),
-                    (xs_c[k] + 0.16, bottoms_c[k]),
-                    (xs_c[k] + 0.16, tops_c[k]),
-                    (xs_c[k] - 0.16, tops_c[k]),
+                    (xs_c[k] - 0.33, bottoms_c[k]),
+                    (xs_c[k] + 0.33, bottoms_c[k]),
+                    (xs_c[k] + 0.33, tops_c[k]),
+                    (xs_c[k] - 0.33, tops_c[k]),
                 ]
                 for k in range(n_closed)
             ]
@@ -4633,10 +4663,10 @@ class KronosDesktopApp:
             i_f = n_hist - 1
             o_f, h_f, l_f, c_f = opens[i_f], highs[i_f], lows[i_f], closes[i_f]
             col_f = CYAN_LIVE if c_f >= o_f else "#ff4081"
-            (self._forming_wick_line,) = self.ax.plot([i_f, i_f], [l_f, h_f], color=col_f, linewidth=1.1, zorder=4)
+            (self._forming_wick_line,) = self.ax.plot([i_f, i_f], [l_f, h_f], color=col_f, linewidth=1.4, zorder=4)
             bot_f = min(o_f, c_f)
             hgt_f = max(abs(c_f - o_f), 0.05)
-            self._forming_body_rect = Rectangle((i_f - 0.16, bot_f), 0.32, hgt_f, facecolor=col_f, edgecolor=col_f, zorder=4)
+            self._forming_body_rect = Rectangle((i_f - 0.33, bot_f), 0.66, hgt_f, facecolor=col_f, edgecolor=col_f, zorder=4)
             self.ax.add_patch(self._forming_body_rect)
 
         live_price = float(closes[-1])
@@ -4767,7 +4797,7 @@ class KronosDesktopApp:
                 self.ax.plot([idx_x, idx_x], [l, h], color=color, linewidth=1.4)
                 bottom = min(o, c)
                 height = max(abs(c - o), 0.05)
-                self.ax.add_patch(Rectangle((idx_x - 0.17, bottom), 0.34, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
+                self.ax.add_patch(Rectangle((idx_x - 0.33, bottom), 0.66, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
 
             self.ax.axvline(x=n_hist - 0.5, color=GOLD_ACCENT, linestyle="--", linewidth=1.1, alpha=0.8)
             all_times += list(mean_df["timestamps"].dt.strftime("%H:%M"))
@@ -4856,7 +4886,7 @@ class KronosDesktopApp:
         self._last_drawn_chart_key = (symbol, tf, self.chart_mode, hist["timestamps"].iloc[-1])
         self._last_drawn_pos_sig = (pos_sig, pb_sig)
 
-        self.fig.subplots_adjust(left=0.048, right=0.942, top=0.91, bottom=0.09)
+        self.fig.subplots_adjust(left=0.045, right=0.945, top=0.93, bottom=0.07)
         self._request_canvas_redraw()
 
 
