@@ -4226,10 +4226,10 @@ class KronosDesktopApp:
             tops_c = bottoms_c + heights_c
             body_verts = [
                 [
-                    (xs_c[k] - 0.32, bottoms_c[k]),
-                    (xs_c[k] + 0.32, bottoms_c[k]),
-                    (xs_c[k] + 0.32, tops_c[k]),
-                    (xs_c[k] - 0.32, tops_c[k]),
+                    (xs_c[k] - 0.16, bottoms_c[k]),
+                    (xs_c[k] + 0.16, bottoms_c[k]),
+                    (xs_c[k] + 0.16, tops_c[k]),
+                    (xs_c[k] - 0.16, tops_c[k]),
                 ]
                 for k in range(n_closed)
             ]
@@ -4246,7 +4246,7 @@ class KronosDesktopApp:
             (self._forming_wick_line,) = self.ax.plot([i_f, i_f], [l_f, h_f], color=col_f, linewidth=1.1, zorder=4)
             bot_f = min(o_f, c_f)
             hgt_f = max(abs(c_f - o_f), 0.05)
-            self._forming_body_rect = Rectangle((i_f - 0.32, bot_f), 0.64, hgt_f, facecolor=col_f, edgecolor=col_f, zorder=4)
+            self._forming_body_rect = Rectangle((i_f - 0.16, bot_f), 0.32, hgt_f, facecolor=col_f, edgecolor=col_f, zorder=4)
             self.ax.add_patch(self._forming_body_rect)
 
         live_price = float(closes[-1])
@@ -4365,7 +4365,7 @@ class KronosDesktopApp:
                 self.ax.plot([idx_x, idx_x], [l, h], color=color, linewidth=1.4)
                 bottom = min(o, c)
                 height = max(abs(c - o), 0.05)
-                self.ax.add_patch(Rectangle((idx_x - 0.34, bottom), 0.68, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
+                self.ax.add_patch(Rectangle((idx_x - 0.17, bottom), 0.34, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
 
             self.ax.axvline(x=n_hist - 0.5, color=GOLD_ACCENT, linestyle="--", linewidth=1.1, alpha=0.8)
             all_times += list(mean_df["timestamps"].dt.strftime("%H:%M"))
