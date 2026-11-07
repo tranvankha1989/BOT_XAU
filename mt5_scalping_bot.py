@@ -53,10 +53,12 @@ except ImportError:
 # Đường dẫn lưu cấu hình người dùng, Nhật ký (Logs) & Icon trong AppData (không tạo file phụ trong thư mục dự án)
 SETTINGS_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Kronos_MT5_Bot")
 SETTINGS_FILE = os.path.join(SETTINGS_DIR, "user_settings.json")
+INSTANCE_LOCK_FILE = os.path.join(SETTINGS_DIR, "app_instance.json")
 LOG_DIR = os.path.join(SETTINGS_DIR, "logs")
 ERROR_LOG_FILE = os.path.join(LOG_DIR, "app_error.log")
 ICON_ICO_FILE = os.path.join(SETTINGS_DIR, "khatran_icon.ico")
 ICON_PNG_FILE = os.path.join(SETTINGS_DIR, "khatran_icon.png")
+_SINGLETON_MUTEX_HANDLE = None
 
 try:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("KhaTran.Kronos.ScalpingBot.M5.v2")
@@ -152,7 +154,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
         "cooldown_mins": "30",
-        "engine": "Chạy trực tiếp máy nhà",
+        "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
         "hf_token": "",
@@ -335,6 +337,7 @@ class KronosDesktopApp:
         self._order_guard_lock = threading.Lock()
         self._order_in_flight = {"XAUUSD": False, "BTCUSD": False}
         self._last_order_open_mono = {"XAUUSD": 0.0, "BTCUSD": 0.0}
+        self._last_order_candle_ts = {"XAUUSD": None, "BTCUSD": None}
         self._auto_worker_token = {"XAUUSD": 0, "BTCUSD": 0}
         self._last_mt5_order_mono = 0.0
         self._ai_queue = queue.Queue()
@@ -390,6 +393,7 @@ class KronosDesktopApp:
         self.load_user_settings()
         self._bind_auto_save_settings()
         self._build_startup_loading_overlay()
+        self._register_active_instance_lock()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
         # Khởi động luồng Hàng Đợi Phân Tích AI (FIFO Queue Worker) tuần tự, đảm bảo XAUUSD & BTCUSD không bao giờ tranh chấp hay trộn dữ liệu
@@ -1220,7 +1224,7 @@ class KronosDesktopApp:
             variable=self.auto_trail_var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
             activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w"
         ).pack(fill=tk.X)
-        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R):", "0.8")
+        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R):", "0.35")
 
         self.auto_rev_close_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
@@ -1240,8 +1244,8 @@ class KronosDesktopApp:
         sec4 = CollapsibleSection(left_panel, "4. Phân tích AI", initially_open=False, group_list=self.accordion_sections)
         self.engine_var = self._add_labeled_combo(
             sec4.content, "Chế độ chạy:",
-            ["Ưu tiên Hugging Face -> GTX 1650", "Chạy trực tiếp máy nhà"],
-            "Chạy trực tiếp máy nhà"
+            ["Ưu tiên Hugging Face -> GTX 1650", "Chạy trực tiếp máy Local"],
+            "Chạy trực tiếp máy Local"
         )
         self.model_var = self._add_labeled_combo(
             sec4.content, "Mô hình:",
@@ -1600,6 +1604,8 @@ class KronosDesktopApp:
                             if k in merged:
                                 if k == "model" and isinstance(val, str) and val.startswith("Kronos-"):
                                     val = val.replace("Kronos-", "AI-", 1)
+                                elif k == "engine" and isinstance(val, str) and "trực tiếp" in val:
+                                    val = "Chạy trực tiếp máy Local"
                                 merged[k] = val
                         self.profile_settings[pk] = merged
             else:
@@ -1617,6 +1623,8 @@ class KronosDesktopApp:
                             val = data[sk]
                             if sk == "model" and isinstance(val, str) and val.startswith("Kronos-"):
                                 val = val.replace("Kronos-", "AI-", 1)
+                            elif sk == "engine" and isinstance(val, str) and "trực tiếp" in val:
+                                val = "Chạy trực tiếp máy Local"
                             self.profile_settings[pk][sk] = val
 
                 sym_old = str(data.get("symbol", "XAUUSDm")).strip()
@@ -1763,18 +1771,62 @@ class KronosDesktopApp:
         self.left_panel.place(x=self.drawer_x, y=0, relheight=1.0, width=self.drawer_width)
         self._drawer_anim_job = self.root.after(12, self._animate_drawer_step, target_x)
 
+    def _register_active_instance_lock(self):
+        """Ghi nhận PID và Handle cửa sổ của phiên đang chạy để chống mở trùng hoặc chạy ngầm 2 App."""
+        try:
+            os.makedirs(SETTINGS_DIR, exist_ok=True)
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            info = {
+                "pid": os.getpid(),
+                "hwnd": int(hwnd),
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            with open(INSTANCE_LOCK_FILE, "w", encoding="utf-8") as f:
+                json.dump(info, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _release_active_instance_lock(self):
+        """Giải phóng file khóa phiên chạy khi đóng ứng dụng."""
+        try:
+            if os.path.exists(INSTANCE_LOCK_FILE):
+                with open(INSTANCE_LOCK_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if data.get("pid") == os.getpid():
+                    os.remove(INSTANCE_LOCK_FILE)
+        except Exception:
+            pass
+
     def _on_close_window(self):
         self._app_closing = True
         self.save_user_settings()
         self.auto_loop_running = False
         for pk in self.profile_ctx:
             self.profile_ctx[pk]["auto_loop_running"] = False
+            self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
         try:
             self._ai_queue.put_nowait(None)
         except Exception:
             pass
+        try:
+            if MT5_AVAILABLE:
+                with self._mt5_lock:
+                    mt5.shutdown()
+        except Exception:
+            pass
+        self._write_file_log("🛑 Đã đóng ứng dụng an toàn và giải phóng toàn bộ tiến trình chạy ngầm.")
+        self._release_active_instance_lock()
         self._cleanup_workspace_junk()
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(0)
 
     def _on_tab_changed(self, event):
         selected_idx = self.bottom_notebook.index(self.bottom_notebook.select())
@@ -2323,6 +2375,8 @@ class KronosDesktopApp:
     # LUỒNG REAL-TIME 1 GIÂY: CẬP NHẬT GIÁ, ĐẾM NGƯỢC, QUẢN LÝ LỆNH, CHART LIVE
     # =========================================================================
     def _realtime_tick_loop(self):
+        if getattr(self, "_app_closing", False):
+            return
         try:
             with self._mt5_lock:
                 mt5_ok = bool(MT5_AVAILABLE and mt5.initialize())
@@ -2382,7 +2436,8 @@ class KronosDesktopApp:
         except Exception as e:
             self.log_error("REALTIME_TICK_LOOP", e, show_in_ui=False)
         finally:
-            self.root.after(1000, self._realtime_tick_loop)
+            if not getattr(self, "_app_closing", False):
+                self.root.after(1000, self._realtime_tick_loop)
 
     def _get_today_deals_stats(self, symbol: str = None, tick=None) -> tuple:
         """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay theo đúng mã giao dịch & giờ Server MT5."""
@@ -2749,6 +2804,8 @@ class KronosDesktopApp:
                 self.pending_pullback_order = None
 
             ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
+            if ok_ord and ctx.get("last_candle_time") is not None:
+                self._last_order_candle_ts[pk] = ctx.get("last_candle_time")
             if not ok_ord and "SL hiện tại cách" in ord_msg:
                 # Nếu trong tích tắc gửi lệnh giá giật nhẹ ra ngoài vùng SL tối đa (nhưng chưa phá SL), khôi phục trạng thái canh hồi
                 ctx["pending_pullback_order"] = p
@@ -3463,8 +3520,8 @@ class KronosDesktopApp:
         with self._order_guard_lock:
             if self._order_in_flight.get(pk, False):
                 return False, f"⏳ [{pk}] Đang gửi lệnh trước đó, tự động chặn đúp lệnh."
-            if (time.monotonic() - self._last_order_open_mono.get(pk, 0.0)) < 1.2:
-                return False, f"⏳ [{pk}] Vừa khớp lệnh cách đây < 1.2s, tự động chặn đúp lệnh."
+            if (time.monotonic() - self._last_order_open_mono.get(pk, 0.0)) < 3.0:
+                return False, f"⏳ [{pk}] Vừa khớp lệnh cách đây < 3.0s, tự động chặn đúp lệnh."
             self._order_in_flight[pk] = True
 
         try:
@@ -3651,13 +3708,22 @@ class KronosDesktopApp:
         self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
         worker_token = self._auto_worker_token[pk]
         self.auto_trade_var.set(True)
-        self.last_candle_time = None
-        self.profile_ctx[pk]["last_candle_time"] = None
-        self._draw_toggle_switch()
-        self._sync_signal_detail_status()
+        # Giữ nguyên mốc nến đã đóng hiện tại (hoặc cập nhật mốc nến đã đóng gần nhất) để không báo giả "Nến mới vừa đóng" trên cây nến cũ!
         sym = self.symbol_var.get().strip()
         tf_val = self.tf_var.get().strip()
-        self.log(f"▶️ [{pk} - {sym}] Đã BẬT công tắc AUTO (Tự động canh nến {tf_val} & tự động vào lệnh)...")
+        if self.profile_ctx[pk].get("last_candle_time") is None:
+            try:
+                df_cur = self.fetch_mt5_candles(sym, tf_val, 3, include_forming=False)
+                cur_closed_ts = df_cur["timestamps"].iloc[-1]
+                self.profile_ctx[pk]["last_candle_time"] = cur_closed_ts
+                self.last_candle_time = cur_closed_ts
+            except Exception:
+                pass
+        self._draw_toggle_switch()
+        self._sync_signal_detail_status()
+        self.log(f"▶️ [{pk} - {sym}] Đã BẬT công tắc AUTO (Đang canh nến {tf_val} đóng cửa tiếp theo để tự động phân tích & vào lệnh)...")
+        if self.profile_ctx[pk].get("cached_mean_df") is None and not self.profile_ctx[pk].get("is_analyzing", False):
+            self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
         threading.Thread(target=self._auto_loop_worker, args=(pk, worker_token), daemon=True).start()
 
     def stop_auto_scan(self):
@@ -3752,7 +3818,7 @@ class KronosDesktopApp:
                 max_pos = int(cfg.get("max_pos", 5))
                 auto_rev_close = bool(cfg.get("auto_rev_close", True))
                 model_choice = str(cfg.get("model", "AI-base (102.3M - Mạnh nhất)"))
-                engine_mode = str(cfg.get("engine", "Chạy trực tiếp máy nhà"))
+                engine_mode = str(cfg.get("engine", "Chạy trực tiếp máy Local"))
                 hf_space = str(cfg.get("hf_space", "")).strip()
                 hf_token = str(cfg.get("hf_token", "")).strip()
 
@@ -3768,9 +3834,9 @@ class KronosDesktopApp:
                 forming_open_ts = df_with_forming["timestamps"].iloc[-1]
                 forming_age_sec = (server_now_ts - forming_open_ts).total_seconds()
 
-                # Nếu kích hoạt tự động khi đóng nến (AUTO_CANDLE) và cùng khung thời gian, giữ ngưỡng cắt nến mới mở 60s
+                # Nếu kích hoạt tự động khi đóng nến (AUTO_CANDLE), giữ ngưỡng cắt nến mới mở 60s cho cả đơn khung & đa khung
                 # để dù mã thứ 2 có xếp hàng chờ mã thứ 1 phân tích xong (~2-5s) thì vẫn phân tích chính xác cây nến vừa đóng!
-                age_cutoff_sec = 60.0 if (reason == "AUTO_CANDLE" and analysis_tf == scalp_tf) else 15.0
+                age_cutoff_sec = 60.0 if reason == "AUTO_CANDLE" else 15.0
                 if forming_age_sec < age_cutoff_sec and len(df_with_forming) > 35:
                     df = df_with_forming.iloc[:-1].reset_index(drop=True)
                 else:
@@ -4022,9 +4088,15 @@ class KronosDesktopApp:
                     elif spread_usd > max_spread:
                         trade_msg = f"⚠️ Khóa lệnh do Spread cao ({spread_usd:.2f}$ > {max_spread}$)"
                         self.log(f"[{pk}] {trade_msg}")
+                    elif is_auto_on and self._last_order_candle_ts.get(pk) == last_time:
+                        ctx["pending_pullback_order"] = None
+                        trade_msg = f"🛡️ Đã vào lệnh trên nến {last_time} — Chờ cây nến {scalp_tf} tiếp theo"
+                        self.log(f"🛡️ [{pk}] Đã mở lệnh trên cây nến {last_time}, tự động chặn mở thêm lệnh thứ 2 trên cùng một cây nến.")
                     elif is_auto_on:
                         ctx["pending_pullback_order"] = None
                         ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
+                        if ok_ord:
+                            self._last_order_candle_ts[pk] = last_time
                         trade_msg = ord_msg
                         self.log(ord_msg)
                     else:
@@ -4456,10 +4528,147 @@ def run_first_time_setup():
         pass
 
 
+def _find_other_running_bot_pids() -> list:
+    """Tìm toàn bộ các tiến trình python/pythonw khác đang chạy mt5_scalping_bot.py ngầm trên máy."""
+    import subprocess
+    my_pid = os.getpid()
+    found_pids = set()
+
+    # 1. Kiểm tra PID lưu trong INSTANCE_LOCK_FILE trước (nhanh nhất, < 1ms)
+    try:
+        if os.path.exists(INSTANCE_LOCK_FILE):
+            with open(INSTANCE_LOCK_FILE, "r", encoding="utf-8") as f:
+                lock_data = json.load(f)
+            locked_pid = int(lock_data.get("pid", 0))
+            if locked_pid > 0 and locked_pid != my_pid:
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                h_proc = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, locked_pid)
+                if h_proc:
+                    exit_code = ctypes.c_ulong(0)
+                    if ctypes.windll.kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)) and exit_code.value == 259:
+                        found_pids.add(locked_pid)
+                    ctypes.windll.kernel32.CloseHandle(h_proc)
+    except Exception:
+        pass
+
+    # 2. Quét danh sách tiến trình Windows bằng PowerShell CIM (ẩn cửa sổ hoàn toàn) để phát hiện mọi tiến trình chạy ngầm
+    try:
+        CREATE_NO_WINDOW = 0x08000000
+        ps_query = (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { ($_.Name -match '^pythonw?\\.exe$') -and ($_.CommandLine -like '*mt5_scalping_bot*') } | "
+            "ForEach-Object { $_.ProcessId }"
+        )
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_query],
+            capture_output=True, text=True, timeout=4, creationflags=CREATE_NO_WINDOW
+        )
+        for line in (res.stdout or "").splitlines():
+            line = line.strip()
+            if line.isdigit():
+                pid_val = int(line)
+                if pid_val > 0 and pid_val != my_pid:
+                    found_pids.add(pid_val)
+    except Exception:
+        pass
+
+    return sorted(found_pids)
+
+
+def _terminate_pids(pids: list):
+    """Đóng dứt khoát danh sách các tiến trình App cũ đang chạy ngầm."""
+    import subprocess
+    PROCESS_TERMINATE = 0x0001
+    for pid in pids:
+        killed = False
+        try:
+            h_proc = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, int(pid))
+            if h_proc:
+                ctypes.windll.kernel32.TerminateProcess(h_proc, 0)
+                ctypes.windll.kernel32.CloseHandle(h_proc)
+                killed = True
+        except Exception:
+            pass
+        if not killed:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, timeout=3, creationflags=0x08000000
+                )
+            except Exception:
+                pass
+
+
+def ensure_single_app_instance():
+    """
+    Kiểm tra khi khởi động xem có phiên bản App nào đang mở sẵn hoặc bị treo chạy ngầm không:
+    - Nếu phát hiện tiến trình cũ: Hiển thị hộp thoại cho phép người dùng ĐÓNG tiến trình ngầm cũ để mở phiên mới sạch sẽ,
+      hoặc chuyển sang cửa sổ đang mở sẵn (tuyệt đối không để 2 App chạy song song gây xung đột MT5 / vào đúp lệnh).
+    """
+    global _SINGLETON_MUTEX_HANDLE
+    mutex_name = "Local\\KhaTran_Kronos_MT5_Scalping_Bot_Singleton_v2"
+    already_exists = False
+    try:
+        _SINGLETON_MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            already_exists = True
+    except Exception:
+        pass
+
+    other_pids = _find_other_running_bot_pids()
+    if not already_exists and not other_pids:
+        return
+
+    pids_label = ", ".join(str(p) for p in other_pids) if other_pids else "Đang hoạt động"
+    tmp_root = tk.Tk()
+    tmp_root.withdraw()
+    try:
+        tmp_root.attributes("-topmost", True)
+    except Exception:
+        pass
+
+    choice_kill_old = messagebox.askyesno(
+        "⚠️ Phát Hiện App Đang Chạy Ngầm / Mở Trùng",
+        f"Phát hiện phần mềm AI Scalping Bot (PID: {pids_label}) đang chạy sẵn hoặc đang chạy ngầm trên máy!\n"
+        f"Nếu để 2 App chạy cùng lúc sẽ gây xung đột kết nối MT5 và vào đúp lệnh.\n\n"
+        f"• Bấm [YES / Có]: Tự động ĐÓNG toàn bộ tiến trình cũ đang chạy ngầm và khởi động phiên mới này.\n"
+        f"• Bấm [NO / Không]: Giữ nguyên App đang chạy (không mở thêm cửa sổ mới).",
+        parent=tmp_root
+    )
+    tmp_root.destroy()
+
+    if choice_kill_old:
+        if other_pids:
+            _terminate_pids(other_pids)
+            time.sleep(0.45)
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            ts_ms = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            daily_path = os.path.join(LOG_DIR, f"bot_activity_{datetime.now().strftime('%Y-%m-%d')}.log")
+            with open(daily_path, "a", encoding="utf-8") as f:
+                f.write(f"[{ts_ms}] 🛡️ [CHỐNG XUNG ĐỘT NGẦM] Đã tự động đóng tiến trình App cũ (PID: {pids_label}) để khởi động phiên mới sạch sẽ.\n")
+        except Exception:
+            pass
+    else:
+        # Đưa cửa sổ App đang chạy sẵn lên tiền cảnh nếu có lưu HWND
+        try:
+            if os.path.exists(INSTANCE_LOCK_FILE):
+                with open(INSTANCE_LOCK_FILE, "r", encoding="utf-8") as f:
+                    lock_data = json.load(f)
+                hwnd = int(lock_data.get("hwnd", 0))
+                if hwnd > 0:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        sys.exit(0)
+
+
 if __name__ == "__main__":
     if "--setup" in sys.argv:
         run_first_time_setup()
         sys.exit(0)
+    ensure_single_app_instance()
     root = tk.Tk()
     app = KronosDesktopApp(root)
     root.mainloop()
