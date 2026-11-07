@@ -118,7 +118,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
         "cooldown_mins": "30",
-        "engine": "Chạy trực tiếp máy nhà",
+        "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
         "hf_token": "",
@@ -335,6 +335,7 @@ class KronosDesktopApp:
         self._order_guard_lock = threading.Lock()
         self._order_in_flight = {"XAUUSD": False, "BTCUSD": False}
         self._last_order_open_mono = {"XAUUSD": 0.0, "BTCUSD": 0.0}
+        self._auto_worker_token = {"XAUUSD": 0, "BTCUSD": 0}
         self._last_mt5_order_mono = 0.0
         self._ai_queue = queue.Queue()
         self._ai_queue_lock = threading.Lock()
@@ -453,16 +454,17 @@ class KronosDesktopApp:
         stops_dist = 0.0
         try:
             if MT5_AVAILABLE:
-                if tick is None and symbol:
-                    tick = mt5.symbol_info_tick(symbol)
-                if tick is not None and tick.ask > 0 and tick.bid > 0:
-                    spread = max(float(tick.ask - tick.bid), 0.0)
-                if symbol:
-                    s_info = mt5.symbol_info(symbol)
-                    if s_info is not None:
-                        stops_lvl = getattr(s_info, "trade_stops_level", 0) or 0
-                        pt = getattr(s_info, "point", 0.01) or 0.01
-                        stops_dist = float(stops_lvl) * float(pt)
+                with self._mt5_lock:
+                    if tick is None and symbol:
+                        tick = mt5.symbol_info_tick(symbol)
+                    if tick is not None and tick.ask > 0 and tick.bid > 0:
+                        spread = max(float(tick.ask - tick.bid), 0.0)
+                    if symbol:
+                        s_info = mt5.symbol_info(symbol)
+                        if s_info is not None:
+                            stops_lvl = getattr(s_info, "trade_stops_level", 0) or 0
+                            pt = getattr(s_info, "point", 0.01) or 0.01
+                            stops_dist = float(stops_lvl) * float(pt)
         except Exception:
             pass
 
@@ -621,11 +623,14 @@ class KronosDesktopApp:
 
         # Cập nhật ngay giá Live, bảng lệnh đang mở và thông tin nhanh cho Tab vừa chọn
         try:
-            if MT5_AVAILABLE and mt5.initialize():
+            with self._mt5_lock:
+                mt5_ready = bool(MT5_AVAILABLE and mt5.initialize())
+            if mt5_ready:
                 sym = self.symbol_var.get().strip()
                 tf_s = self.tf_var.get().strip()
-                mt5.symbol_select(sym, True)
-                tick = mt5.symbol_info_tick(sym)
+                with self._mt5_lock:
+                    mt5.symbol_select(sym, True)
+                    tick = mt5.symbol_info_tick(sym)
                 pos_cnt, tot_prof = self._update_open_positions_and_manage(sym, profile_key=target_key)
                 self._check_daily_profit_loss_limits(tot_prof, tick, profile_key=target_key)
                 self._update_left_quick_info(sym, tf_s, tick, pos_cnt, tot_prof)
@@ -3096,6 +3101,7 @@ class KronosDesktopApp:
                 if self._modify_position_sltp(pos, pos.price_open, pos.tp):
                     count += 1
         self.log(f"🛡️ Đã dời SL về đúng giá Entry cho {count} lệnh {symbol} đang có lãi.")
+        self._update_open_positions_and_manage(symbol, profile_key=self.active_profile_key)
 
     def close_selected_position(self):
         sel = self.pos_tree.selection()
@@ -3108,6 +3114,8 @@ class KronosDesktopApp:
         if positions:
             ok, msg = self._close_single_pos(positions[0])
             self.log(msg)
+            symbol = self.symbol_var.get().strip()
+            self._update_open_positions_and_manage(symbol, profile_key=self.active_profile_key)
 
     def close_all_positions(self):
         symbol = self.symbol_var.get().strip()
@@ -3123,6 +3131,7 @@ class KronosDesktopApp:
             if ok:
                 closed += 1
         self.log(f"🔥 Đã đóng toàn bộ {closed}/{len(positions)} lệnh {symbol} trên MT5.")
+        self._update_open_positions_and_manage(symbol, profile_key=self.active_profile_key)
 
     def check_mt5_connection(self):
         if not MT5_AVAILABLE:
@@ -3680,6 +3689,8 @@ class KronosDesktopApp:
             return
         self.auto_loop_running = True
         self.profile_ctx[pk]["auto_loop_running"] = True
+        self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
+        worker_token = self._auto_worker_token[pk]
         self.auto_trade_var.set(True)
         self.last_candle_time = None
         self.profile_ctx[pk]["last_candle_time"] = None
@@ -3688,12 +3699,13 @@ class KronosDesktopApp:
         sym = self.symbol_var.get().strip()
         tf_val = self.tf_var.get().strip()
         self.log(f"▶️ [{pk} - {sym}] Đã BẬT công tắc AUTO (Tự động canh nến {tf_val} & tự động vào lệnh)...")
-        threading.Thread(target=self._auto_loop_worker, args=(pk,), daemon=True).start()
+        threading.Thread(target=self._auto_loop_worker, args=(pk, worker_token), daemon=True).start()
 
     def stop_auto_scan(self):
         pk = self.active_profile_key
         self.auto_loop_running = False
         self.profile_ctx[pk]["auto_loop_running"] = False
+        self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
         self.auto_trade_var.set(False)
         self.pending_pullback_order = None
         self.profile_ctx[pk]["pending_pullback_order"] = None
@@ -3702,15 +3714,26 @@ class KronosDesktopApp:
         sym = self.symbol_var.get().strip()
         self.log(f"⏹️ [{pk} - {sym}] Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
 
-    def _auto_loop_worker(self, profile_key: str = None):
+    def _auto_loop_worker(self, profile_key: str = None, worker_token: int = None):
         pk = profile_key or self.active_profile_key
-        while self.profile_ctx[pk].get("auto_loop_running", False):
+        if worker_token is None:
+            worker_token = self._auto_worker_token.get(pk, 0)
+        while (
+            not getattr(self, "_app_closing", False)
+            and self.profile_ctx[pk].get("auto_loop_running", False)
+            and self._auto_worker_token.get(pk, 0) == worker_token
+        ):
             try:
                 cfg = self._get_profile_cfg(pk)
                 ctx = self.profile_ctx[pk]
                 symbol = str(cfg.get("symbol", "")).strip()
                 tf = str(cfg.get("tf", "M5")).strip()
                 df_check = self.fetch_mt5_candles(symbol, tf, 3, include_forming=False)
+                if (
+                    not self.profile_ctx[pk].get("auto_loop_running", False)
+                    or self._auto_worker_token.get(pk, 0) != worker_token
+                ):
+                    break
                 latest_time = df_check["timestamps"].iloc[-1]
                 last_ct = ctx.get("last_candle_time")
                 is_ana = ctx.get("is_analyzing", False)
@@ -3722,7 +3745,14 @@ class KronosDesktopApp:
                     self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE", closed_candle_ts=latest_time)
             except Exception as e:
                 self.log_error(f"AUTO_CANDLE_WATCH_{pk}", e)
-            time.sleep(2)
+            for _ in range(4):
+                if (
+                    getattr(self, "_app_closing", False)
+                    or not self.profile_ctx[pk].get("auto_loop_running", False)
+                    or self._auto_worker_token.get(pk, 0) != worker_token
+                ):
+                    return
+                time.sleep(0.5)
 
     def _run_analysis_worker(self, profile_key: str = None, reason: str = "MANUAL", closed_candle_ts=None):
         pk = profile_key or self.active_profile_key
