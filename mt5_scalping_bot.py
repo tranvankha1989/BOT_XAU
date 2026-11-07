@@ -388,6 +388,10 @@ class KronosDesktopApp:
             "XAUUSD": dict(DEFAULT_PROFILE_SETTINGS["XAUUSD"]),
             "BTCUSD": dict(DEFAULT_PROFILE_SETTINGS["BTCUSD"]),
         }
+        self.chart_view_tf_by_profile = {
+            "XAUUSD": "M5",
+            "BTCUSD": "M5",
+        }
         self.profile_ctx = {
             "XAUUSD": self._create_empty_profile_ctx("XAUUSD"),
             "BTCUSD": self._create_empty_profile_ctx("BTCUSD"),
@@ -638,6 +642,15 @@ class KronosDesktopApp:
             self._scan_pct = 100.0
             self._scan_target_pct = 100.0
             self._draw_reload_pill()
+
+        # Đồng bộ nút khung thời gian hiển thị trên thanh công cụ biểu đồ
+        active_view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(target_key, self.tf_var.get().strip())
+        active_tf = (
+            self.analysis_tf_var.get().strip()
+            if self.chart_mode == "AI_FORECAST"
+            else active_view_tf
+        )
+        self._highlight_active_tf_btn(active_tf)
 
         # Cập nhật hộp tín hiệu (Signal Box) của Tab đang mở
         sig_title = self._sig_title or f"⏳ ĐANG TẢI DỮ LIỆU & PHÂN TÍCH AI ({self.symbol_var.get().strip()})..."
@@ -1499,7 +1512,7 @@ class KronosDesktopApp:
         chart_toolbar.pack(fill=tk.X)
 
         tk.Label(
-            chart_toolbar, text="KHUNG THỜI GIAN:", bg="#131822", fg=TEXT_MUTED,
+            chart_toolbar, text="XEM BIỂU ĐỒ:", bg="#131822", fg=TEXT_MUTED,
             font=("Segoe UI", 8, "bold")
         ).pack(side=tk.LEFT, padx=(0, 6))
 
@@ -1514,6 +1527,11 @@ class KronosDesktopApp:
             )
             b.pack(side=tk.LEFT, padx=2)
             self.tf_quick_btns[tf_opt] = b
+
+        tk.Label(
+            chart_toolbar, text="(Chỉ đổi nến xem, AI giữ nguyên theo Menu Cài đặt)",
+            bg="#131822", fg="#64748b", font=("Segoe UI", 7, "italic")
+        ).pack(side=tk.LEFT, padx=(6, 0))
 
         self.ohlc_hover_lbl = tk.Label(
             chart_toolbar, text="Rê chuột lên nến để xem giá OHLC & Thời gian",
@@ -1865,6 +1883,12 @@ class KronosDesktopApp:
             self.active_profile_key = last_tab
             self._sync_active_ctx_to_self()
 
+            if hasattr(self, "chart_view_tf_by_profile"):
+                for pk in ("XAUUSD", "BTCUSD"):
+                    self.chart_view_tf_by_profile[pk] = str(self.profile_settings.get(pk, {}).get("tf", "M5")).strip()
+            if hasattr(self, "tf_quick_btns"):
+                self._highlight_active_tf_btn(self.chart_view_tf_by_profile.get(last_tab, "M5"))
+
             if hasattr(self, "bottom_notebook"):
                 try:
                     self.bottom_notebook.select(1 if last_tab == "BTCUSD" else 0)
@@ -1984,18 +2008,52 @@ class KronosDesktopApp:
                 btn.config(bg="#222c3c", fg=TEXT_MAIN)
 
     def switch_chart_timeframe_quick(self, tf_opt: str):
-        """Đổi nhanh khung thời gian M1 / M5 / M15 / H1 ngay trên thanh công cụ biểu đồ và đồng bộ quét AI."""
-        self._loading_settings = True
+        """
+        Đổi nhanh khung thời gian hiển thị nến trên biểu đồ (CHỈ ĐỂ XEM BIỂU ĐỒ - VIEW ONLY).
+        Hoàn toàn ĐỘC LẬP: KHÔNG làm thay đổi Khung phân tích AI hay Khung vào lệnh trong Menu Cài đặt,
+        và KHÔNG kích hoạt phân tích lại AI.
+        """
+        pk = self.active_profile_key
+        if not hasattr(self, "chart_view_tf_by_profile"):
+            self.chart_view_tf_by_profile = {}
+        self.chart_view_tf_by_profile[pk] = tf_opt
+        self.user_zoomed = False
+        self.saved_xlim = None
+        self.saved_ylim = None
+        if pk in self.profile_ctx:
+            self.profile_ctx[pk]["last_candle_time"] = None
+            self.profile_ctx[pk]["user_zoomed"] = False
+            self.profile_ctx[pk]["saved_xlim"] = None
+            self.profile_ctx[pk]["saved_ylim"] = None
+
+        self._highlight_active_tf_btn(tf_opt)
+
+        cfg = self._get_profile_cfg(pk)
+        symbol = str(cfg.get("symbol", pk)).strip()
+        ana_tf = str(cfg.get("analysis_tf", "M15")).strip()
+        scalp_tf = str(cfg.get("tf", "M5")).strip()
+
         try:
-            if self.chart_mode == "AI_FORECAST":
-                self.analysis_tf_var.set(tf_opt)
-            else:
-                self.tf_var.set(tf_opt)
-                self.analysis_tf_var.set(tf_opt)
-        finally:
-            self._loading_settings = False
-        self.save_user_settings()
-        self._on_timeframe_changed()
+            chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+        except ValueError:
+            chart_bars = 450
+
+        # Tải nến theo khung người dùng muốn xem và vẽ lên biểu đồ
+        df_view = self.fetch_mt5_candles(symbol, tf_opt, chart_bars, include_forming=True)
+        if df_view is not None:
+            self._draw_candlestick_chart(
+                df_hist=df_view,
+                scenarios=self.cached_scenarios if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
+                mean_df=self.cached_mean_df if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
+                action=self.cached_action,
+                sl_price=self.cached_sl,
+                tp_price=self.cached_tp,
+                symbol=symbol,
+                tf=tf_opt,
+                has_forming_candle=True
+            )
+
+        self.log(f"👁️ [{pk}] Đang xem biểu đồ khung [{tf_opt}]. (Cài đặt AI: Phân tích [{ana_tf}] -> Vào lệnh [{scalp_tf}]).")
 
     def _on_timeframe_changed(self, *args):
         if self._loading_settings:
@@ -2012,13 +2070,15 @@ class KronosDesktopApp:
             self.profile_ctx[pk]["saved_ylim"] = None
         scalp_tf = self.tf_var.get().strip()
         ana_tf = self.analysis_tf_var.get().strip()
+        if hasattr(self, "chart_view_tf_by_profile"):
+            self.chart_view_tf_by_profile[pk] = scalp_tf
         active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
         self._highlight_active_tf_btn(active_tf)
         self._update_forecast_tab_header()
         if ana_tf == scalp_tf:
-            self.log(f"🔄 [{pk}] Đã chọn cùng khung {scalp_tf} (Soi {scalp_tf} -> Trade {scalp_tf}). Đang quét lại...")
+            self.log(f"🔄 [{pk}] Cài đặt Menu: Soi [{scalp_tf}] -> Trade [{scalp_tf}]. Đang quét lại AI...")
         else:
-            self.log(f"🔄 [{pk}] Chế độ Đa Khung: Phân tích AI trên [{ana_tf}] -> Vào lệnh Scalping trên [{scalp_tf}]. Đang quét lại...")
+            self.log(f"🔄 [{pk}] Cài đặt Menu Đa Khung: Phân tích AI trên [{ana_tf}] -> Vào lệnh Scalping trên [{scalp_tf}]. Đang quét lại AI...")
         self.trigger_single_scan(profile_key=pk)
 
     def toggle_left_menu(self):
@@ -2131,17 +2191,26 @@ class KronosDesktopApp:
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
-        active_df = (
-            self.cached_df_analysis
-            if (self.chart_mode == "AI_FORECAST" and self.cached_df_analysis is not None)
-            else self.cached_df_hist
-        )
+        pk = self.active_profile_key
+        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(pk, self.tf_var.get().strip())
         active_tf = (
             self.analysis_tf_var.get().strip()
             if self.chart_mode == "AI_FORECAST"
-            else self.tf_var.get().strip()
+            else view_tf
         )
         self._highlight_active_tf_btn(active_tf)
+        if self.chart_mode == "AI_FORECAST":
+            active_df = self.cached_df_analysis
+        else:
+            if view_tf == self.tf_var.get().strip() and self.cached_df_hist is not None:
+                active_df = self.cached_df_hist
+            else:
+                try:
+                    chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+                except ValueError:
+                    chart_bars = 450
+                active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), view_tf, chart_bars, include_forming=True)
+
         if active_df is not None:
             self._draw_candlestick_chart(
                 active_df, self.cached_scenarios, self.cached_mean_df,
@@ -2157,16 +2226,25 @@ class KronosDesktopApp:
         self.saved_xlim = None
         self.saved_ylim = None
         self._chart_visible_bars = 60 if self.chart_mode == "AI_FORECAST" else 85
-        active_df = (
-            self.cached_df_analysis
-            if (self.chart_mode == "AI_FORECAST" and self.cached_df_analysis is not None)
-            else self.cached_df_hist
-        )
+        pk = self.active_profile_key
+        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(pk, self.tf_var.get().strip())
         active_tf = (
             self.analysis_tf_var.get().strip()
             if self.chart_mode == "AI_FORECAST"
-            else self.tf_var.get().strip()
+            else view_tf
         )
+        if self.chart_mode == "AI_FORECAST":
+            active_df = self.cached_df_analysis
+        else:
+            if view_tf == self.tf_var.get().strip() and self.cached_df_hist is not None:
+                active_df = self.cached_df_hist
+            else:
+                try:
+                    chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+                except ValueError:
+                    chart_bars = 450
+                active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), view_tf, chart_bars, include_forming=True)
+
         if active_df is not None:
             self._draw_candlestick_chart(
                 active_df, self.cached_scenarios, self.cached_mean_df,
@@ -3754,8 +3832,10 @@ class KronosDesktopApp:
         return df.sort_values("timestamps").reset_index(drop=True)
 
     def _refresh_realtime_chart(self, symbol: str, tf_str: str):
+        active_pk = self.active_profile_key
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
-        active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else tf_str
+        view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(active_pk, tf_str)
+        active_tf = ana_tf if self.chart_mode == "AI_FORECAST" else view_tf
 
         # Fast-path: Nếu vẫn đang cùng 1 cây nến hiện tại và không có thay đổi lệnh/SL/TP -> chỉ cập nhật tại chỗ cây nến cuối (< 2ms, siêu mượt 60 FPS)
         if (
@@ -4586,8 +4666,26 @@ class KronosDesktopApp:
                 ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
                 self.tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
 
-            chart_df = df_live_ana if self.chart_mode == "AI_FORECAST" else df_live_scalp
-            chart_tf = analysis_tf if self.chart_mode == "AI_FORECAST" else scalp_tf
+            view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(profile_key, scalp_tf)
+            if self.chart_mode == "AI_FORECAST":
+                chart_df = df_live_ana
+                chart_tf = analysis_tf
+            else:
+                if view_tf == scalp_tf:
+                    chart_df = df_live_scalp
+                    chart_tf = scalp_tf
+                elif view_tf == analysis_tf:
+                    chart_df = df_live_ana
+                    chart_tf = analysis_tf
+                else:
+                    try:
+                        chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
+                    except ValueError:
+                        chart_bars = 450
+                    chart_df = self.fetch_mt5_candles(symbol, view_tf, chart_bars, include_forming=True)
+                    chart_tf = view_tf
+
+            self._highlight_active_tf_btn(chart_tf)
             self._draw_candlestick_chart(chart_df, scenarios, mean_df, action, sl_price, tp_price, symbol, chart_tf, has_forming_candle=True)
 
         if self._is_initial_loading:
