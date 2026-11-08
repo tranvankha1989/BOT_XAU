@@ -1994,19 +1994,22 @@ class KronosDesktopApp:
             chart_bars = 450
 
         # Tải nến theo khung người dùng muốn xem và vẽ lên biểu đồ
-        df_view = self.fetch_mt5_candles(symbol, tf_opt, chart_bars, include_forming=True)
-        if df_view is not None:
-            self._draw_candlestick_chart(
-                df_hist=df_view,
-                scenarios=self.cached_scenarios if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
-                mean_df=self.cached_mean_df if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
-                action=self.cached_action,
-                sl_price=self.cached_sl,
-                tp_price=self.cached_tp,
-                symbol=symbol,
-                tf=tf_opt,
-                has_forming_candle=True
-            )
+        try:
+            df_view = self.fetch_mt5_candles(symbol, tf_opt, chart_bars, include_forming=True)
+            if df_view is not None:
+                self._draw_candlestick_chart(
+                    df_hist=df_view,
+                    scenarios=self.cached_scenarios if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
+                    mean_df=self.cached_mean_df if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
+                    action=self.cached_action,
+                    sl_price=self.cached_sl,
+                    tp_price=self.cached_tp,
+                    symbol=symbol,
+                    tf=tf_opt,
+                    has_forming_candle=True
+                )
+        except Exception as e:
+            self.log(f"⚠️ [{pk}] Chưa tải được nến khung [{tf_opt}] do MT5 đang mất kết nối: {e}")
 
         self.log(f"👁️ [{pk}] Đang xem biểu đồ khung [{tf_opt}]. (Cài đặt AI: Phân tích [{ana_tf}] -> Vào lệnh [{scalp_tf}]).")
 
@@ -4142,11 +4145,13 @@ class KronosDesktopApp:
         pk = profile_key or self.active_profile_key
         if worker_token is None:
             worker_token = self._auto_worker_token.get(pk, 0)
+        conn_err_logged = False
         while (
             not getattr(self, "_app_closing", False)
             and self.profile_ctx[pk].get("auto_loop_running", False)
             and self._auto_worker_token.get(pk, 0) == worker_token
         ):
+            sleep_chunks = 4
             try:
                 cfg = self._get_profile_cfg(pk)
                 ctx = self.profile_ctx[pk]
@@ -4158,6 +4163,11 @@ class KronosDesktopApp:
                     or self._auto_worker_token.get(pk, 0) != worker_token
                 ):
                     break
+
+                if conn_err_logged:
+                    conn_err_logged = False
+                    self.log(f"🟢 [{pk} - {symbol}] Đã kết nối lại thành công với MT5 Exness! Tiếp tục tự động canh nến.")
+
                 latest_time = df_check["timestamps"].iloc[-1]
                 last_ct = ctx.get("last_candle_time")
                 is_ana = ctx.get("is_analyzing", False)
@@ -4168,8 +4178,14 @@ class KronosDesktopApp:
                     self.log(f"🔔 [{pk} - {symbol}] Nến {tf} mới vừa đóng ({latest_time}). Đưa vào hàng đợi phân tích AI...")
                     self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE", closed_candle_ts=latest_time)
             except Exception as e:
-                self.log_error(f"AUTO_CANDLE_WATCH_{pk}", e)
-            for _ in range(4):
+                if not conn_err_logged:
+                    conn_err_logged = True
+                    self.log(f"⚠️ [{pk}] Đang chờ kết nối MT5 Exness (Máy chủ sàn đang bảo trì hoặc mất kết nối: {e}). Bot sẽ tự kết nối lại ngay khi sàn mở lại...")
+                    self.log_error(f"AUTO_CANDLE_WATCH_{pk}", e, show_in_ui=False)
+                else:
+                    self.log_error(f"AUTO_CANDLE_WATCH_{pk}", e, show_in_ui=False)
+                sleep_chunks = 10  # Khi mất kết nối: giãn cách 5 giây (10 * 0.5s) thay vì 2s để tránh nghẽn CPU
+            for _ in range(sleep_chunks):
                 if (
                     getattr(self, "_app_closing", False)
                     or not self.profile_ctx[pk].get("auto_loop_running", False)
