@@ -18,7 +18,7 @@ import shutil
 import ctypes
 import traceback
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -49,6 +49,9 @@ try:
     HF_CLIENT_AVAILABLE = True
 except ImportError:
     HF_CLIENT_AVAILABLE = False
+
+# Múi giờ Việt Nam (UTC+7 / GMT+7) cố định để tính PnL và reset giới hạn ngày (không phụ thuộc giờ OS máy hay giờ Server MT5)
+VN_TZ = timezone(timedelta(hours=7))
 
 # Đường dẫn lưu cấu hình người dùng, Nhật ký (Logs) & Icon trong AppData (không tạo file phụ trong thư mục dự án)
 SETTINGS_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Kronos_MT5_Bot")
@@ -2793,7 +2796,7 @@ class KronosDesktopApp:
                 self.root.after(1000, self._realtime_tick_loop)
 
     def _get_today_deals_stats(self, symbol: str = None, tick=None) -> tuple:
-        """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay theo đúng mã giao dịch & giờ Server MT5."""
+        """Tính tổng Lãi/Lỗ đã chốt (Realized PnL) và chuỗi lệnh thua liên tiếp trong ngày hôm nay theo Giờ Việt Nam (GMT+7)."""
         if not MT5_AVAILABLE:
             return 0.0, 0, None
         sym_key = symbol or "__ALL__"
@@ -2802,14 +2805,18 @@ class KronosDesktopApp:
         if cached_entry is not None and (now_mono - cached_entry[0]) < 4.0:
             return cached_entry[1]
         try:
-            ref_ts = int(tick.time) if tick is not None else int(time.time())
-            ref_date_str = datetime.fromtimestamp(ref_ts).strftime("%Y-%m-%d")
-            # Quét khoảng rộng ±36 giờ quanh thời điểm Server MT5 rồi lọc đúng ngày giao dịch của Server để không bị lệch múi giờ GMT+7 vs GMT+0
+            # Lấy ngày hôm nay theo Giờ Việt Nam (GMT+7, Asia/Ho_Chi_Minh)
+            vn_now = datetime.now(tz=VN_TZ)
+            vn_today_str = vn_now.strftime("%Y-%m-%d")
+            # Điểm bắt đầu ngày hôm nay 00:00:00 (giờ VN) quy đổi sang timestamp UTC
+            vn_today_start = vn_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            vn_today_start_ts = int(vn_today_start.timestamp())
+
+            # Quét deals từ trước 00:00:00 VN (trừ 2 giờ dự phòng) đến hiện tại + 2 giờ
+            query_from = datetime.fromtimestamp(vn_today_start_ts - 7200)
+            query_to = datetime.fromtimestamp(int(time.time()) + 7200)
             with self._mt5_lock:
-                deals = mt5.history_deals_get(
-                    datetime.fromtimestamp(ref_ts - 86400 * 2),
-                    datetime.fromtimestamp(ref_ts + 86400)
-                )
+                deals = mt5.history_deals_get(query_from, query_to)
             if deals is None:
                 return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
             realized = 0.0
@@ -2818,7 +2825,9 @@ class KronosDesktopApp:
             for d in deals:
                 if symbol and d.symbol and d.symbol != symbol:
                     continue
-                if datetime.fromtimestamp(int(d.time)).strftime("%Y-%m-%d") != ref_date_str:
+                # Quy đổi thời gian thực hiện deal d.time sang Giờ Việt Nam (GMT+7)
+                d_vn_dt = datetime.fromtimestamp(int(d.time), tz=VN_TZ)
+                if d_vn_dt.strftime("%Y-%m-%d") != vn_today_str:
                     continue
                 if d.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL) and d.entry in (
                     mt5.DEAL_ENTRY_OUT,
@@ -2843,11 +2852,11 @@ class KronosDesktopApp:
             return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
     def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None, profile_key: str = None):
-        """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp cho từng Tab (XAUUSD / BTCUSD)."""
+        """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp cho từng Tab (XAUUSD / BTCUSD) theo Giờ Việt Nam (GMT+7)."""
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
         ctx = self.profile_ctx[pk]
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
         symbol = str(cfg.get("symbol", "")).strip()
         realized_pnl, consec_losses, last_loss_deal = self._get_today_deals_stats(symbol=symbol, tick=tick)
         total_daily_pnl = realized_pnl + floating_profit
@@ -2883,8 +2892,8 @@ class KronosDesktopApp:
 
             if consec_losses >= max_consec_loss and last_loss_deal is not None:
                 if ctx["last_cooldown_deal_ticket"] != last_loss_deal.ticket:
-                    server_now = int(tick.time) if tick is not None else int(last_loss_deal.time)
-                    elapsed_sec = max(0, server_now - int(last_loss_deal.time))
+                    now_ts = int(time.time())
+                    elapsed_sec = max(0, now_ts - int(last_loss_deal.time))
                     total_cd_sec = cooldown_mins * 60.0
                     ctx["last_cooldown_deal_ticket"] = last_loss_deal.ticket
                     if elapsed_sec < total_cd_sec:
@@ -2896,11 +2905,11 @@ class KronosDesktopApp:
                             f"Tạm ngừng vào lệnh {cooldown_mins:.0f} phút (đến {ctx['cooldown_until'].strftime('%H:%M:%S')})!"
                         )
 
-        # 2. Sang ngày mới -> Tự động mở khóa giao dịch
+        # 2. Sang ngày mới theo giờ Việt Nam -> Tự động mở khóa giao dịch
         if ctx["daily_limit_locked_date"] is not None and ctx["daily_limit_locked_date"] != today_str:
             ctx["daily_limit_locked_date"] = None
             ctx["daily_limit_reason"] = ""
-            self.log(f"🌅 [{pk}] Đã sang ngày giao dịch mới! Mở khóa bộ giới hạn Lãi/Lỗ ngày.")
+            self.log(f"🌅 [{pk}] Đã sang ngày giao dịch mới theo giờ Việt Nam (00:00 GMT+7)! Mở khóa bộ giới hạn Lãi/Lỗ ngày.")
 
         # Nếu người dùng chỉnh về 0 (chạy tẹt ga) hoặc nâng hạn mức cao hơn hiện tại -> Mở khóa ngay
         if ctx["daily_limit_locked_date"] == today_str:
@@ -2947,7 +2956,7 @@ class KronosDesktopApp:
     def _is_daily_limit_locked(self, profile_key: str = None) -> bool:
         pk = profile_key or self.active_profile_key
         locked_d = self.daily_limit_locked_date if pk == self.active_profile_key else self.profile_ctx[pk].get("daily_limit_locked_date")
-        return locked_d == datetime.now().strftime("%Y-%m-%d")
+        return locked_d == datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
 
     def _is_cooldown_active(self, profile_key: str = None) -> bool:
         pk = profile_key or self.active_profile_key
@@ -3212,7 +3221,7 @@ class KronosDesktopApp:
             f"• Magic Number : {magic_num}\n"
             f"• Bid / Ask    : {bid_str} / {ask_str} ({spr_str})\n"
             f"• Lệnh đang mở : {pos_count} lệnh ({total_profit:+.2f}$)\n"
-            f"• Lãi/Lỗ Ngày  : {self.cached_daily_pnl:+.2f} USD\n"
+            f"• Lãi/Lỗ Ngày (VN): {self.cached_daily_pnl:+.2f} USD\n"
             f"• Trạng thái Bot: {bot_run_state}\n"
             f"• Quản lý Vốn  : {cap_state}\n"
             f"────────────────────────────\n"
@@ -3409,7 +3418,7 @@ class KronosDesktopApp:
         is_locked = self._is_daily_limit_locked(pk)
         daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
         summary_widget.config(
-            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh  |  PnL nổi: {total_profit:+.2f}$  |  Lãi/Lỗ Hôm Nay: {daily_pnl_val:+.2f}${daily_lock_tag}",
+            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh  |  PnL nổi: {total_profit:+.2f}$  |  Lãi/Lỗ Hôm Nay (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
             fg=GOLD_ACCENT if is_locked else (pnl_color if len(positions) > 0 else CYAN_LIVE)
         )
         return len(positions), total_profit
