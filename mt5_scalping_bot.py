@@ -139,7 +139,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
-        "hf_token": "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",
+        "hf_token": "",
         "lookback": "450",
         "pred_len": "6",
         "realtime_chart": True,
@@ -175,7 +175,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
-        "hf_token": "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",
+        "hf_token": "",
         "lookback": "450",
         "pred_len": "6",
         "realtime_chart": True,
@@ -1864,35 +1864,15 @@ class KronosDesktopApp:
             cur_data = {k: v.get() for k, v in self._get_settings_vars_map().items()}
             self.profile_settings[self.active_profile_key] = dict(cur_data)
 
-            # Lấy HF Token và Space ID từ UI hoặc từ profile đã lưu
+            # Lấy HF Token và Space ID từ UI (nếu người dùng xóa thì lưu rỗng, không tự ý khôi phục token cũ)
             token_val = str(self.hf_token_var.get()).strip()
             space_val = str(self.hf_space_var.get()).strip()
-
-            # Nếu ô nhập trên UI rỗng nhưng trong profile_settings đã có token thì giữ nguyên, không để bị xóa mất
-            if not token_val:
-                for pk in ("XAUUSD", "BTCUSD"):
-                    t_cand = str(self.profile_settings.get(pk, {}).get("hf_token", "")).strip()
-                    if t_cand:
-                        token_val = t_cand
-                        break
-            if not token_val:
-                token_val = str(DEFAULT_PROFILE_SETTINGS["XAUUSD"].get("hf_token", "")).strip()
 
             # Đồng bộ các thông tin xác thực & kết nối chung (HF Token, HF Space) cho cả 2 tab
             for pk in ("XAUUSD", "BTCUSD"):
                 if pk in self.profile_settings:
-                    if token_val:
-                        self.profile_settings[pk]["hf_token"] = token_val
-                    if space_val:
-                        self.profile_settings[pk]["hf_space"] = space_val
-
-            # Nếu token_val có nhưng ô nhập UI đang trống (ví dụ vừa nạp), tự động điền lại lên UI
-            if token_val and not str(self.hf_token_var.get()).strip():
-                self._loading_settings = True
-                try:
-                    self.hf_token_var.set(token_val)
-                finally:
-                    self._loading_settings = False
+                    self.profile_settings[pk]["hf_token"] = token_val
+                    self.profile_settings[pk]["hf_space"] = space_val
 
             payload = dict(self.profile_settings.get(self.active_profile_key, cur_data))
             payload["hf_token"] = token_val
@@ -1981,7 +1961,7 @@ class KronosDesktopApp:
                     except Exception:
                         pass
 
-            # Trích xuất và nạp HF Token từ bất kỳ đâu có lưu (profile hoặc root hoặc mặc định)
+            # Trích xuất và đồng bộ HF Token cho cả 2 Tab nếu có lưu
             token_saved = ""
             for pk in ("XAUUSD", "BTCUSD"):
                 t = str(self.profile_settings.get(pk, {}).get("hf_token", "")).strip()
@@ -1990,8 +1970,6 @@ class KronosDesktopApp:
                     break
             if not token_saved and isinstance(data, dict):
                 token_saved = str(data.get("hf_token", "")).strip()
-            if not token_saved:
-                token_saved = DEFAULT_PROFILE_SETTINGS["XAUUSD"].get("hf_token", "").strip()
 
             if token_saved:
                 for pk in ("XAUUSD", "BTCUSD"):
