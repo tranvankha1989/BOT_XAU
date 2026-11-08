@@ -20,7 +20,7 @@ import traceback
 import threading
 from datetime import datetime, timedelta, timezone
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 import numpy as np
 import pandas as pd
@@ -1353,6 +1353,42 @@ class KronosDesktopApp:
         )
         self.save_settings_btn.pack(fill=tk.X, pady=(1, 2))
 
+        # Hàng 2 nút Xuất / Nhập cấu hình tinh gọn, tối giản (Slate thanh lịch, không màu mè)
+        io_row = tk.Frame(save_card, bg="#121722")
+        io_row.pack(fill=tk.X, pady=(2, 2))
+
+        self.export_settings_btn = tk.Button(
+            io_row,
+            text="📤 Xuất Cấu Hình",
+            bg="#1e293b",
+            fg="#cbd5e1",
+            activebackground="#334155",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT,
+            padx=6,
+            pady=3,
+            cursor="hand2",
+            command=self.export_settings_file
+        )
+        self.export_settings_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+        self.import_settings_btn = tk.Button(
+            io_row,
+            text="📥 Nhập Cấu Hình",
+            bg="#1e293b",
+            fg="#cbd5e1",
+            activebackground="#334155",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT,
+            padx=6,
+            pady=3,
+            cursor="hand2",
+            command=self.import_settings_file
+        )
+        self.import_settings_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+
         self.save_status_lbl = tk.Label(
             save_card,
             text="✓ Tự động lưu: ĐÃ BẬT (Sẵn sàng)",
@@ -1361,7 +1397,7 @@ class KronosDesktopApp:
             font=("Consolas", 7, "bold"),
             anchor="center"
         )
-        self.save_status_lbl.pack(fill=tk.X, pady=(0, 2))
+        self.save_status_lbl.pack(fill=tk.X, pady=(2, 0))
 
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM Ở GIỮA MENU TRÁI (CO GIÃN TỰ NHIÊN)
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
@@ -1682,11 +1718,92 @@ class KronosDesktopApp:
         }
 
     def manual_save_user_settings(self):
-        """Người dùng nhấn nút Lưu cài đặt thủ công: Ghi ngay ra file và hiển thị thông báo phản hồi trực quan tức thì."""
+        """Người dùng nhấn nút Lưu cài đặt thủ công: Ghi ra file và hiển thị popup thông báo kết quả."""
         saved_ok = self.save_user_settings(show_feedback=True)
+        now_str = datetime.now().strftime("%H:%M:%S")
         if saved_ok:
-            now_str = datetime.now().strftime("%H:%M:%S")
             self.log(f"[CÀI ĐẶT] ✓ Đã lưu thành công toàn bộ thông số và Token của Tab {self.active_profile_key} vào ổ cứng ({now_str}).")
+            messagebox.showinfo(
+                "Lưu Cài Đặt",
+                f"Đã lưu thành công toàn bộ thông số cài đặt của Tab [{self.active_profile_key}] và Token vào máy tính.\n\nThời gian: {now_str}\nCác thiết lập này sẽ tự động được áp dụng khi mở lại Bot."
+            )
+        else:
+            self.log(f"[CÀI ĐẶT] ⚠️ Không thể lưu cài đặt ({now_str}).")
+            messagebox.showerror(
+                "Lỗi Lưu Cài Đặt",
+                f"Không thể ghi dữ liệu cấu hình vào ổ cứng ({now_str}).\n\nVui lòng kiểm tra quyền truy cập thư mục hoặc dung lượng ổ đĩa."
+            )
+
+    def export_settings_file(self):
+        """Xuất toàn bộ cấu hình 2 Tab ra file .json để sao lưu hoặc đồng bộ sang máy khác/VPS."""
+        try:
+            self.save_user_settings(show_feedback=False)
+            default_name = f"kronos_settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            file_path = filedialog.asksaveasfilename(
+                parent=self.root,
+                title="Xuất File Cấu Hình",
+                defaultextension=".json",
+                initialfile=default_name,
+                filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+            )
+            if not file_path:
+                return
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            else:
+                data = {
+                    "last_active_tab": self.active_profile_key,
+                    "profiles": dict(self.profile_settings)
+                }
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            self.log(f"[CẤU HÌNH] Đã xuất file cài đặt thành công: {os.path.basename(file_path)}")
+            messagebox.showinfo(
+                "Xuất Cấu Hình",
+                f"Đã xuất file cấu hình thành công.\n\nĐường dẫn:\n{file_path}\n\nBạn có thể chuyển file này sang máy khác hoặc VPS và dùng nút 'Nhập Cấu Hình' để đồng bộ toàn bộ cài đặt."
+            )
+        except Exception as e:
+            self.log_error("EXPORT_SETTINGS", e)
+            messagebox.showerror("Lỗi Xuất Cấu Hình", f"Không thể xuất file cấu hình:\n{e}")
+
+    def import_settings_file(self):
+        """Nhập file .json từ máy khác vào, cập nhật trực tiếp lên giao diện và lưu vào máy."""
+        try:
+            file_path = filedialog.askopenfilename(
+                parent=self.root,
+                title="Chọn File Cấu Hình Cần Nhập",
+                filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+            )
+            if not file_path:
+                return
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                imported_data = json.load(f)
+
+            if not isinstance(imported_data, dict):
+                raise ValueError("Định dạng file không hợp lệ (không phải đối tượng JSON).")
+
+            os.makedirs(SETTINGS_DIR, exist_ok=True)
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(imported_data, f, ensure_ascii=False, indent=2)
+
+            self.load_user_settings()
+            now_str = datetime.now().strftime("%H:%M:%S")
+            if hasattr(self, "save_status_lbl"):
+                self.save_status_lbl.config(
+                    text=f"✓ Đã nạp từ file lúc {now_str}",
+                    fg="#10b981"
+                )
+            self.log(f"[CẤU HÌNH] Đã nhập và áp dụng thành công cấu hình từ: {os.path.basename(file_path)}")
+            messagebox.showinfo(
+                "Nhập Cấu Hình",
+                f"Đã nhập cấu hình thành công.\n\nToàn bộ thông số của cả 2 Tab (XAUUSD & BTCUSD) đã được đồng bộ đầy đủ từ file:\n{os.path.basename(file_path)}"
+            )
+        except Exception as e:
+            self.log_error("IMPORT_SETTINGS", e)
+            messagebox.showerror("Lỗi Nhập Cấu Hình", f"Không thể đọc file cấu hình này:\n{e}\n\nVui lòng kiểm tra lại file .json hợp lệ do Kronos Bot xuất ra.")
 
     def save_user_settings(self, *args, show_feedback: bool = False) -> bool:
         """Lưu toàn bộ cài đặt của cả 2 Tab (XAUUSD & BTCUSD) và ghi nhớ Tab đang mở (last_active_tab)."""
