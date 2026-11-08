@@ -1717,22 +1717,78 @@ class KronosDesktopApp:
             "realtime_chart": self.realtime_chart_var,
         }
 
+    def show_toast(self, message: str, is_error: bool = False, duration_ms: int = 2000):
+        """Hiển thị thông báo Toast tinh gọn ở góc trên bên phải cửa sổ Bot, tự động ẩn sau 2 giây (không chặn giao diện)."""
+        try:
+            if getattr(self, "_active_toast", None) is not None:
+                try:
+                    self._active_toast.destroy()
+                except Exception:
+                    pass
+                self._active_toast = None
+
+            toast = tk.Toplevel(self.root)
+            self._active_toast = toast
+            toast.overrideredirect(True)
+            toast.attributes("-topmost", True)
+
+            bg_color = "#1e293b"  # Slate tối thanh lịch, chuyên nghiệp, không màu mè
+            border_color = "#ef4444" if is_error else "#10b981"
+            fg_color = "#fca5a5" if is_error else "#6ee7b7"
+
+            frame = tk.Frame(
+                toast,
+                bg=bg_color,
+                padx=14,
+                pady=8,
+                highlightthickness=1,
+                highlightbackground=border_color
+            )
+            frame.pack(fill=tk.BOTH, expand=True)
+
+            icon_str = "⚠️" if is_error else "✓"
+            tk.Label(
+                frame,
+                text=f"{icon_str}  {message}",
+                bg=bg_color,
+                fg=fg_color,
+                font=("Segoe UI", 9, "bold"),
+                anchor="w"
+            ).pack(side=tk.LEFT)
+
+            toast.update_idletasks()
+            rx = self.root.winfo_rootx()
+            ry = self.root.winfo_rooty()
+            rw = self.root.winfo_width()
+            tw = toast.winfo_width()
+
+            pos_x = rx + rw - tw - 25
+            pos_y = ry + 45
+            toast.geometry(f"+{max(0, pos_x)}+{max(0, pos_y)}")
+
+            self.root.after(duration_ms, lambda t=toast: self._dismiss_toast(t))
+        except Exception as e:
+            self.log_error("SHOW_TOAST", e, show_in_ui=False)
+
+    def _dismiss_toast(self, toast):
+        try:
+            if toast and toast.winfo_exists():
+                toast.destroy()
+            if getattr(self, "_active_toast", None) == toast:
+                self._active_toast = None
+        except Exception:
+            pass
+
     def manual_save_user_settings(self):
-        """Người dùng nhấn nút Lưu cài đặt thủ công: Ghi ra file và hiển thị popup thông báo kết quả."""
+        """Người dùng nhấn nút Lưu cài đặt: Ghi ra file và hiển thị Toast góc phải tự tắt sau 2 giây."""
         saved_ok = self.save_user_settings(show_feedback=True)
         now_str = datetime.now().strftime("%H:%M:%S")
         if saved_ok:
             self.log(f"[CÀI ĐẶT] ✓ Đã lưu thành công toàn bộ thông số và Token của Tab {self.active_profile_key} vào ổ cứng ({now_str}).")
-            messagebox.showinfo(
-                "Lưu Cài Đặt",
-                f"Đã lưu thành công toàn bộ thông số cài đặt của Tab [{self.active_profile_key}] và Token vào máy tính.\n\nThời gian: {now_str}\nCác thiết lập này sẽ tự động được áp dụng khi mở lại Bot."
-            )
+            self.show_toast(f"Đã lưu cài đặt [{self.active_profile_key}] & Áp dụng ngay!", is_error=False, duration_ms=2000)
         else:
             self.log(f"[CÀI ĐẶT] ⚠️ Không thể lưu cài đặt ({now_str}).")
-            messagebox.showerror(
-                "Lỗi Lưu Cài Đặt",
-                f"Không thể ghi dữ liệu cấu hình vào ổ cứng ({now_str}).\n\nVui lòng kiểm tra quyền truy cập thư mục hoặc dung lượng ổ đĩa."
-            )
+            self.show_toast("Không thể lưu file cài đặt!", is_error=True, duration_ms=3000)
 
     def export_settings_file(self):
         """Xuất toàn bộ cấu hình 2 Tab ra file .json để sao lưu hoặc đồng bộ sang máy khác/VPS."""
@@ -1760,13 +1816,10 @@ class KronosDesktopApp:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
             self.log(f"[CẤU HÌNH] Đã xuất file cài đặt thành công: {os.path.basename(file_path)}")
-            messagebox.showinfo(
-                "Xuất Cấu Hình",
-                f"Đã xuất file cấu hình thành công.\n\nĐường dẫn:\n{file_path}\n\nBạn có thể chuyển file này sang máy khác hoặc VPS và dùng nút 'Nhập Cấu Hình' để đồng bộ toàn bộ cài đặt."
-            )
+            self.show_toast(f"Đã xuất cấu hình: {os.path.basename(file_path)}", is_error=False, duration_ms=2500)
         except Exception as e:
             self.log_error("EXPORT_SETTINGS", e)
-            messagebox.showerror("Lỗi Xuất Cấu Hình", f"Không thể xuất file cấu hình:\n{e}")
+            self.show_toast(f"Lỗi xuất file: {e}", is_error=True, duration_ms=3000)
 
     def import_settings_file(self):
         """Nhập file .json từ máy khác vào, cập nhật trực tiếp lên giao diện và lưu vào máy."""
@@ -1797,13 +1850,10 @@ class KronosDesktopApp:
                     fg="#10b981"
                 )
             self.log(f"[CẤU HÌNH] Đã nhập và áp dụng thành công cấu hình từ: {os.path.basename(file_path)}")
-            messagebox.showinfo(
-                "Nhập Cấu Hình",
-                f"Đã nhập cấu hình thành công.\n\nToàn bộ thông số của cả 2 Tab (XAUUSD & BTCUSD) đã được đồng bộ đầy đủ từ file:\n{os.path.basename(file_path)}"
-            )
+            self.show_toast("Đã nhập & Áp dụng cấu hình thành công!", is_error=False, duration_ms=2500)
         except Exception as e:
             self.log_error("IMPORT_SETTINGS", e)
-            messagebox.showerror("Lỗi Nhập Cấu Hình", f"Không thể đọc file cấu hình này:\n{e}\n\nVui lòng kiểm tra lại file .json hợp lệ do Kronos Bot xuất ra.")
+            self.show_toast(f"Lỗi nhập file: {e}", is_error=True, duration_ms=3000)
 
     def save_user_settings(self, *args, show_feedback: bool = False) -> bool:
         """Lưu toàn bộ cài đặt của cả 2 Tab (XAUUSD & BTCUSD) và ghi nhớ Tab đang mở (last_active_tab)."""
