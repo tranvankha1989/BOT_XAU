@@ -1976,7 +1976,6 @@ class KronosDesktopApp:
         self.saved_xlim = None
         self.saved_ylim = None
         if pk in self.profile_ctx:
-            self.profile_ctx[pk]["last_candle_time"] = None
             self.profile_ctx[pk]["user_zoomed"] = False
             self.profile_ctx[pk]["saved_xlim"] = None
             self.profile_ctx[pk]["saved_ylim"] = None
@@ -2017,12 +2016,10 @@ class KronosDesktopApp:
         if self._loading_settings:
             return
         pk = self.active_profile_key
-        self.last_candle_time = None
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
         if pk in self.profile_ctx:
-            self.profile_ctx[pk]["last_candle_time"] = None
             self.profile_ctx[pk]["user_zoomed"] = False
             self.profile_ctx[pk]["saved_xlim"] = None
             self.profile_ctx[pk]["saved_ylim"] = None
