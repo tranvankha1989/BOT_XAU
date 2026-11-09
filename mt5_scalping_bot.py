@@ -1200,17 +1200,17 @@ class KronosDesktopApp:
         if self._version_blink_state:
             self.version_badge_btn.config(
                 text=f"Có bản cập nhật v{self._new_version_tag}!",
-                bg="#78350f",
+                bg=PANEL_BG,
                 fg="#fef08a",
-                activebackground="#92400e",
+                activebackground=PANEL_BG,
                 activeforeground="#fef08a",
             )
         else:
             self.version_badge_btn.config(
                 text=f"Có bản cập nhật v{self._new_version_tag}!",
-                bg="#451a03",
+                bg=PANEL_BG,
                 fg="#f59e0b",
-                activebackground="#78350f",
+                activebackground=PANEL_BG,
                 activeforeground="#fde047",
             )
         self._version_blink_after_id = self.root.after(600, self._run_version_badge_blink)
@@ -1241,7 +1241,7 @@ class KronosDesktopApp:
                     else:
                         self.version_badge_btn.config(
                             text=f"Phiên bản mới nhất  v{self.app_version}  🔄",
-                            bg="#064e3b",
+                            bg=PANEL_BG,
                             fg="#10b981",
                         )
                         self.show_toast(f"Bạn đang sử dụng phiên bản mới nhất (v{self.app_version}).", is_error=False, duration_ms=2500)
@@ -1302,31 +1302,32 @@ class KronosDesktopApp:
         app_title_lbl.bind("<B1-Motion>", self._on_win_drag)
         app_title_lbl.bind("<Double-Button-1>", self._toggle_maximize_window)
 
-        # Nút Huy hiệu Phiên bản & Kiểm tra cập nhật (Capsule Button - Xanh lá)
+        # Nút Huy hiệu Phiên bản & Kiểm tra cập nhật (Chữ màu xanh lá, không nền)
         self.version_badge_btn = tk.Button(
             top_bar,
             text=f"Phiên bản mới nhất  v{self.app_version}  🔄",
-            bg="#064e3b",
+            bg=PANEL_BG,
             fg="#10b981",
-            activebackground="#047857",
+            activebackground=PANEL_BG,
             activeforeground="#34d399",
             font=("Segoe UI", 8, "bold"),
             relief=tk.FLAT,
-            padx=8,
-            pady=2,
+            bd=0,
+            padx=4,
+            pady=0,
             cursor="hand2",
             command=self._on_click_version_badge,
         )
         self.version_badge_btn.pack(side=tk.LEFT, padx=(0, 10))
         self.version_badge_btn.bind(
             "<Enter>",
-            lambda e: self.version_badge_btn.config(bg="#047857")
+            lambda e: self.version_badge_btn.config(fg="#34d399")
             if not getattr(self, "_has_new_version", False)
             else None
         )
         self.version_badge_btn.bind(
             "<Leave>",
-            lambda e: self.version_badge_btn.config(bg="#064e3b")
+            lambda e: self.version_badge_btn.config(fg="#10b981")
             if not getattr(self, "_has_new_version", False)
             else None
         )
