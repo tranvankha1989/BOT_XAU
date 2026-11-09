@@ -26,3 +26,4 @@ if %RET% EQU 0 (
 echo ====================================================================
 echo Nhan phim bat ky de dong cua so nay...
 pause >nul
+
