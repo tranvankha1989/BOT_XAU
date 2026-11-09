@@ -46,7 +46,7 @@ New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 $outputDir = Join-Path $Root "installer_output"
 if (-not (Test-Path $outputDir)) { New-Item -ItemType Directory -Path $outputDir -Force | Out-Null }
 
-# 4. Bien dich Bootloader bang PyInstaller (onedir mode)
+# 4. Bien dich Bootloader nhan may bang PyInstaller (onedir mode)
 Write-Host ""
 Write-Host "[4/5] Bien dich Bootloader nhan may bang PyInstaller..." -ForegroundColor Yellow
 $iconPath = Join-Path $Root "tools\license-key-icon.ico"
@@ -66,9 +66,45 @@ python -m PyInstaller --noconsole `
     --hidden-import="tqdm" `
     --hidden-import="huggingface_hub" `
     --hidden-import="gradio_client" `
+    --hidden-import="einops" `
+    --hidden-import="safetensors" `
+    --collect-all="einops" `
+    --collect-all="safetensors" `
     launcher.py
 
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller gap loi trong qua trinh build bootloader!" }
+
+# 4.1 Bo sung cac DLL Visual C++ Runtime 2015-2022 vao truc tiep thu muc App va _internal
+Write-Host "Dang bo sung runtime DLLs (vcruntime140_1.dll, msvcp140*.dll)..." -ForegroundColor DarkGray
+$vcDlls = @(
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll"
+)
+$appDistDir = Join-Path $stagingDir "dist\Trading AI PRO"
+$internalDistDir = Join-Path $appDistDir "_internal"
+
+foreach ($dll in $vcDlls) {
+    $sysDll = Join-Path $env:SystemRoot "System32\$dll"
+    if (Test-Path $sysDll) {
+        Copy-Item -Path $sysDll -Destination (Join-Path $appDistDir $dll) -Force -ErrorAction SilentlyContinue
+        if (Test-Path $internalDistDir) {
+            Copy-Item -Path $sysDll -Destination (Join-Path $internalDistDir $dll) -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# 4.2 Dam bao file vc_redist.x64.exe co san trong tools de Inno Setup dong goi
+$vcRedistTools = Join-Path $Root "tools\vc_redist.x64.exe"
+if (-not (Test-Path $vcRedistTools)) {
+    $officeRedist = "C:\Program Files\Microsoft Office\root\Integration\Addons\vc_redist.x64.exe"
+    if (Test-Path $officeRedist) {
+        Copy-Item -Path $officeRedist -Destination $vcRedistTools -Force
+    }
+}
 
 # 5. Dong goi bo cai dat Setup bang Inno Setup Ultra
 Write-Host ""
