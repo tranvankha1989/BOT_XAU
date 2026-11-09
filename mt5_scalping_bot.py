@@ -205,6 +205,10 @@ PROFILE_STATE_ATTRS = (
     "daily_limit_locked_date",
     "daily_limit_reason",
     "cached_daily_pnl",
+    "cached_win_rate",
+    "cached_win_count",
+    "cached_loss_count",
+    "cached_closed_count",
     "consec_loss_count",
     "cooldown_until",
     "last_cooldown_deal_ticket",
@@ -319,6 +323,10 @@ class KronosDesktopApp:
         self.daily_limit_locked_date = None  # Ngày (YYYY-MM-DD) đã chạm mục tiêu Lãi/Lỗ ngày -> Dừng giao dịch hết ngày
         self.daily_limit_reason = ""
         self.cached_daily_pnl = 0.0
+        self.cached_win_rate = 0.0
+        self.cached_win_count = 0
+        self.cached_loss_count = 0
+        self.cached_closed_count = 0
         self.consec_loss_count = 0  # Chuỗi lệnh thua liên tiếp hiện tại trong ngày
         self.cooldown_until = None  # Thời điểm hết hạn tạm ngừng sau chuỗi thua
         self.last_cooldown_deal_ticket = None
@@ -465,6 +473,10 @@ class KronosDesktopApp:
             "daily_limit_locked_date": None,
             "daily_limit_reason": "",
             "cached_daily_pnl": 0.0,
+            "cached_win_rate": 0.0,
+            "cached_win_count": 0,
+            "cached_loss_count": 0,
+            "cached_closed_count": 0,
             "consec_loss_count": 0,
             "cooldown_until": None,
             "last_cooldown_deal_ticket": None,
@@ -3670,12 +3682,14 @@ class KronosDesktopApp:
 
         pred_n = self.pred_len_var.get().strip() or "6"
         magic_num = self._get_profile_magic_number(self.active_profile_key)
+        wr_display = f"{self.cached_win_rate:.1f}% ({self.cached_win_count}W - {self.cached_loss_count}L)" if self.cached_closed_count > 0 else "---"
         info_txt = (
             f"• Tab đang chọn: {self.active_profile_key} ({symbol} - {tf_display})\n"
             f"• Magic Number : {magic_num}\n"
             f"• Bid / Ask    : {bid_str} / {ask_str} ({spr_str})\n"
             f"• Lệnh đang mở : {pos_count} lệnh ({total_profit:+.2f}$)\n"
             f"• Lãi/Lỗ Ngày (VN): {self.cached_daily_pnl:+.2f} USD\n"
+            f"• Win Rate Ngày: {wr_display}\n"
             f"• Trạng thái Bot: {bot_run_state}\n"
             f"• Quản lý Vốn  : {cap_state}\n"
             f"────────────────────────────\n"
@@ -3951,8 +3965,28 @@ class KronosDesktopApp:
         is_locked = self._is_daily_limit_locked(pk)
         daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
         closed_count = len(closed_deals)
+        win_count = sum(1 for cd in closed_deals if cd.get("net_pnl", 0.0) > 0.05)
+        loss_count = sum(1 for cd in closed_deals if cd.get("net_pnl", 0.0) < -0.05)
+        be_count = max(0, closed_count - win_count - loss_count)
+        if closed_count > 0:
+            win_rate = (win_count / closed_count) * 100.0
+            win_detail = f"{win_count}W - {loss_count}L" if be_count == 0 else f"{win_count}W - {loss_count}L - {be_count}BE"
+            win_rate_tag = f"  |  Win Rate: {win_rate:.1f}% ({win_detail})"
+        else:
+            win_rate_tag = "  |  Win Rate: ---"
+
+        ctx["cached_win_rate"] = (win_count / closed_count * 100.0) if closed_count > 0 else 0.0
+        ctx["cached_win_count"] = win_count
+        ctx["cached_loss_count"] = loss_count
+        ctx["cached_closed_count"] = closed_count
+        if pk == self.active_profile_key:
+            self.cached_win_rate = ctx["cached_win_rate"]
+            self.cached_win_count = win_count
+            self.cached_loss_count = loss_count
+            self.cached_closed_count = closed_count
+
         summary_widget.config(
-            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh ({total_profit:+.2f}$)  |  Đã chốt hôm nay: {closed_count} lệnh ({closed_profit_sum:+.2f}$)  |  Tổng Lãi/Lỗ Ngày (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
+            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh ({total_profit:+.2f}$)  |  Đã chốt hôm nay: {closed_count} lệnh ({closed_profit_sum:+.2f}$){win_rate_tag}  |  Tổng Lãi/Lỗ Ngày (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
             fg=GOLD_ACCENT if is_locked else (pnl_color if len(positions) > 0 else CYAN_LIVE)
         )
         return len(positions), total_profit
