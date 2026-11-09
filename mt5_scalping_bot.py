@@ -313,12 +313,21 @@ class CollapsibleSection(tk.Frame):
 
 
 class KronosDesktopApp:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, lic_mgr=None):
         self.root = root
         self.root.title("AI (KhaTran) - Phần Mềm Scalping Vàng & Quản Lý Lệnh Real-Time (MT5 Exness)")
         self.root.geometry("1450x880")
         self.root.configure(bg=BG_DARK)
         self._apply_window_and_taskbar_icon()
+
+        if lic_mgr is None:
+            try:
+                from kronos_license import LicenseManager
+                self.lic_mgr = LicenseManager()
+            except Exception:
+                self.lic_mgr = None
+        else:
+            self.lic_mgr = lic_mgr
 
         self.local_cache = {}
         self.initial_r_cache = {}  # Lưu khoảng cách 1R (|Entry - SL ban đầu|) theo từng ticket
@@ -1119,6 +1128,39 @@ class KronosDesktopApp:
         else:
             self._on_close_window()
 
+    def _update_license_badge_ui(self):
+        """Cập nhật hiển thị số ngày bản quyền hoặc trạng thái trên thanh Header."""
+        if not hasattr(self, "license_badge_btn") or not self.license_badge_btn.winfo_exists():
+            return
+        if not hasattr(self, "lic_mgr") or self.lic_mgr is None:
+            return
+        try:
+            st = self.lic_mgr.check_status()
+            b_text = st.get("badge_text", "[ Bản quyền ]")
+            b_color = st.get("badge_color", "#38bdf8")
+            self.license_badge_btn.config(
+                text=b_text,
+                fg=b_color,
+                activeforeground=b_color,
+            )
+        except Exception:
+            pass
+
+    def _open_license_dialog(self):
+        """Mở cửa sổ Kích Hoạt Bản Quyền Ứng Dụng để xem HWID hoặc nhập key gia hạn."""
+        if not hasattr(self, "lic_mgr") or self.lic_mgr is None:
+            try:
+                from kronos_license import LicenseManager
+                self.lic_mgr = LicenseManager()
+            except Exception:
+                return
+        try:
+            from kronos_license import show_activation_dialog
+            show_activation_dialog(self.root, self.lic_mgr, is_startup_block=False)
+            self._update_license_badge_ui()
+        except Exception as e:
+            self.log_error("OPEN_LICENSE_DIALOG", e)
+
     def _setup_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
@@ -1180,6 +1222,24 @@ class KronosDesktopApp:
         self.mac_win_ctrl_canvas.bind("<Leave>", lambda e: (setattr(self, "_mac_ctrl_hover", False), self._draw_mac_window_controls()))
         self.mac_win_ctrl_canvas.bind("<Button-1>", self._on_mac_win_ctrl_click)
         self._draw_mac_window_controls()
+
+        # Nút Huy hiệu Bản quyền nằm ở góc phải ngay cạnh cụm nút thu phóng cửa sổ
+        self.license_badge_btn = tk.Button(
+            top_bar,
+            text="[ Bản quyền ]",
+            bg="#111827",
+            fg="#38bdf8",
+            activebackground="#1e293b",
+            activeforeground="#38bdf8",
+            font=("Segoe UI", 9, "bold"),
+            relief=tk.FLAT,
+            padx=10,
+            pady=2,
+            cursor="hand2",
+            command=self._open_license_dialog,
+        )
+        self.license_badge_btn.pack(side=tk.RIGHT, padx=(0, 10))
+        self._update_license_badge_ui()
 
         # Căn giữa thông số đếm giờ & giá Live ngay chính giữa thanh trên cùng
         self.live_clock_lbl = tk.Label(
@@ -3747,6 +3807,12 @@ class KronosDesktopApp:
         pred_n = self.pred_len_var.get().strip() or "6"
         magic_num = self._get_profile_magic_number(self.active_profile_key)
         wr_display = f"{self.cached_win_rate:.1f}% ({self.cached_win_count}W - {self.cached_loss_count}L)" if self.cached_closed_count > 0 else "---"
+        lic_txt = "---"
+        if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
+            st = self.lic_mgr.check_status()
+            lic_txt = st.get("badge_text", "").replace("[", "").replace("]", "").strip()
+            self._update_license_badge_ui()
+
         info_txt = (
             f"• Tab đang chọn: {self.active_profile_key} ({symbol} - {tf_display})\n"
             f"• Magic Number : {magic_num}\n"
@@ -3754,6 +3820,7 @@ class KronosDesktopApp:
             f"• Lệnh đang mở : {pos_count} lệnh ({total_profit:+.2f}$)\n"
             f"• Lãi/Lỗ Ngày (VN): {self.cached_daily_pnl:+.2f} USD\n"
             f"• Win Rate Ngày: {wr_display}\n"
+            f"• Bản quyền     : {lic_txt}\n"
             f"• Trạng thái Bot: {bot_run_state}\n"
             f"• Quản lý Vốn  : {cap_state}\n"
             f"────────────────────────────\n"
@@ -4614,6 +4681,10 @@ class KronosDesktopApp:
                 if not mt5.initialize():
                     self.log_error(f"OPEN_{action}_{pk}", extra_info="Chưa kết nối MT5", show_in_ui=False)
                     return False, "Chưa kết nối MT5."
+                if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
+                    lic_st = self.lic_mgr.check_status()
+                    if not lic_st.get("is_valid", False):
+                        return False, f"⚠️ {lic_st.get('message', 'Bản quyền chưa kích hoạt hoặc đã hết hạn!')}"
                 if self._is_daily_limit_locked(pk):
                     reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
                     return False, f"🔒 Đã tự động dừng giao dịch hết hôm nay ({reason})."
@@ -4840,6 +4911,12 @@ class KronosDesktopApp:
         pk = self.active_profile_key
         if self.auto_loop_running:
             return
+        if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
+            lic_st = self.lic_mgr.check_status(force_refresh=True)
+            if not lic_st.get("is_valid", False):
+                self.show_toast("⚠️ Bản quyền chưa kích hoạt hoặc đã hết hạn!", is_error=True, duration_ms=3000)
+                self._open_license_dialog()
+                return
         self.auto_loop_running = True
         self.profile_ctx[pk]["auto_loop_running"] = True
         self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
@@ -6035,6 +6112,22 @@ if __name__ == "__main__":
         run_first_time_setup()
         sys.exit(0)
     ensure_single_app_instance()
+
+    from kronos_license import LicenseManager, show_activation_dialog
+    lic_mgr = LicenseManager()
+    lic_status = lic_mgr.check_status()
+
     root = tk.Tk()
-    app = KronosDesktopApp(root)
+    if not lic_status.get("is_valid", False):
+        root.withdraw()
+        # Chặn mở phần mềm khi chưa kích hoạt hoặc hết hạn! Hiển thị ngay cửa sổ nhập key
+        activated = show_activation_dialog(root, lic_mgr, is_startup_block=True)
+        if not activated:
+            sys.exit(0)
+        lic_status = lic_mgr.check_status(force_refresh=True)
+        if not lic_status.get("is_valid", False):
+            sys.exit(0)
+        root.deiconify()
+
+    app = KronosDesktopApp(root, lic_mgr=lic_mgr)
     root.mainloop()

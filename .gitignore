@@ -76,3 +76,10 @@ venv.bak/
 temp/
 tmp/
 .python-version
+
+# Security & Licensing
+*.pem
+tools/ed25519_private.pem
+tools/issued_licenses.json
+tools/build/
+tools/dist/
