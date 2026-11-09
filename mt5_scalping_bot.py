@@ -1370,8 +1370,7 @@ class KronosDesktopApp:
                 "Nhồi giá tốt hơn (DCA)",
                 "Tự do theo AI (Cách >= khoảng cách tối thiểu)"
             ],
-            "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
-            combo_width=18
+            "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)"
         )
         self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0")
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
@@ -1439,8 +1438,7 @@ class KronosDesktopApp:
                 "Dời SL về hòa vốn (BE+)",
                 "Đóng tất cả (Bất kể Lãi/Lỗ)"
             ],
-            "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
-            combo_width=18
+            "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)"
         )
 
         # Phân nhóm: Giới hạn Lãi/Lỗ ngày & Cooldown
@@ -3021,14 +3019,37 @@ class KronosDesktopApp:
         entry.bind("<Return>", lambda e: self.save_user_settings())
         return var
 
-    def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=15):
+    def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=None):
         row = tk.Frame(parent, bg=PANEL_BG)
         row.pack(fill=tk.X, pady=2)
         tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
         var = tk.StringVar(value=default_val)
-        cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8), width=combo_width)
+
+        # Tự động tính toán bề rộng combobox nếu có chuỗi dài để không bị che khuất chữ
+        max_len = max((len(str(v)) for v in values), default=15) if values else 15
+        if combo_width is None:
+            calc_w = max(15, min(max_len + 1, 28))
+        else:
+            calc_w = combo_width
+
+        cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8), width=calc_w)
         cb.pack(side=tk.RIGHT)
         cb.bind("<<ComboboxSelected>>", lambda e: self.save_user_settings())
+
+        # Mở rộng danh sách xổ xuống (Popdown) tương ứng với chuỗi dài nhất để đọc trọn vẹn 100% nội dung
+        if max_len > 18:
+            def _expand_popdown(event=None):
+                def _do_resize():
+                    try:
+                        popdown = cb.tk.eval(f"ttk::combobox::PopdownWindow {cb}")
+                        target_w = max(cb.winfo_width(), min(max_len * 8 + 35, 320))
+                        cb.tk.eval(f"wm geometry {popdown} {target_w}x[winfo height {popdown}]")
+                    except Exception:
+                        pass
+                cb.after(10, _do_resize)
+            cb.bind("<ButtonPress-1>", _expand_popdown, add="+")
+            cb.bind("<Down>", _expand_popdown, add="+")
+
         return var
 
     def _style_axes(self):
