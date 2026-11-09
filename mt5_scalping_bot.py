@@ -1758,8 +1758,47 @@ class KronosDesktopApp:
         tree.tag_configure("closed_neg", foreground="#f87171")
         tree.tag_configure("closed_be", foreground="#94a3b8")
 
+        tree.bind("<<TreeviewSelect>>", lambda e, pk=profile_key: self._on_pos_tree_select(pk))
+        tree.bind("<Button-1>", lambda e, pk=profile_key: self._on_pos_tree_click(e, pk), add="+")
+
         self.pos_tree_by_profile[profile_key] = tree
         self.pos_summary_lbl_by_profile[profile_key] = summary_lbl
+
+    def _get_selected_tickets_for_profile(self, profile_key: str = None) -> set:
+        """Lấy danh sách mã ticket (int) các lệnh đang được người dùng nhấp chọn trong bảng vị thế."""
+        pk = profile_key or self.active_profile_key
+        tree = getattr(self, "pos_tree_by_profile", {}).get(pk, getattr(self, "pos_tree", None))
+        if tree is None:
+            return set()
+        selected = set()
+        try:
+            for item_id in tree.selection():
+                vals = tree.item(item_id, "values")
+                if vals and len(vals) > 0:
+                    raw_ticket = str(vals[0]).replace("#", "").strip()
+                    if raw_ticket.isdigit():
+                        selected.add(int(raw_ticket))
+        except Exception:
+            pass
+        return selected
+
+    def _on_pos_tree_select(self, profile_key: str = None):
+        """Xử lý sự kiện khi người dùng chọn lệnh trong danh sách phía dưới: làm nổi bật lệnh tương ứng trên biểu đồ."""
+        pk = profile_key or self.active_profile_key
+        if pk == self.active_profile_key:
+            sym = self.symbol_var.get().strip() or (SYMBOL_BTC if pk == "BTCUSD" else SYMBOL_XAU)
+            tf = self.tf_var.get().strip() or "M1"
+            self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
+
+    def _on_pos_tree_click(self, event, profile_key: str = None):
+        """Nếu người dùng nhấp vào khoảng trống ngoài các dòng lệnh, tự động bỏ chọn để biểu đồ trở về hiển thị bình thường."""
+        pk = profile_key or self.active_profile_key
+        tree = getattr(self, "pos_tree_by_profile", {}).get(pk, getattr(self, "pos_tree", None))
+        if tree is not None:
+            clicked_row = tree.identify_row(event.y)
+            if not clicked_row and tree.selection():
+                tree.selection_remove(tree.selection())
+                self._on_pos_tree_select(pk)
 
     # =========================================================================
     # TỰ ĐỘNG LƯU & KHÔI PHỤC CÀI ĐẶT NGƯỜI DÙNG THEO TỪNG TAB (XAUUSD / BTCUSD)
@@ -4275,15 +4314,16 @@ class KronosDesktopApp:
         df = df[["timestamps", "open", "high", "low", "close", "volume"]].dropna()
         return df.sort_values("timestamps").reset_index(drop=True)
 
-    def _refresh_realtime_chart(self, symbol: str, tf_str: str):
+    def _refresh_realtime_chart(self, symbol: str, tf_str: str, force_full_redraw: bool = False):
         active_pk = self.active_profile_key
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
         view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(active_pk, tf_str)
         active_tf = view_tf
 
-        # Fast-path: Nếu vẫn đang cùng 1 cây nến hiện tại và không có thay đổi lệnh/SL/TP -> chỉ cập nhật tại chỗ cây nến cuối (< 2ms, siêu mượt 60 FPS)
+        # Fast-path: Nếu vẫn đang cùng 1 cây nến hiện tại và không có thay đổi lệnh/SL/TP/lệnh chọn -> chỉ cập nhật tại chỗ cây nến cuối (< 2ms, siêu mượt 60 FPS)
         if (
-            self._chart_hist_df is not None
+            not force_full_redraw
+            and self._chart_hist_df is not None
             and len(self._chart_hist_df) > 0
             and self._forming_wick_line is not None
             and self._forming_body_rect is not None
@@ -4296,9 +4336,10 @@ class KronosDesktopApp:
 
                 with self._mt5_lock:
                     open_positions = mt5.positions_get(symbol=symbol) if (self.chart_mode == "LIVE_POSITIONS" and MT5_AVAILABLE) else None
+                sel_sig = tuple(sorted(self._get_selected_tickets_for_profile(active_pk)))
                 pos_sig = (
-                    tuple((p.ticket, round(p.sl, 2), round(p.tp, 2)) for p in open_positions)
-                    if open_positions else ()
+                    (tuple((p.ticket, round(p.sl, 2), round(p.tp, 2)) for p in open_positions) if open_positions else ()),
+                    sel_sig
                 )
                 pb_sig = (
                     (self.pending_pullback_order["action"], round(self.pending_pullback_order["sl_price"], 2))
@@ -4330,7 +4371,7 @@ class KronosDesktopApp:
                         self._live_price_annot.xy = (1.0, c)
                         self._live_price_annot.set_text(f" {c:.2f} ")
 
-                    # Cập nhật số Lãi/Lỗ ($) đang nhảy trên nhãn Entry của các lệnh đang mở
+                    # Cập nhật số Lãi/Lỗ ($) đang nhảy trên nhãn Entry của các lệnh đang mở (giữ nguyên nhãn lệnh chọn nếu có)
                     if open_positions and self._pos_text_artists:
                         eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
                         cfg_live = self._get_profile_cfg(self.active_profile_key)
@@ -4340,16 +4381,18 @@ class KronosDesktopApp:
                         except ValueError:
                             be_p_live = def_be_p
                         pos_by_idx = {i: p for i, p in enumerate(open_positions)}
+                        sel_tickets_live = self._get_selected_tickets_for_profile(self.active_profile_key)
                         for txt_artist, col_idx in self._pos_text_artists:
                             txt_str = txt_artist.get_text()
-                            if txt_str.startswith(" Entry:") and col_idx in pos_by_idx:
+                            if "Entry:" in txt_str and col_idx in pos_by_idx:
                                 p_obj = pos_by_idx[col_idx]
                                 is_b = (p_obj.type == mt5.POSITION_TYPE_BUY)
                                 be_t = (p_obj.price_open + be_p_live) if is_b else (p_obj.price_open - be_p_live)
                                 is_sl_be = (p_obj.sl > 0 and (abs(p_obj.sl - be_t) < eps_eq or abs(p_obj.sl - p_obj.price_open) < eps_eq))
                                 is_tp_be = (p_obj.tp > 0 and (abs(p_obj.tp - be_t) < eps_eq or abs(p_obj.tp - p_obj.price_open) < eps_eq))
                                 be_tag = f" [SL=Entry+{be_p_live:g}]" if (is_sl_be and be_p_live > 0) else (" [SL=0]" if is_sl_be else (" [Chờ Entry+]" if is_tp_be else ""))
-                                txt_artist.set_text(f" Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
+                                prefix = f"👉 [LỆNH #{p_obj.ticket}] " if p_obj.ticket in sel_tickets_live else ""
+                                txt_artist.set_text(f" {prefix}Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
 
                     mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
                     zoom_hint = " [Đang Co giãn/Di chuyển - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {len(self._chart_hist_df)} nến — Lăn chuột: Co giãn nến | Kéo: Di chuyển]"
@@ -5318,6 +5361,8 @@ class KronosDesktopApp:
             with self._mt5_lock:
                 open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
+                sel_tickets = self._get_selected_tickets_for_profile(self.active_profile_key)
+                has_sel = len(sel_tickets) > 0
                 eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
                 cfg_chart = self._get_profile_cfg(self.active_profile_key)
                 def_be_p = 5.0 if self.active_profile_key == "BTCUSD" else 0.2
@@ -5327,8 +5372,7 @@ class KronosDesktopApp:
                     be_p_chart = def_be_p
                 for idx_p, pos in enumerate(open_positions):
                     is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
-                    entry_col = "#00e676" if is_buy else "#ff5252"
-                    text_fg = "#000000" if is_buy else "#ffffff"
+                    is_sel = (pos.ticket in sel_tickets)
                     be_target_c = (pos.price_open + be_p_chart) if is_buy else (pos.price_open - be_p_chart)
                     is_sl_at_entry = (pos.sl > 0 and abs(pos.sl - pos.price_open) < eps_eq)
                     is_tp_at_entry = (pos.tp > 0 and abs(pos.tp - pos.price_open) < eps_eq)
@@ -5340,40 +5384,126 @@ class KronosDesktopApp:
                     )
                     offset_x = base_label_x + (idx_p * col_step_x)
 
+                    # Tính toán trước số Lãi/Lỗ ($) dự kiến khi chạm SL hoặc TP
+                    sl_pnl = self._calc_target_pnl(pos, pos.sl) if pos.sl > 0 else 0.0
+                    tp_pnl = self._calc_target_pnl(pos, pos.tp) if pos.tp > 0 else 0.0
+                    is_profit_sl = (sl_pnl >= 0)
+
+                    # Tùy biến màu sắc, độ dày nét và nhãn khi người dùng chọn lệnh trong danh sách
+                    if is_sel:
+                        # 1. LỆNH ĐƯỢC CHỌN TRONG BẢNG: NỔI BẬT ĐẶC BIỆT (Cyan rực rỡ, nét dày, icon & số ticket)
+                        entry_col = "#00e5ff"  # Neon Cyan
+                        entry_w = 2.4
+                        entry_ls = "-"
+                        entry_alpha = 1.0
+                        entry_bg = "#00e5ff"
+                        entry_fg = "#000000"
+                        entry_txt = f" 👉 [LỆNH #{pos.ticket}] Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
+                        entry_fs = 8.5
+                        z_line, z_badge = 28, 32
+
+                        sl_col = "#ffea00" if is_profit_sl else "#ff1744"  # Neon Amber nếu khóa lãi, Neon Red nếu cắt lỗ
+                        sl_w = 2.2
+                        sl_ls = "--"
+                        sl_alpha = 1.0
+                        sl_bg = "#ffea00" if is_profit_sl else "#ff1744"
+                        sl_fg = "#000000" if is_profit_sl else "#ffffff"
+                        sl_txt = f" 👉 [#{pos.ticket}] SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) "
+                        sl_fs = 8.0
+
+                        tp_col = "#00e676"  # Neon Green
+                        tp_w = 2.2
+                        tp_ls = "--"
+                        tp_alpha = 1.0
+                        tp_bg = "#00e676"
+                        tp_fg = "#000000"
+                        tp_txt = f" 👉 [#{pos.ticket}] TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) "
+                        tp_fs = 8.0
+                    elif has_sel:
+                        # 2. CÁC LỆNH KHÁC KHI ĐANG CÓ LỆNH ĐƯỢC CHỌN: Làm mờ nhẹ để mắt người dùng tập trung vào lệnh chọn
+                        entry_col = "#00e676" if is_buy else "#ff5252"
+                        entry_w = 0.9
+                        entry_ls = ":"
+                        entry_alpha = 0.40
+                        entry_bg = "#0f3923" if is_buy else "#451a1a"
+                        entry_fg = "#7ec89e" if is_buy else "#c87e7e"
+                        entry_txt = f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
+                        entry_fs = 7.0
+                        z_line, z_badge = 10, 12
+
+                        sl_col = "#cca000" if is_profit_sl else "#8a2a35"
+                        sl_w = 0.8
+                        sl_ls = ":"
+                        sl_alpha = 0.35
+                        sl_bg = "#3a2c10" if is_profit_sl else "#301317"
+                        sl_fg = "#b39860" if is_profit_sl else "#9c6068"
+                        sl_txt = f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) "
+                        sl_fs = 7.0
+
+                        tp_col = "#2a6644"
+                        tp_w = 0.8
+                        tp_ls = ":"
+                        tp_alpha = 0.35
+                        tp_bg = "#112e1e"
+                        tp_fg = "#699e7d"
+                        tp_txt = f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) "
+                        tp_fs = 7.0
+                    else:
+                        # 3. KHÔNG CÓ LỆNH NÀO ĐƯỢC CHỌN: Hiển thị giao diện tiêu chuẩn cân bằng
+                        entry_col = "#00e676" if is_buy else "#ff5252"
+                        entry_w = 1.2
+                        entry_ls = "--"
+                        entry_alpha = 0.90
+                        entry_bg = "#00e676" if is_buy else "#ff5252"
+                        entry_fg = "#000000" if is_buy else "#ffffff"
+                        entry_txt = f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
+                        entry_fs = 7.5
+                        z_line, z_badge = 15, 18
+
+                        sl_col = GOLD_ACCENT if is_profit_sl else "#ff5252"
+                        sl_w = 1.1
+                        sl_ls = ":"
+                        sl_alpha = 0.85
+                        sl_bg = GOLD_ACCENT if is_profit_sl else "#6e1b26"
+                        sl_fg = "#000000" if is_profit_sl else "#ffffff"
+                        sl_txt = f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) "
+                        sl_fs = 7.5
+
+                        tp_col = "#69f0ae"
+                        tp_w = 1.1
+                        tp_ls = ":"
+                        tp_alpha = 0.85
+                        tp_bg = "#69f0ae"
+                        tp_fg = "#000000"
+                        tp_txt = f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) "
+                        tp_fs = 7.5
+
                     # Đường Entry kèm mức giá & số lãi/lỗ hiện tại
-                    self.ax.axhline(y=pos.price_open, color=entry_col, linestyle="--", linewidth=1.2, alpha=0.9)
+                    self.ax.axhline(y=pos.price_open, color=entry_col, linestyle=entry_ls, linewidth=entry_w, alpha=entry_alpha, zorder=z_line)
                     t_ent = self.ax.text(
-                        offset_x, pos.price_open,
-                        f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} ",
-                        color=text_fg, backgroundcolor=entry_col,
-                        fontsize=7.5, fontweight="bold", va="center", clip_on=True
+                        offset_x, pos.price_open, entry_txt,
+                        color=entry_fg, backgroundcolor=entry_bg,
+                        fontsize=entry_fs, fontweight="bold", va="center", clip_on=True, zorder=z_badge
                     )
                     self._pos_text_artists.append((t_ent, idx_p))
 
                     # Đường SL kèm mức giá SL & số lỗ/lãi dự kiến
                     if pos.sl > 0 and not is_sl_at_entry:
-                        sl_pnl = self._calc_target_pnl(pos, pos.sl)
-                        is_profit_sl = (sl_pnl >= 0)
-                        sl_col = GOLD_ACCENT if is_profit_sl else "#ff5252"
-                        self.ax.axhline(y=pos.sl, color=sl_col, linestyle=":", linewidth=1.1, alpha=0.85)
+                        self.ax.axhline(y=pos.sl, color=sl_col, linestyle=sl_ls, linewidth=sl_w, alpha=sl_alpha, zorder=z_line)
                         t_sl = self.ax.text(
-                            offset_x, pos.sl,
-                            f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) ",
-                            color="#000000" if is_profit_sl else "#ffffff",
-                            backgroundcolor=sl_col if is_profit_sl else "#6e1b26",
-                            fontsize=7.5, fontweight="bold", va="center", clip_on=True
+                            offset_x, pos.sl, sl_txt,
+                            color=sl_fg, backgroundcolor=sl_bg,
+                            fontsize=sl_fs, fontweight="bold", va="center", clip_on=True, zorder=z_badge
                         )
                         self._pos_text_artists.append((t_sl, idx_p))
 
                     # Đường TP kèm mức giá TP & số lãi dự kiến
                     if pos.tp > 0 and not is_tp_at_entry:
-                        tp_pnl = self._calc_target_pnl(pos, pos.tp)
-                        self.ax.axhline(y=pos.tp, color="#69f0ae", linestyle=":", linewidth=1.1, alpha=0.85)
+                        self.ax.axhline(y=pos.tp, color=tp_col, linestyle=tp_ls, linewidth=tp_w, alpha=tp_alpha, zorder=z_line)
                         t_tp = self.ax.text(
-                            offset_x, pos.tp,
-                            f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) ",
-                            color="#000000", backgroundcolor="#69f0ae",
-                            fontsize=7.5, fontweight="bold", va="center", clip_on=True
+                            offset_x, pos.tp, tp_txt,
+                            color=tp_fg, backgroundcolor=tp_bg,
+                            fontsize=tp_fs, fontweight="bold", va="center", clip_on=True, zorder=z_badge
                         )
                         self._pos_text_artists.append((t_tp, idx_p))
 
@@ -5497,9 +5627,10 @@ class KronosDesktopApp:
         if self._last_hover_xy is not None:
             self._apply_crosshair_xy(self._last_hover_xy[0], self._last_hover_xy[1])
 
+        sel_sig = tuple(sorted(self._get_selected_tickets_for_profile(self.active_profile_key)))
         pos_sig = (
-            tuple((p.ticket, round(p.sl, 2), round(p.tp, 2)) for p in open_positions)
-            if open_positions else ()
+            (tuple((p.ticket, round(p.sl, 2), round(p.tp, 2)) for p in open_positions) if open_positions else ()),
+            sel_sig
         )
         pb_sig = (
             (self.pending_pullback_order["action"], round(self.pending_pullback_order["sl_price"], 2))
