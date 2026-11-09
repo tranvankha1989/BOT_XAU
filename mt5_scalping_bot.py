@@ -4395,7 +4395,7 @@ class KronosDesktopApp:
                                 txt_artist.set_text(f" {prefix}Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
 
                     mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
-                    zoom_hint = " [Đang Co giãn/Di chuyển - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {len(self._chart_hist_df)} nến — Lăn chuột: Co giãn nến | Kéo: Di chuyển]"
+                    zoom_hint = " [Nháy đúp để Reset]" if self.user_zoomed else ""
                     if self.chart_mode == "AI_FORECAST" and active_tf != ana_tf:
                         zoom_hint = f" [⚠ Nến dự báo AI thuộc khung {ana_tf} — bấm nút {ana_tf} để xem]"
                     self.ax.set_title(
@@ -5601,7 +5601,7 @@ class KronosDesktopApp:
         )
 
         mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
-        zoom_hint = " [Đang Co giãn/Di chuyển - Nháy đúp để Reset]" if self.user_zoomed else f" [Đã nạp {n_hist} nến — Lăn chuột: Co giãn nến | Kéo: Di chuyển]"
+        zoom_hint = " [Nháy đúp để Reset]" if self.user_zoomed else ""
         ana_tf_hint = self.analysis_tf_var.get().strip()
         if self.chart_mode == "AI_FORECAST" and tf != ana_tf_hint:
             zoom_hint = f" [⚠ Nến dự báo AI thuộc khung {ana_tf_hint} — bấm nút {ana_tf_hint} để xem]"
