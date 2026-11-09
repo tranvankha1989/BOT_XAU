@@ -315,7 +315,7 @@ class CollapsibleSection(tk.Frame):
 class KronosDesktopApp:
     def __init__(self, root: tk.Tk, lic_mgr=None):
         self.root = root
-        self.root.title("AI (KhaTran) - Phần Mềm Scalping Vàng & Quản Lý Lệnh Real-Time (MT5 Exness)")
+        self.root.title("Trading AI PRO By Desing Kha Tran — Scalping Vàng & Quản Lý Lệnh Real-Time (MT5 Exness)")
         self.root.geometry("1450x880")
         self.root.configure(bg=BG_DARK)
         self._apply_window_and_taskbar_icon()
@@ -328,6 +328,14 @@ class KronosDesktopApp:
                 self.lic_mgr = None
         else:
             self.lic_mgr = lic_mgr
+
+        try:
+            from kronos_updater import AppUpdater, get_current_app_version
+            self.app_version = get_current_app_version()
+            self.updater = AppUpdater(self.app_version)
+        except Exception:
+            self.app_version = "1.0.1"
+            self.updater = None
 
         self.local_cache = {}
         self.initial_r_cache = {}  # Lưu khoảng cách 1R (|Entry - SL ban đầu|) theo từng ticket
@@ -475,6 +483,7 @@ class KronosDesktopApp:
         self.root.after(150, self.check_mt5_connection)
         self.root.after(350, self.trigger_single_scan)
         self.root.after(1000, self._realtime_tick_loop)
+        self.root.after(2000, self._check_update_on_startup)
 
     def _create_empty_profile_ctx(self, profile_key: str) -> dict:
         """Khởi tạo bộ trạng thái độc lập cho từng Tab (XAUUSD / BTCUSD)."""
@@ -1162,6 +1171,85 @@ class KronosDesktopApp:
         except Exception as e:
             self.log_error("OPEN_LICENSE_DIALOG", e)
 
+    def _check_update_on_startup(self):
+        """Tự động kiểm tra bản cập nhật mới trên GitHub Release khi khởi động ứng dụng."""
+        if not hasattr(self, "updater") or self.updater is None:
+            return
+
+        def _on_res(res):
+            if res.get("has_update"):
+                self._latest_update_info = res
+                self._ui_after(0, lambda: self._start_version_badge_blink(res.get("latest_version")))
+
+        self.updater.check_update_async(_on_res)
+
+    def _start_version_badge_blink(self, latest_ver: str):
+        """Bật hiệu ứng nhấp nháy chữ trên nút phiên bản khi có bản cập nhật mới."""
+        self._has_new_version = True
+        self._new_version_tag = latest_ver
+        self._version_blink_state = False
+        self._run_version_badge_blink()
+
+    def _run_version_badge_blink(self):
+        if not getattr(self, "_has_new_version", False):
+            return
+        if not hasattr(self, "version_badge_btn") or not self.version_badge_btn.winfo_exists():
+            return
+
+        self._version_blink_state = not self._version_blink_state
+        if self._version_blink_state:
+            self.version_badge_btn.config(
+                text=f"Có bản cập nhật v{self._new_version_tag}!",
+                bg="#78350f",
+                fg="#fef08a",
+                activebackground="#92400e",
+                activeforeground="#fef08a",
+            )
+        else:
+            self.version_badge_btn.config(
+                text=f"Có bản cập nhật v{self._new_version_tag}!",
+                bg="#451a03",
+                fg="#f59e0b",
+                activebackground="#78350f",
+                activeforeground="#fde047",
+            )
+        self._version_blink_after_id = self.root.after(600, self._run_version_badge_blink)
+
+    def _on_click_version_badge(self):
+        """Mở cửa sổ giới thiệu tính năng của bản cập nhật mới hoặc kiểm tra phiên bản thủ công."""
+        if not hasattr(self, "updater") or self.updater is None:
+            try:
+                from kronos_updater import AppUpdater, get_current_app_version
+                self.app_version = get_current_app_version()
+                self.updater = AppUpdater(self.app_version)
+            except Exception:
+                return
+
+        if getattr(self, "_has_new_version", False) and getattr(self, "_latest_update_info", None):
+            from kronos_updater import show_update_modal
+            show_update_modal(self.root, self.updater, self._latest_update_info)
+        else:
+            self.version_badge_btn.config(text="Đang kiểm tra...", fg="#38bdf8")
+
+            def _on_checked(res):
+                def _ui():
+                    if res.get("has_update"):
+                        self._latest_update_info = res
+                        self._start_version_badge_blink(res.get("latest_version"))
+                        from kronos_updater import show_update_modal
+                        show_update_modal(self.root, self.updater, res)
+                    else:
+                        self.version_badge_btn.config(
+                            text=f"Phiên bản mới nhất  v{self.app_version}  🔄",
+                            bg="#064e3b",
+                            fg="#10b981",
+                        )
+                        self.show_toast(f"Bạn đang sử dụng phiên bản mới nhất (v{self.app_version}).", is_error=False, duration_ms=2500)
+
+                self._ui_after(0, _ui)
+
+            self.updater.check_update_async(_on_checked)
+
     def _setup_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
@@ -1206,13 +1294,42 @@ class KronosDesktopApp:
         self.menu_toggle_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         app_title_lbl = tk.Label(
-            top_bar, text="AI (KhaTran) — Scalping Vàng & Quản Lý Lệnh Real-Time",
+            top_bar, text="Trading AI PRO By Desing Kha Tran",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold")
         )
-        app_title_lbl.pack(side=tk.LEFT, padx=(0, 10))
+        app_title_lbl.pack(side=tk.LEFT, padx=(0, 8))
         app_title_lbl.bind("<ButtonPress-1>", self._start_win_drag)
         app_title_lbl.bind("<B1-Motion>", self._on_win_drag)
         app_title_lbl.bind("<Double-Button-1>", self._toggle_maximize_window)
+
+        # Nút Huy hiệu Phiên bản & Kiểm tra cập nhật (Capsule Button - Xanh lá)
+        self.version_badge_btn = tk.Button(
+            top_bar,
+            text=f"Phiên bản mới nhất  v{self.app_version}  🔄",
+            bg="#064e3b",
+            fg="#10b981",
+            activebackground="#047857",
+            activeforeground="#34d399",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT,
+            padx=8,
+            pady=2,
+            cursor="hand2",
+            command=self._on_click_version_badge,
+        )
+        self.version_badge_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self.version_badge_btn.bind(
+            "<Enter>",
+            lambda e: self.version_badge_btn.config(bg="#047857")
+            if not getattr(self, "_has_new_version", False)
+            else None
+        )
+        self.version_badge_btn.bind(
+            "<Leave>",
+            lambda e: self.version_badge_btn.config(bg="#064e3b")
+            if not getattr(self, "_has_new_version", False)
+            else None
+        )
 
         # Cụm 3 nút tròn Thu Phóng & Đóng cửa sổ chuẩn MacBook ở góc trên bên phải (Thay cho — □ ✕ vuông của Windows)
         self.mac_win_ctrl_canvas = tk.Canvas(
