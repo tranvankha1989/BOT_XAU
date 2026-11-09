@@ -1645,7 +1645,7 @@ class KronosDesktopApp:
         self.bot_status_frame.pack(fill=tk.X, pady=(4, 0))
 
         self.bot_status_icon_lbl = tk.Label(
-            self.bot_status_frame, text="⚪", bg="#121824", font=("Segoe UI", 9)
+            self.bot_status_frame, text="●", bg="#121824", fg="#64748b", font=("Segoe UI", 8)
         )
         self.bot_status_icon_lbl.pack(side=tk.LEFT, padx=(0, 5))
 
@@ -1729,7 +1729,7 @@ class KronosDesktopApp:
 
         # TAB 0 (Mặc định khi mở App): XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
         pos_tab_xau = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
-        self.bottom_notebook.add(pos_tab_xau, text="⚡ XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)")
+        self.bottom_notebook.add(pos_tab_xau, text="XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)")
         self._build_positions_tab_ui(pos_tab_xau, "XAUUSD")
 
         # TAB 1 (Tab mới): BTCUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
@@ -2519,7 +2519,7 @@ class KronosDesktopApp:
                     mt5.shutdown()
         except Exception:
             pass
-        self._write_file_log("🛑 Đã đóng ứng dụng an toàn và giải phóng toàn bộ tiến trình chạy ngầm.")
+        self._write_file_log("Đã đóng ứng dụng an toàn và giải phóng toàn bộ tiến trình chạy ngầm.")
         self._release_active_instance_lock()
         self._cleanup_workspace_junk()
         try:
@@ -2942,7 +2942,7 @@ class KronosDesktopApp:
                 self.cross_time_annot.set_visible(True)
             if hasattr(self, "ohlc_hover_lbl"):
                 self.ohlc_hover_lbl.config(
-                    text=f"🤖 [Dự báo AI {ts_full}]  |  O: {o:.2f}   H: {h:.2f}   L: {l:.2f}   C: {c:.2f} ({chg:+.2f}$)",
+                    text=f"[Dự báo AI {ts_full}]  |  O: {o:.2f}   H: {h:.2f}   L: {l:.2f}   C: {c:.2f} ({chg:+.2f}$)",
                     fg=GOLD_ACCENT
                 )
         else:
@@ -3392,17 +3392,17 @@ class KronosDesktopApp:
                 is_sl_loss = ("[sl" in cmt or "sl" in cmt) and (net_pnl < -0.05)
 
                 if "[tp" in cmt:
-                    status = f"✅ ĐÃ CHỐT TP ({close_t})"
+                    status = f"ĐÃ CHỐT TP ({close_t})"
                 elif "[sl" in cmt and net_pnl > 0.05:
-                    status = f"🛡️ DỜI SL CHỐT LÃI ({close_t})"
+                    status = f"DỜI SL CHỐT LÃI ({close_t})"
                 elif "[sl" in cmt and net_pnl < -0.05:
-                    status = f"🛑 ĐÃ CẮT LỖ SL ({close_t})"
+                    status = f"ĐÃ CẮT LỖ SL ({close_t})"
                 elif abs(net_pnl) <= 0.05:
-                    status = f"🛡️ HÒA VỐN ({close_t})"
+                    status = f"HÒA VỐN ({close_t})"
                 elif net_pnl > 0.05:
-                    status = f"✅ ĐÃ CHỐT LÃI ({close_t})"
+                    status = f"ĐÃ CHỐT LÃI ({close_t})"
                 else:
-                    status = f"🛑 ĐÃ ĐÓNG LỖ ({close_t})"
+                    status = f"ĐÃ ĐÓNG LỖ ({close_t})"
 
                 closed_items.append({
                     "ticket": d.position_id,
@@ -3469,14 +3469,14 @@ class KronosDesktopApp:
                 ctx["cooldown_until"] = None
                 if pk == self.active_profile_key:
                     self.cooldown_until = None
-                self.log(f"🔓 [{pk}] Đã tắt bộ đếm tạm ngừng sau chuỗi thua (do thông số cài = 0).")
+                self.log(f"[{pk}] Đã tắt bộ đếm tạm ngừng sau chuỗi thua (thông số = 0).")
         else:
             if ctx["cooldown_until"] is not None and datetime.now() >= ctx["cooldown_until"]:
                 ctx["cooldown_until"] = None
                 if pk == self.active_profile_key:
                     self.cooldown_until = None
-                self.log(f"▶️ [{pk}] ĐÃ HẾT THỜI GIAN TẠM NGHỈ CHUỖI THUA! Bot tự động 100% tiếp tục canh nến và vào lệnh (AUTO vẫn BẬT, không cần gạt lại công tắc).")
-                self.show_toast(f"▶️ [{pk}] Hết tạm nghỉ chuỗi thua -> Bot tự động tiếp tục giao dịch!", is_error=False, duration_ms=3000)
+                self.log(f"[{pk}] Hết thời gian tạm nghỉ chuỗi thua -> Tiếp tục giao dịch tự động.")
+                self.show_toast(f"[{pk}] Hết tạm nghỉ chuỗi thua -> Tự động tiếp tục!", is_error=False, duration_ms=2500)
                 if is_auto_active and not ctx.get("is_analyzing", False):
                     self.enqueue_ai_scan(profile_key=pk, reason="COOLDOWN_EXPIRED")
 
@@ -3491,8 +3491,8 @@ class KronosDesktopApp:
                         ctx["cooldown_until"] = datetime.now() + timedelta(seconds=rem_sec)
                         ctx["pending_pullback_order"] = None
                         self.log(
-                            f"⏸️ [{pk} - Tạm Ngừng Chuỗi Thua] Đã thua liên tiếp {consec_losses} lệnh (>= {max_consec_loss} lệnh) -> "
-                            f"Tạm ngừng vào lệnh {cooldown_mins:.0f} phút (đến {ctx['cooldown_until'].strftime('%H:%M:%S')})! Hết thời gian sẽ TỰ ĐỘNG chạy lại."
+                            f"[{pk} - Tạm nghỉ chuỗi thua] Thua liên tiếp {consec_losses} lệnh -> "
+                            f"Tạm nghỉ {cooldown_mins:.0f}p (đến {ctx['cooldown_until'].strftime('%H:%M:%S')})."
                         )
 
         # 1.5. Xử lý Tạm ngừng khi có lệnh dính SL < 5 phút (= 0 là tắt)
@@ -3501,14 +3501,14 @@ class KronosDesktopApp:
                 ctx["fast_sl_cooldown_until"] = None
                 if pk == self.active_profile_key:
                     self.fast_sl_cooldown_until = None
-                self.log(f"🔓 [{pk}] Đã tắt tạm nghỉ do SL < 5 phút (do thông số cài = 0).")
+                self.log(f"[{pk}] Đã tắt tạm nghỉ do SL < 5 phút (thông số = 0).")
         else:
             if ctx.get("fast_sl_cooldown_until") is not None and datetime.now() >= ctx["fast_sl_cooldown_until"]:
                 ctx["fast_sl_cooldown_until"] = None
                 if pk == self.active_profile_key:
                     self.fast_sl_cooldown_until = None
-                self.log(f"▶️ [{pk}] ĐÃ HẾT THỜI GIAN TẠM NGHỈ SL < 5 PHÚT! Bot tự động 100% tiếp tục canh nến và vào lệnh (AUTO vẫn BẬT, không cần gạt lại công tắc).")
-                self.show_toast(f"▶️ [{pk}] Hết tạm nghỉ SL < 5p -> Bot tự động tiếp tục giao dịch!", is_error=False, duration_ms=3000)
+                self.log(f"[{pk}] Hết thời gian tạm nghỉ SL < 5p -> Tiếp tục giao dịch tự động.")
+                self.show_toast(f"[{pk}] Hết tạm nghỉ SL < 5p -> Tự động tiếp tục!", is_error=False, duration_ms=2500)
                 if is_auto_active and not ctx.get("is_analyzing", False):
                     self.enqueue_ai_scan(profile_key=pk, reason="COOLDOWN_EXPIRED")
 
@@ -3528,13 +3528,13 @@ class KronosDesktopApp:
                             ctx["pending_pullback_order"] = None
                             dur_display = cd.get("duration", f"{cd.get('duration_sec', 0)}s")
                             self.log(
-                                f"⚡ [{pk} - TẠM NGHỈ SL < 5 PHÚT] Lệnh #{last_ticket} dính SL sau chỉ {dur_display} (< 5 phút, Lỗ: {cd.get('net_pnl', 0.0):+.2f}$) -> "
-                                f"Tạm ngừng giao dịch {fast_sl_cd_mins:.0f} phút (đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')})! Hết thời gian sẽ TỰ ĐỘNG chạy lại."
+                                f"[{pk} - Tạm nghỉ SL < 5p] Lệnh #{last_ticket} dính SL sau {dur_display} (Lỗ: {cd.get('net_pnl', 0.0):+.2f}$) -> "
+                                f"Tạm nghỉ {fast_sl_cd_mins:.0f}p (đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')})."
                             )
                             self.show_toast(
-                                f"⚡ [{pk}] Lệnh #{last_ticket} SL sau {dur_display} (< 5p) -> Tạm nghỉ {fast_sl_cd_mins:.0f} phút (Tự động mở lại)!",
+                                f"[{pk}] Lệnh #{last_ticket} SL sau {dur_display} (< 5p) -> Tạm nghỉ {fast_sl_cd_mins:.0f}p (Tự động mở lại)",
                                 is_error=True,
-                                duration_ms=4000
+                                duration_ms=3000
                             )
                     break
 
@@ -3543,8 +3543,8 @@ class KronosDesktopApp:
             ctx["basket_cooldown_until"] = None
             if pk == self.active_profile_key:
                 self.basket_cooldown_until = None
-            self.log(f"▶️ [{pk}] ĐÃ HẾT THỜI GIAN NGHỈ SAU CHỐT CHÙM! Bot tự động 100% tiếp tục canh nến và vào lệnh (AUTO vẫn BẬT, không cần gạt lại công tắc).")
-            self.show_toast(f"▶️ [{pk}] Hết tạm nghỉ chốt chùm -> Bot tự động tiếp tục giao dịch!", is_error=False, duration_ms=3000)
+            self.log(f"[{pk}] Hết thời gian nghỉ sau chốt chùm -> Tiếp tục giao dịch tự động.")
+            self.show_toast(f"[{pk}] Hết tạm nghỉ chốt chùm -> Tự động tiếp tục!", is_error=False, duration_ms=2500)
             if is_auto_active and not ctx.get("is_analyzing", False):
                 self.enqueue_ai_scan(profile_key=pk, reason="COOLDOWN_EXPIRED")
 
@@ -3555,7 +3555,7 @@ class KronosDesktopApp:
             if pk == self.active_profile_key:
                 self.daily_limit_locked_date = None
                 self.daily_limit_reason = ""
-            self.log(f"🌅 [{pk}] Đã sang ngày giao dịch mới theo giờ Việt Nam (00:00 GMT+7)! Tự động mở khóa giao dịch (AUTO vẫn BẬT, không cần gạt lại công tắc).")
+            self.log(f"[{pk}] Sang ngày giao dịch mới (00:00 GMT+7) -> Mở lại giao dịch tự động.")
             if is_auto_active and not ctx.get("is_analyzing", False):
                 self.enqueue_ai_scan(profile_key=pk, reason="NEW_DAY_UNLOCKED")
 
@@ -3595,7 +3595,7 @@ class KronosDesktopApp:
             if positions:
                 for pos in positions:
                     self._close_single_pos(pos)
-            self.log(f"🛑 [{pk} - QUẢN LÝ VỐN NGÀY] {ctx['daily_limit_reason']} -> Đã đóng toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
+            self.log(f"[{pk} - Quản lý vốn ngày] {ctx['daily_limit_reason']} -> Đã đóng toàn bộ lệnh {symbol} & dừng giao dịch hôm nay.")
 
         if pk == self.active_profile_key:
             self.cached_daily_pnl = ctx["cached_daily_pnl"]
@@ -3637,15 +3637,15 @@ class KronosDesktopApp:
             losses = self.consec_loss_count if pk == self.active_profile_key else ctx.get("consec_loss_count", 0)
             rem = max(0, int((cd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"⏸️ Nghỉ sau {losses} lệnh thua ({m:02d}p:{s:02d}s)")
+            parts.append(f"Thua {losses} lệnh ({m:02d}p:{s:02d}s)")
         if bcd is not None and now < bcd:
             rem = max(0, int((bcd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"☕ Nghỉ sau chốt chùm ({m:02d}p:{s:02d}s)")
+            parts.append(f"Sau chốt chùm ({m:02d}p:{s:02d}s)")
         if fscd is not None and now < fscd:
             rem = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"⚡ Nghỉ do SL < 5p ({m:02d}p:{s:02d}s)")
+            parts.append(f"SL < 5p ({m:02d}p:{s:02d}s)")
         return " | ".join(parts)
 
     def _get_profile_magic_number(self, profile_key: str = None) -> int:
@@ -3733,7 +3733,7 @@ class KronosDesktopApp:
                     if res is not None and res.retcode in done_codes:
                         if attempt > 1:
                             self._write_file_log(
-                                f"✅ [MT5_RETRY_OK - {context_tag}] Thành công ở lần thử {attempt}/{max_retries} ({symbol}, ticket={getattr(res, 'order', 0)})"
+                                f"[MT5_RETRY_OK - {context_tag}] Thành công ở lần thử {attempt}/{max_retries} ({symbol}, ticket={getattr(res, 'order', 0)})"
                             )
                         return True, res, ""
 
@@ -3745,7 +3745,7 @@ class KronosDesktopApp:
                 cmt = getattr(last_res, "comment", "")
                 if attempt < max_retries and (last_res is None or rc in retryable_codes):
                     self._write_file_log(
-                        f"⏳ [MT5_RETRY {attempt}/{max_retries} - {context_tag}] Sàn bận/nhảy giá ({symbol}, code={rc}, comment={cmt}) -> Đang lấy giá mới thử lại...",
+                        f"[MT5_RETRY {attempt}/{max_retries} - {context_tag}] Sàn bận/nhảy giá ({symbol}, code={rc}, comment={cmt}) -> Lấy giá mới thử lại...",
                         is_error=True
                     )
                     continue
@@ -3853,7 +3853,7 @@ class KronosDesktopApp:
                 if pk == self.active_profile_key:
                     self.pending_pullback_order = p
                 return
-            self.log(f"🎯 [{pk} - Khớp Lệnh Chờ Hồi SL ≤ {max_sl_cap:.2f} giá (Đạt RR ≥ 2R)] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f} giá) -> {ord_msg}")
+            self.log(f"[{pk} - Khớp Lệnh Chờ Hồi SL <= {max_sl_cap:.2f}$ (RR >= 2R)] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f}$) -> {ord_msg}")
 
     def _update_left_quick_info(self, symbol, tf_str, tick, pos_count, total_profit):
         bid_str = f"{tick.bid:.2f}" if tick else "---"
@@ -3871,8 +3871,8 @@ class KronosDesktopApp:
                 except (ValueError, TypeError):
                     max_sl_p = 5.0
                 lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
-                rr_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
-                ai_state = f"⏳ Chờ hồi {p['action']}{rr_tag} @ {lim_entry:.2f}"
+                rr_tag = " (RR>=2R)" if p.get("sl_tightened_for_2r") else ""
+                ai_state = f"Chờ hồi {p['action']}{rr_tag} @ {lim_entry:.2f}"
             else:
                 ai_state = "Đã có dự báo AI"
             trend_str = self.cached_action if self.cached_action else "ĐỨNG NGOÀI (WAIT)"
@@ -3886,9 +3886,9 @@ class KronosDesktopApp:
 
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
         tf_display = f"{tf_str}" if ana_tf == tf_str else f"AI:{ana_tf} -> Scalp:{tf_str}"
-        bot_run_state = f"🟢 ĐANG CHẠY (Canh {tf_str})" if self.auto_loop_running else "⚪ ĐANG DỪNG (Tắt Auto)"
+        bot_run_state = f"● ĐANG CHẠY (Canh {tf_str})" if self.auto_loop_running else "● ĐANG DỪNG (Tắt Auto)"
         if self._is_daily_limit_locked():
-            cap_state = f"🔒 {self.daily_limit_reason}"
+            cap_state = f"{self.daily_limit_reason}"
         elif self._is_cooldown_active():
             cap_state = self._get_cooldown_remaining_str()
         else:
@@ -4072,56 +4072,56 @@ class KronosDesktopApp:
                 or (pos.tp > 0 and (abs(pos.tp - be_target_price) < eps_eq or abs(pos.tp - entry_exact) < eps_eq))
             )
             if is_waiting_be_exit:
-                status_str = f"⏳ Chờ về {be_label_tag} thoát ({current_r:+.2f}R)"
+                status_str = f"Chờ về {be_label_tag} thoát ({current_r:+.2f}R)"
                 # Nếu giá đã hồi về chạm/vượt mức Entry + lãi nhỏ (be_target_price) mà sàn chưa khớp TP -> Đóng ngay lập tức
                 if price_move >= be_plus_price and (pos.profit >= 0.0 or be_plus_price > 0.0):
                     ok_be, msg_be = self._close_single_pos(pos)
                     if ok_be:
                         self.pending_be_exit_tickets.discard(pos.ticket)
-                        self.log(f"🛡️ [{pk} - Quy tắc 3 - Thoát {be_label_tag}] Giá đã hồi về {be_target_price:.2f} -> {msg_be}")
+                        self.log(f"[{pk} - Thoát {be_label_tag}] Giá hồi về {be_target_price:.2f} -> {msg_be}")
                         continue
                 # Nếu TP chưa được đặt về be_target_price (do lúc trước giá quá sát), tự động đặt TP = be_target_price khi đủ khoảng cách
                 elif abs(pos.tp - be_target_price) >= eps_eq and abs(pos.price_current - be_target_price) > min_stop_d:
                     if (is_buy and pos.price_current < be_target_price - min_stop_d) or ((not is_buy) and pos.price_current > be_target_price + min_stop_d):
                         if self._modify_position_sltp(pos, pos.sl, be_target_price):
-                            self.log(f"🎯 [{pk} - Quy tắc 3] Đã cập nhật TP lệnh #{pos.ticket} về {be_label_tag} ({be_target_price:.2f}) để tự thoát có lãi nhẹ")
+                            self.log(f"[{pk} - Quy tắc 3] Đặt TP lệnh #{pos.ticket} về {be_label_tag} ({be_target_price:.2f})")
 
             if is_buy:
                 if abs(pos.sl - be_target_price) < eps_eq or abs(pos.sl - entry_exact) < eps_eq:
-                    status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
+                    status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
                 elif pos.sl > be_target_price:
-                    status_str = f"📈 Trailing ({current_r:+.2f}R)"
+                    status_str = f"Trailing ({current_r:+.2f}R)"
 
                 if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < be_target_price - eps_eq * 0.5):
                     if be_target_price < pos.price_current - min_stop_d:
                         if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                            self.log(f"🛡️ [{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Đã dời SL lệnh BUY #{pos.ticket} lên {be_target_price:.2f} (+{be_plus_price:g} giá)")
-                            status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
+                            self.log(f"[{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Nâng SL BUY #{pos.ticket} lên {be_target_price:.2f} (+{be_plus_price:g} giá)")
+                            status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current - trail_dist_price, digits)
                     if desired_sl > be_target_price and desired_sl > pos.sl + min_trail_step and desired_sl < pos.price_current - min_stop_d:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
-                            self.log(f"📈 [{pk} - Trailing {current_r:.2f}R] Đã nâng SL lệnh BUY #{pos.ticket} lên {desired_sl:.2f}")
-                            status_str = f"📈 Trailing ({current_r:+.2f}R)"
+                            self.log(f"[{pk} - Trailing {current_r:.2f}R] Nâng SL BUY #{pos.ticket} lên {desired_sl:.2f}")
+                            status_str = f"Trailing ({current_r:+.2f}R)"
             else:
                 if pos.sl > 0 and (abs(pos.sl - be_target_price) < eps_eq or abs(pos.sl - entry_exact) < eps_eq):
-                    status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
+                    status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
                 elif 0 < pos.sl < be_target_price:
-                    status_str = f"📉 Trailing ({current_r:+.2f}R)"
+                    status_str = f"Trailing ({current_r:+.2f}R)"
 
                 if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > be_target_price + eps_eq * 0.5):
                     if be_target_price > pos.price_current + min_stop_d:
                         if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                            self.log(f"🛡️ [{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {be_target_price:.2f} (+{be_plus_price:g} giá)")
-                            status_str = f"🛡️ SL = {be_label_tag} ({current_r:+.2f}R)"
+                            self.log(f"[{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Kéo SL SELL #{pos.ticket} xuống {be_target_price:.2f} (+{be_plus_price:g} giá)")
+                            status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current + trail_dist_price, digits)
                     if desired_sl < be_target_price and (pos.sl == 0 or desired_sl < pos.sl - min_trail_step) and desired_sl > pos.price_current + min_stop_d:
                         if self._modify_position_sltp(pos, desired_sl, pos.tp):
-                            self.log(f"📉 [{pk} - Trailing {current_r:.2f}R] Đã kéo SL lệnh SELL #{pos.ticket} xuống {desired_sl:.2f}")
-                            status_str = f"📉 Trailing ({current_r:+.2f}R)"
+                            self.log(f"[{pk} - Trailing {current_r:.2f}R] Kéo SL SELL #{pos.ticket} xuống {desired_sl:.2f}")
+                            status_str = f"Trailing ({current_r:+.2f}R)"
 
             tag = "profit_pos" if pos.profit >= 0 else "profit_neg"
             item_id = tree_widget.insert(
@@ -4184,7 +4184,7 @@ class KronosDesktopApp:
         daily_pnl_val = self.cached_daily_pnl if pk == self.active_profile_key else ctx.get("cached_daily_pnl", 0.0)
         daily_reason_val = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
         is_locked = self._is_daily_limit_locked(pk)
-        daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
+        daily_lock_tag = f"  |  ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
         closed_count = len(closed_deals)
         win_count = sum(1 for cd in closed_deals if cd.get("net_pnl", 0.0) > 0.05)
         loss_count = sum(1 for cd in closed_deals if cd.get("net_pnl", 0.0) < -0.05)
@@ -4254,7 +4254,7 @@ class KronosDesktopApp:
             ok, _, err_detail = self._send_mt5_order_with_retry(req, pos.symbol, context_tag=f"CLOSE_POS_#{pos.ticket}", max_retries=3)
             if not ok:
                 return False, f"Không đóng được #{pos.ticket} ({err_detail})"
-            return True, f"✅ Đã đóng lệnh #{pos.ticket} ({pos.symbol}) | Lãi/Lỗ: {pos.profit:+.2f}$"
+            return True, f"Đã đóng lệnh #{pos.ticket} ({pos.symbol}) | Lãi/Lỗ: {pos.profit:+.2f}$"
 
     def breakeven_all_positions(self):
         """Dời SL về giá Entry + khoản lãi nhỏ (be_plus_price) cho các lệnh đang có lãi của mã giao dịch."""
@@ -4341,10 +4341,10 @@ class KronosDesktopApp:
                 if pk == self.active_profile_key:
                     self.pending_pullback_order = None
                 cd_end_str = ctx["basket_cooldown_until"].strftime("%H:%M:%S")
-                self.log(f"☕ [{pk}] Tạm nghỉ vào lệnh mới {cooldown_m:g} phút sau khi chốt chùm (đến {cd_end_str}).")
-                self.show_toast(f"🎉 [{pk}] Chốt chùm +{total_profit:.2f}$! Tạm nghỉ {cooldown_m:g}p.", is_error=False, duration_ms=4000)
+                self.log(f"[{pk}] Tạm nghỉ vào lệnh mới {cooldown_m:g} phút sau khi chốt chùm (đến {cd_end_str}).")
+                self.show_toast(f"[{pk}] Chốt chùm +{total_profit:.2f}$! Tạm nghỉ {cooldown_m:g}p.", is_error=False, duration_ms=3000)
             else:
-                self.show_toast(f"🎉 [{pk}] Chốt chùm +{total_profit:.2f}$ ({closed_cnt} lệnh) thành công!", is_error=False, duration_ms=3000)
+                self.show_toast(f"[{pk}] Chốt chùm +{total_profit:.2f}$ ({closed_cnt} lệnh) thành công!", is_error=False, duration_ms=2500)
         except Exception as e:
             self.log_error("BASKET_TP_CLOSE", e)
         finally:
@@ -4777,7 +4777,7 @@ class KronosDesktopApp:
                         return False, f"⚠️ {lic_st.get('message', 'Bản quyền chưa kích hoạt hoặc đã hết hạn!')}"
                 if self._is_daily_limit_locked(pk):
                     reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-                    return False, f"🔒 Đã tự động dừng giao dịch hết hôm nay ({reason})."
+                    return False, f"Đã tự động dừng giao dịch hết hôm nay ({reason})."
                 if self._is_cooldown_active(pk):
                     return False, f"{self._get_cooldown_remaining_str(pk)} — Chưa được phép vào lệnh mới."
 
@@ -4901,7 +4901,7 @@ class KronosDesktopApp:
                 ticket_id = getattr(result, "order", 0) or getattr(result, "deal", 0)
                 return (
                     True,
-                    f"✅ [{pk}] ĐÃ KHỚP LỆNH #{ticket_id} ({action} {lot} lot {symbol} @ {exec_price:.2f}) | "
+                    f"[{pk}] ĐÃ KHỚP LỆNH #{ticket_id} ({action} {lot} lot {symbol} @ {exec_price:.2f}) | "
                     f"SL: {sl_price:.2f} (-{actual_sl_dist:.2f} giá) | TP: {tp_price:.2f} | Magic: {magic_num}"
                 )
         finally:
@@ -4963,7 +4963,7 @@ class KronosDesktopApp:
             try:
                 wait_sec = max(0.0, time.monotonic() - enq_mono)
                 if wait_sec >= 0.25:
-                    self.log(f"▶️ [HÀNG ĐỢI AI - {pk}] Tới lượt phân tích AI (sau {wait_sec:.1f}s xếp hàng chờ)...")
+                    self.log(f"[HÀNG ĐỢI AI - {pk}] Tới lượt phân tích AI (sau {wait_sec:.1f}s xếp hàng)...")
                 self._run_analysis_worker(profile_key=pk, reason=reason, closed_candle_ts=closed_candle_ts)
             except Exception as e:
                 self.log_error(f"AI_QUEUE_WORKER_{pk}", e)
@@ -5000,10 +5000,10 @@ class KronosDesktopApp:
         # 1. Khóa do chạm giới hạn Lãi ngày / Cắt lỗ ngày
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-            icon = "🔒"
-            status_text = f"[{pk}] ĐÃ DỪNG GIAO DỊCH HÔM NAY — {reason}"
+            icon = "●"
+            status_text = f"[{pk}] Dừng hôm nay: {reason}"
             fg_color = GOLD_ACCENT if "LÃI" in reason.upper() else "#f87171"
-            countdown_text = "🌅 Tự động mở lúc 00:00 (VN)"
+            countdown_text = "Mở lại 00:00"
             cd_fg = GOLD_ACCENT
 
         # 2. Tạm nghỉ do lệnh dính SL < 5 phút
@@ -5011,10 +5011,10 @@ class KronosDesktopApp:
             rem_sec = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
             end_time_str = fscd.strftime("%H:%M:%S")
-            icon = "⚡"
-            status_text = f"[{pk}] TẠM NGHỈ DO LỆNH SL < 5 PHÚT — Sẽ TỰ ĐỘNG chạy lại sau {m:02d}p:{s:02d}s (lúc {end_time_str}, không cần gạt lại công tắc)"
-            fg_color = "#f59e0b"  # Vàng cam cảnh báo
-            countdown_text = f"⏱️ Còn: {m:02d}p:{s:02d}s"
+            icon = "●"
+            status_text = f"[{pk}] Tạm nghỉ: SL < 5p (Mở lại {end_time_str})"
+            fg_color = "#f59e0b"
+            countdown_text = f"{m:02d}p:{s:02d}s"
             cd_fg = "#fcd34d"
 
         # 3. Tạm nghỉ sau chuỗi thua liên tiếp
@@ -5023,10 +5023,10 @@ class KronosDesktopApp:
             rem_sec = max(0, int((cd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
             end_time_str = cd.strftime("%H:%M:%S")
-            icon = "⏸️"
-            status_text = f"[{pk}] TẠM NGHỈ CHUỖI THUA ({losses} lệnh) — Sẽ TỰ ĐỘNG chạy lại sau {m:02d}p:{s:02d}s (lúc {end_time_str}, không cần gạt lại công tắc)"
-            fg_color = "#f87171"  # Đỏ cam
-            countdown_text = f"⏱️ Còn: {m:02d}p:{s:02d}s"
+            icon = "●"
+            status_text = f"[{pk}] Tạm nghỉ: Thua {losses} lệnh (Mở lại {end_time_str})"
+            fg_color = "#f87171"
+            countdown_text = f"{m:02d}p:{s:02d}s"
             cd_fg = "#fca5a5"
 
         # 4. Tạm nghỉ sau khi chốt lời chùm lệnh
@@ -5034,10 +5034,10 @@ class KronosDesktopApp:
             rem_sec = max(0, int((bcd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
             end_time_str = bcd.strftime("%H:%M:%S")
-            icon = "☕"
-            status_text = f"[{pk}] TẠM NGHỈ SAU CHỐT CHÙM — Sẽ TỰ ĐỘNG chạy lại sau {m:02d}p:{s:02d}s (lúc {end_time_str}, không cần gạt lại công tắc)"
+            icon = "●"
+            status_text = f"[{pk}] Tạm nghỉ: Sau chốt chùm (Mở lại {end_time_str})"
             fg_color = "#38bdf8"
-            countdown_text = f"⏱️ Còn: {m:02d}p:{s:02d}s"
+            countdown_text = f"{m:02d}p:{s:02d}s"
             cd_fg = "#7dd3fc"
 
         # 5. Đang có lệnh Chờ Giá Hồi (Pullback)
@@ -5047,34 +5047,34 @@ class KronosDesktopApp:
             p_max_sl = pending_pullback.get("effective_max_sl", float(cfg.get("max_sl_price", 5.0)))
             p_target = (p_sl + p_max_sl) if p_act == "BUY" else (p_sl - p_max_sl)
             cond_str = "<=" if p_act == "BUY" else ">="
-            rr_tag = " [Siết RR ≥ 2R]" if pending_pullback.get("sl_tightened_for_2r") else ""
-            icon = "⏳"
-            status_text = f"[{pk}] ĐANG CHỜ GIÁ HỒI VÀO LỆNH {p_act}{rr_tag} — Cần hồi về {cond_str} {p_target:.2f} (Cách SL ≤ {p_max_sl:.2f} giá)"
-            fg_color = "#06b6d4"  # Cyan
-            countdown_text = "🎯 Đang rình Entry"
+            rr_tag = " [RR>=2R]" if pending_pullback.get("sl_tightened_for_2r") else ""
+            icon = "●"
+            status_text = f"[{pk}] Chờ hồi {p_act}: {cond_str} {p_target:.2f} (SL <= {p_max_sl:.2f}$){rr_tag}"
+            fg_color = "#06b6d4"
+            countdown_text = "Rình Entry"
             cd_fg = GOLD_ACCENT
 
         # 6. Bot AUTO đang BẬT (RUNNING)
         elif is_running:
-            icon = "🟢"
-            status_text = f"[{pk}] BOT ĐANG CHẠY TỰ ĐỘNG — Đang canh nến {scalp_tf} & tín hiệu AI để vào lệnh"
-            fg_color = "#10b981"  # Xanh ngọc
+            icon = "●"
+            status_text = f"[{pk}] Đang chạy tự động — Canh nến {scalp_tf}"
+            fg_color = "#10b981"
             tf_sec_map = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
             tf_sec = tf_sec_map.get(scalp_tf, 60)
             rem_candle_sec = tf_sec - (int(time.time()) % tf_sec)
             cm, cs = divmod(rem_candle_sec, 60)
-            countdown_text = f"⏱️ Nến {scalp_tf}: {cm:02d}p:{cs:02d}s"
+            countdown_text = f"{scalp_tf}: {cm:02d}p:{cs:02d}s"
             cd_fg = CYAN_LIVE
 
         # 7. Bot AUTO đang TẮT (Thủ công)
         else:
-            icon = "⚪"
-            status_text = f"[{pk}] TẮT TỰ ĐỘNG (Thủ công) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh"
-            fg_color = "#94a3b8"  # Xám sáng
-            countdown_text = "TẠM DỪNG"
+            icon = "●"
+            status_text = f"[{pk}] Tắt tự động (Thủ công)"
+            fg_color = "#94a3b8"
+            countdown_text = "Dừng"
             cd_fg = "#64748b"
 
-        self.bot_status_icon_lbl.config(text=icon)
+        self.bot_status_icon_lbl.config(text=icon, fg=fg_color)
         self.bot_status_text_lbl.config(text=status_text, fg=fg_color)
         self.bot_countdown_lbl.config(text=countdown_text, fg=cd_fg)
 
@@ -5085,14 +5085,14 @@ class KronosDesktopApp:
         ctx = self.profile_ctx[pk]
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-            return f"🔒 Đã dừng giao dịch hôm nay ({reason})"
+            return f"Đã dừng hôm nay ({reason})"
         if self._is_cooldown_active(pk):
             return self._get_cooldown_remaining_str(pk)
         scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
         is_running = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
         if is_running:
-            return f"🟢 Bot {pk} ĐANG CHẠY (Đang canh nến {scalp_tf} tự động vào lệnh)"
-        return f"⚪ Bot {pk} đang DỪNG (Gạt công tắc AUTO sang RUNNING để tự vào lệnh)"
+            return f"Bot {pk} ĐANG CHẠY (Canh nến {scalp_tf})"
+        return f"Bot {pk} DỪNG (Tắt Auto)"
 
     def _sync_signal_detail_status(self):
         """Cập nhật ngay lập tức dòng trạng thái Bot trên thanh tín hiệu khi người dùng gạt công tắc AUTO."""
@@ -5133,7 +5133,7 @@ class KronosDesktopApp:
                 pass
         self._draw_toggle_switch()
         self._sync_signal_detail_status()
-        self.log(f"▶️ [{pk} - {sym}] Đã BẬT công tắc AUTO (Đang canh nến {tf_val} đóng cửa tiếp theo để tự động phân tích & vào lệnh)...")
+        self.log(f"[{pk} - {sym}] Đã BẬT công tắc AUTO (Canh nến {tf_val} để tự động giao dịch)...")
         if self.profile_ctx[pk].get("cached_mean_df") is None and not self.profile_ctx[pk].get("is_analyzing", False):
             self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
         threading.Thread(target=self._auto_loop_worker, args=(pk, worker_token), daemon=True).start()
@@ -5561,7 +5561,7 @@ class KronosDesktopApp:
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
                         reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-                        trade_msg = f"🔒 Đã dừng giao dịch hôm nay ({reason_lk})"
+                        trade_msg = f"Đã dừng giao dịch hôm nay ({reason_lk})"
                         self.log(f"[{pk}] {trade_msg}")
                     elif self._is_cooldown_active(pk):
                         ctx["pending_pullback_order"] = None
@@ -5623,12 +5623,12 @@ class KronosDesktopApp:
 
                 max_sl_str = f"Max: {effective_max_sl:.2f} giá" if effective_max_sl > 0.0 else "Theo AI"
                 if sl_tightened_for_2r:
-                    max_sl_str += " (⚡ Siết 1/2 do RR<2R)"
+                    max_sl_str += " (RR<2R)"
                 actual_rr = (dist_tp / cur_sl_dist) if cur_sl_dist > 0.001 else 0.0
                 rr_str = f"1:{actual_rr:.2f}R" if actual_rr > 0 else "---"
                 detail_prefix = (
                     f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  Phân tán: {dispersion_r:.2f}x ATR ({scenario_std:.2f}$)  |  Tin cậy AI: {confidence_pct:.0f}%\n"
-                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f} (SL AI: {cur_sl_dist:.2f} giá [{max_sl_str}])   |   🎯 TP: {tp_price:.2f} (Cách {dist_tp:.2f} giá)   |   Tỷ lệ: {rr_str} ✅"
+                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   SL: {sl_price:.2f} (SL AI: {cur_sl_dist:.2f} giá [{max_sl_str}])   |   TP: {tp_price:.2f} (Cách {dist_tp:.2f} giá)   |   Tỷ lệ: {rr_str}"
                 )
                 ctx["_last_detail_prefix"] = detail_prefix
                 detail_text = detail_prefix
