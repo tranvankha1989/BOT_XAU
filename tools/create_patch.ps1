@@ -27,7 +27,15 @@ Write-Host "[OK] Phien ban dang dong goi: v$version" -ForegroundColor Green
 Write-Host "Mo ta: $($versionJson.description)" -ForegroundColor Gray
 Write-Host ""
 
-# 2. Chuan bi thu muc staging
+# 2. Tu dong cap nhat dong co nhi phan ma hoa core_engine.bin
+Write-Host "Dang bien dich va ma hoa lai core_engine.bin ..." -ForegroundColor Yellow
+$packerScript = Join-Path $Root "tools\binary_packer.py"
+python $packerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Loi khi tao core_engine.bin!"
+}
+
+# 3. Chuan bi thu muc staging
 $outputDir = Join-Path $Root "installer_output"
 if (-not (Test-Path $outputDir)) { New-Item -ItemType Directory -Path $outputDir -Force | Out-Null }
 
@@ -38,8 +46,9 @@ $stagingDir = Join-Path $Root "build_staging\patch"
 if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
-# 3. Sao chep cac tep tin ma nguon can thiet vao staging
+# 4. Sao chep cac tep tin ma nguon va dong co nhi phan vao staging
 $filesToInclude = @(
+    "core_engine.bin",
     "mt5_scalping_bot.py",
     "kronos_license.py",
     "kronos_updater.py",

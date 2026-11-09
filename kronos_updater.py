@@ -146,6 +146,11 @@ class AppUpdater:
                 except Exception:
                     continue
 
+        # Đảm bảo luôn có đường dẫn tải tệp patch nếu bản cập nhật hợp lệ
+        if remote_ver and not patch_url:
+            patch_url = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/v{remote_ver}/patch_v{remote_ver}.zip"
+            patch_name = f"patch_v{remote_ver}.zip"
+
         self.is_checking = False
         if remote_ver and is_version_newer(remote_ver, self.current_version):
             self.has_update = True
@@ -265,8 +270,11 @@ class AppUpdater:
     def restart_application(self):
         """Khởi động lại ứng dụng với phiên bản mới và giải phóng tiến trình cũ."""
         try:
-            main_script = APP_ROOT / "mt5_scalping_bot.py"
-            cmd = [sys.executable, str(main_script)] + sys.argv[1:]
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable] + sys.argv[1:]
+            else:
+                main_script = APP_ROOT / "mt5_scalping_bot.py"
+                cmd = [sys.executable, str(main_script)] + sys.argv[1:]
             subprocess.Popen(cmd, cwd=str(APP_ROOT))
             time.sleep(0.5)
             os._exit(0)
