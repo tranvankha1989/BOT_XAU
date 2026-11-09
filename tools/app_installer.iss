@@ -16,7 +16,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\Trading AI PRO
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 
 OutputDir=..\installer_output
 OutputBaseFilename=Setup_Trading_AI_PRO_v{#MyAppVersion}
@@ -50,6 +50,7 @@ Source: "..\core_engine.bin"; DestDir: "{app}"; Flags: ignoreversion
 ; 3. Thong tin phien ban va Icon
 Source: "..\version.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "license-key-icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "run_debug.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 ; 4. Trinh cai dat Microsoft Visual C++ 2015-2022 x64 (Tu dong cai dat neu may ao chua co)
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
