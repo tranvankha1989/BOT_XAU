@@ -4898,7 +4898,7 @@ class KronosDesktopApp:
 
         live_price = float(closes[-1])
         self._live_price_hline = self.ax.axhline(
-            y=live_price, color=CYAN_LIVE, linestyle="-.", linewidth=0.9, alpha=0.85, label=f"Giá Live ({live_price:.2f})"
+            y=live_price, color=CYAN_LIVE, linestyle="-.", linewidth=0.9, alpha=0.85
         )
 
         # Hiển thị Nhãn Mức Giá Hiện Tại trực tiếp trên Thanh Giá bên phải (như TradingView)
@@ -5089,7 +5089,9 @@ class KronosDesktopApp:
             f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f}{zoom_hint}",
             color=GOLD_ACCENT, fontsize=9, fontweight="bold"
         )
-        self.ax.legend(loc="upper right", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8)
+        handles, labels = self.ax.get_legend_handles_labels()
+        if handles and any(bool(lbl and not lbl.startswith("_")) for lbl in labels):
+            self.ax.legend(loc="upper right", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8)
 
         if self.user_zoomed and self.saved_xlim is not None and self.saved_ylim is not None:
             self.ax.set_xlim(self.saved_xlim)
