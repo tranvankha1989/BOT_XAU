@@ -1637,31 +1637,24 @@ class KronosDesktopApp:
         )
         self.signal_detail_lbl.pack(fill=tk.X, pady=(2, 0))
 
-        # THANH TRẠNG THÁI HOẠT ĐỘNG BOT CHUYÊN DỤNG (BOT STATUS & REAL-TIME COUNTDOWN STRIP)
+        # THANH TRẠNG THÁI HOẠT ĐỘNG BOT CHUYÊN DỤNG (BOT STATUS STRIP - CANH GIỮA, CHỮ ĐỎ)
         self.bot_status_frame = tk.Frame(
             sig_left, bg="#121824", padx=8, pady=3,
             highlightthickness=1, highlightbackground="#222f44"
         )
         self.bot_status_frame.pack(fill=tk.X, pady=(4, 0))
 
-        self.bot_status_icon_lbl = tk.Label(
-            self.bot_status_frame, text="●", bg="#121824", fg="#64748b", font=("Segoe UI", 8)
-        )
-        self.bot_status_icon_lbl.pack(side=tk.LEFT, padx=(0, 5))
+        # Giữ đối tượng label để tương thích ngược nếu có hàm tham chiếu, không pack để chữ canh giữa hoàn hảo 100%
+        self.bot_status_icon_lbl = tk.Label(self.bot_status_frame, text="", bg="#121824")
+        self.bot_countdown_lbl = tk.Label(self.bot_status_frame, text="", bg="#121824")
 
         self.bot_status_text_lbl = tk.Label(
             self.bot_status_frame,
-            text="TRẠNG THÁI BOT: ĐANG KHỞI TẠO...",
-            bg="#121824", fg=TEXT_MUTED, font=("Segoe UI", 8, "bold"), anchor="w"
+            text="",
+            bg="#121824", fg=RED_DOWN, font=("Segoe UI", 9, "bold"),
+            anchor="center", justify="center"
         )
-        self.bot_status_text_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self.bot_countdown_lbl = tk.Label(
-            self.bot_status_frame,
-            text="--:--",
-            bg="#121824", fg=GOLD_ACCENT, font=("Consolas", 9, "bold"), anchor="e"
-        )
-        self.bot_countdown_lbl.pack(side=tk.RIGHT, padx=(6, 0))
+        self.bot_status_text_lbl.pack(fill=tk.BOTH, expand=True)
 
         # Menu chuột phải trên biểu đồ kiểu TradingView
         self.chart_context_menu = tk.Menu(
@@ -3637,15 +3630,15 @@ class KronosDesktopApp:
             losses = self.consec_loss_count if pk == self.active_profile_key else ctx.get("consec_loss_count", 0)
             rem = max(0, int((cd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"Thua {losses} lệnh ({m:02d}p:{s:02d}s)")
+            parts.append(f"Tạm ngưng giao dịch do chuỗi thua {losses} lệnh [{m:02d}p:{s:02d}s]")
         if bcd is not None and now < bcd:
             rem = max(0, int((bcd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"Sau chốt chùm ({m:02d}p:{s:02d}s)")
+            parts.append(f"Tạm ngưng giao dịch do sau chốt chùm [{m:02d}p:{s:02d}s]")
         if fscd is not None and now < fscd:
             rem = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"SL < 5p ({m:02d}p:{s:02d}s)")
+            parts.append(f"Tạm ngưng giao dịch do lệnh SL < 5 phút [{m:02d}p:{s:02d}s]")
         return " | ".join(parts)
 
     def _get_profile_magic_number(self, profile_key: str = None) -> int:
@@ -4981,7 +4974,7 @@ class KronosDesktopApp:
         self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
 
     def _update_bot_status_bar(self, profile_key: str = None):
-        """Cập nhật thanh trạng thái hoạt động thực tế của Bot kèm thời gian đếm ngược chính xác từng giây."""
+        """Cập nhật thanh trạng thái hoạt động thực tế của Bot canh giữa với chữ màu đỏ."""
         if not hasattr(self, "bot_status_frame") or not self.bot_status_frame.winfo_exists():
             return
         pk = profile_key or self.active_profile_key
@@ -5000,45 +4993,26 @@ class KronosDesktopApp:
         # 1. Khóa do chạm giới hạn Lãi ngày / Cắt lỗ ngày
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-            icon = "●"
-            status_text = f"[{pk}] Dừng hôm nay: {reason}"
-            fg_color = GOLD_ACCENT if "LÃI" in reason.upper() else "#f87171"
-            countdown_text = "Mở lại 00:00"
-            cd_fg = GOLD_ACCENT
+            status_text = f"[{pk}] Tạm ngưng giao dịch do {reason} [Mở lại 00:00]"
 
         # 2. Tạm nghỉ do lệnh dính SL < 5 phút
         elif fscd is not None and now < fscd:
             rem_sec = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
-            end_time_str = fscd.strftime("%H:%M:%S")
-            icon = "●"
-            status_text = f"[{pk}] Tạm nghỉ: SL < 5p (Mở lại {end_time_str})"
-            fg_color = "#f59e0b"
-            countdown_text = f"{m:02d}p:{s:02d}s"
-            cd_fg = "#fcd34d"
+            status_text = f"[{pk}] Tạm ngưng giao dịch do lệnh SL < 5 phút [{m:02d}p:{s:02d}s]"
 
         # 3. Tạm nghỉ sau chuỗi thua liên tiếp
         elif cd is not None and now < cd:
             losses = self.consec_loss_count if pk == self.active_profile_key else ctx.get("consec_loss_count", 0)
             rem_sec = max(0, int((cd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
-            end_time_str = cd.strftime("%H:%M:%S")
-            icon = "●"
-            status_text = f"[{pk}] Tạm nghỉ: Thua {losses} lệnh (Mở lại {end_time_str})"
-            fg_color = "#f87171"
-            countdown_text = f"{m:02d}p:{s:02d}s"
-            cd_fg = "#fca5a5"
+            status_text = f"[{pk}] Tạm ngưng giao dịch do chuỗi thua {losses} lệnh [{m:02d}p:{s:02d}s]"
 
         # 4. Tạm nghỉ sau khi chốt lời chùm lệnh
         elif bcd is not None and now < bcd:
             rem_sec = max(0, int((bcd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
-            end_time_str = bcd.strftime("%H:%M:%S")
-            icon = "●"
-            status_text = f"[{pk}] Tạm nghỉ: Sau chốt chùm (Mở lại {end_time_str})"
-            fg_color = "#38bdf8"
-            countdown_text = f"{m:02d}p:{s:02d}s"
-            cd_fg = "#7dd3fc"
+            status_text = f"[{pk}] Tạm ngưng giao dịch do sau chốt chùm [{m:02d}p:{s:02d}s]"
 
         # 5. Đang có lệnh Chờ Giá Hồi (Pullback)
         elif pending_pullback is not None:
@@ -5047,36 +5021,18 @@ class KronosDesktopApp:
             p_max_sl = pending_pullback.get("effective_max_sl", float(cfg.get("max_sl_price", 5.0)))
             p_target = (p_sl + p_max_sl) if p_act == "BUY" else (p_sl - p_max_sl)
             cond_str = "<=" if p_act == "BUY" else ">="
-            rr_tag = " [RR>=2R]" if pending_pullback.get("sl_tightened_for_2r") else ""
-            icon = "●"
-            status_text = f"[{pk}] Chờ hồi {p_act}: {cond_str} {p_target:.2f} (SL <= {p_max_sl:.2f}$){rr_tag}"
-            fg_color = "#06b6d4"
-            countdown_text = "Rình Entry"
-            cd_fg = GOLD_ACCENT
+            rr_tag = " (RR>=2R)" if pending_pullback.get("sl_tightened_for_2r") else ""
+            status_text = f"[{pk}] Tạm ngưng vào lệnh do chờ giá hồi {p_act}: {cond_str} {p_target:.2f} (SL <= {p_max_sl:.2f}$){rr_tag} [Rình Entry]"
 
-        # 6. Bot AUTO đang BẬT (RUNNING)
+        # 6. Bot AUTO đang BẬT (RUNNING) -> Không hiển thị đếm giờ nến (phía trên thanh giá đã có sẵn)
         elif is_running:
-            icon = "●"
-            status_text = f"[{pk}] Đang chạy tự động — Canh nến {scalp_tf}"
-            fg_color = "#10b981"
-            tf_sec_map = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
-            tf_sec = tf_sec_map.get(scalp_tf, 60)
-            rem_candle_sec = tf_sec - (int(time.time()) % tf_sec)
-            cm, cs = divmod(rem_candle_sec, 60)
-            countdown_text = f"{scalp_tf}: {cm:02d}p:{cs:02d}s"
-            cd_fg = CYAN_LIVE
+            status_text = f"[{pk}] Bot đang chạy tự động — Canh nến {scalp_tf} & tín hiệu AI"
 
         # 7. Bot AUTO đang TẮT (Thủ công)
         else:
-            icon = "●"
-            status_text = f"[{pk}] Tắt tự động (Thủ công)"
-            fg_color = "#94a3b8"
-            countdown_text = "Dừng"
-            cd_fg = "#64748b"
+            status_text = f"[{pk}] Tạm ngưng giao dịch (Tắt tự động)"
 
-        self.bot_status_icon_lbl.config(text=icon, fg=fg_color)
-        self.bot_status_text_lbl.config(text=status_text, fg=fg_color)
-        self.bot_countdown_lbl.config(text=countdown_text, fg=cd_fg)
+        self.bot_status_text_lbl.config(text=status_text, fg=RED_DOWN)
 
     def _get_live_bot_status_text(self, profile_key: str = None) -> str:
         """Lấy chuỗi trạng thái thực tế của Bot theo đúng Tab để hiển thị đồng bộ trên thanh tín hiệu."""
@@ -5085,14 +5041,14 @@ class KronosDesktopApp:
         ctx = self.profile_ctx[pk]
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-            return f"Đã dừng hôm nay ({reason})"
+            return f"Tạm ngưng giao dịch do {reason} [Mở lại 00:00]"
         if self._is_cooldown_active(pk):
             return self._get_cooldown_remaining_str(pk)
         scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
         is_running = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
         if is_running:
-            return f"Bot {pk} ĐANG CHẠY (Canh nến {scalp_tf})"
-        return f"Bot {pk} DỪNG (Tắt Auto)"
+            return f"Bot {pk} đang chạy tự động (Canh nến {scalp_tf})"
+        return f"Bot {pk} tạm ngưng giao dịch (Tắt tự động)"
 
     def _sync_signal_detail_status(self):
         """Cập nhật ngay lập tức dòng trạng thái Bot trên thanh tín hiệu khi người dùng gạt công tắc AUTO."""
