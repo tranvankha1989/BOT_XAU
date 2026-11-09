@@ -474,6 +474,7 @@ class KronosDesktopApp:
         self._build_startup_loading_overlay()
         self._register_active_instance_lock()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+        self.root.bind("<Escape>", self._deselect_all_orders_and_reset)
 
         # Khởi động luồng Hàng Đợi Phân Tích AI (FIFO Queue Worker) tuần tự, đảm bảo XAUUSD & BTCUSD không bao giờ tranh chấp hay trộn dữ liệu
         self._ai_queue_worker_thread = threading.Thread(target=self._ai_queue_consumer_loop, daemon=True)
@@ -1257,7 +1258,23 @@ class KronosDesktopApp:
         style.configure("Panel.TFrame", background=PANEL_BG)
         style.configure("TLabel", background=PANEL_BG, foreground=TEXT_MAIN, font=("Segoe UI", 9))
         style.configure("Treeview", background="#131822", foreground=TEXT_MAIN, fieldbackground="#131822", rowheight=23, font=("Consolas", 9))
-        style.configure("Treeview.Heading", background="#252f42", foreground=GOLD_ACCENT, font=("Segoe UI", 9, "bold"))
+        style.configure(
+            "Treeview.Heading",
+            background="#1e293b",
+            foreground=GOLD_ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            borderwidth=0,
+            lightcolor="#1e293b",
+            darkcolor="#1e293b",
+            bordercolor="#131822",
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("pressed", "#1e293b"), ("active", "#1e293b")],
+            foreground=[("pressed", GOLD_ACCENT), ("active", GOLD_ACCENT)],
+            relief=[("pressed", "flat"), ("active", "flat")],
+        )
         style.configure("TNotebook", background=BG_DARK, borderwidth=0, tabmargins=[2, 2, 2, 0])
         style.configure(
             "TNotebook.Tab",
@@ -1879,6 +1896,8 @@ class KronosDesktopApp:
             self.tree.heading(c, text=headers[c])
             self.tree.column(c, width=125 if c == "timestamps" else 80, anchor=tk.CENTER)
         self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.bind("<Button-1>", lambda e: "break" if self.tree.identify_region(e.x, e.y) == "heading" else None)
+        self.tree.bind("<Escape>", self._deselect_all_orders_and_reset)
 
         log_right = tk.Frame(pred_tab, bg=PANEL_BG, width=520)
         log_right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(0, 4), pady=4)
@@ -1978,6 +1997,7 @@ class KronosDesktopApp:
 
         tree.bind("<<TreeviewSelect>>", lambda e, pk=profile_key: self._on_pos_tree_select(pk))
         tree.bind("<Button-1>", lambda e, pk=profile_key: self._on_pos_tree_click(e, pk), add="+")
+        tree.bind("<Escape>", self._deselect_all_orders_and_reset)
 
         self.pos_tree_by_profile[profile_key] = tree
         self.pos_summary_lbl_by_profile[profile_key] = summary_lbl
@@ -2009,14 +2029,45 @@ class KronosDesktopApp:
             self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
 
     def _on_pos_tree_click(self, event, profile_key: str = None):
-        """Nếu người dùng nhấp vào khoảng trống ngoài các dòng lệnh, tự động bỏ chọn để biểu đồ trở về hiển thị bình thường."""
+        """
+        1. Nếu người dùng nhấp vào hàng tiêu đề (heading), chặn hoàn toàn hiệu ứng nút bấm.
+        2. Nếu người dùng nhấp vào khoảng trống ngoài các dòng lệnh, tự động bỏ chọn để biểu đồ trở về hiển thị bình thường.
+        """
         pk = profile_key or self.active_profile_key
         tree = getattr(self, "pos_tree_by_profile", {}).get(pk, getattr(self, "pos_tree", None))
         if tree is not None:
+            region = tree.identify_region(event.x, event.y)
+            if region == "heading":
+                return "break"
             clicked_row = tree.identify_row(event.y)
             if not clicked_row and tree.selection():
                 tree.selection_remove(tree.selection())
                 self._on_pos_tree_select(pk)
+
+    def _deselect_all_orders_and_reset(self, event=None):
+        """Khi người dùng nhấn phím ESC: Bỏ chọn dòng lệnh đang được tô sáng và đưa biểu đồ trở về trạng thái ban đầu."""
+        pk = self.active_profile_key
+        tree = getattr(self, "pos_tree_by_profile", {}).get(pk, getattr(self, "pos_tree", None))
+        cleared = False
+        if tree is not None and tree.winfo_exists():
+            sel = tree.selection()
+            if sel:
+                tree.selection_remove(sel)
+                cleared = True
+            tree.focus("")
+
+        for p_key, t_widget in getattr(self, "pos_tree_by_profile", {}).items():
+            if t_widget is not None and t_widget != tree and t_widget.winfo_exists():
+                s = t_widget.selection()
+                if s:
+                    t_widget.selection_remove(s)
+                    t_widget.focus("")
+                    if p_key == pk:
+                        cleared = True
+
+        sym = self.symbol_var.get().strip() or (SYMBOL_BTC if pk == "BTCUSD" else SYMBOL_XAU)
+        tf = self.tf_var.get().strip() or "M1"
+        self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
 
     # =========================================================================
     # TỰ ĐỘNG LƯU & KHÔI PHỤC CÀI ĐẶT NGƯỜI DÙNG THEO TỪNG TAB (XAUUSD / BTCUSD)
