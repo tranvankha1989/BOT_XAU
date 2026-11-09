@@ -143,6 +143,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
         "cooldown_mins": "30",
+        "fast_sl_cooldown_mins": "15",
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -186,6 +187,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
         "cooldown_mins": "30",
+        "fast_sl_cooldown_mins": "15",
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -213,6 +215,8 @@ PROFILE_STATE_ATTRS = (
     "cooldown_until",
     "last_cooldown_deal_ticket",
     "basket_cooldown_until",
+    "fast_sl_cooldown_until",
+    "last_fast_sl_deal_ticket",
     "is_basket_closing",
     "cached_scenarios",
     "cached_mean_df",
@@ -331,6 +335,8 @@ class KronosDesktopApp:
         self.cooldown_until = None  # Thời điểm hết hạn tạm ngừng sau chuỗi thua
         self.last_cooldown_deal_ticket = None
         self.basket_cooldown_until = None  # Thời điểm hết hạn tạm nghỉ sau khi chốt lời chùm lệnh
+        self.fast_sl_cooldown_until = None  # Thời điểm hết hạn tạm ngừng khi có lệnh dính SL < 5 phút
+        self.last_fast_sl_deal_ticket = None
         self.is_basket_closing = False  # Khóa bảo vệ chống đóng lặp nhiều luồng khi chốt chùm
         self.left_menu_visible = False  # Mặc định thu gọn vào
         self.drawer_width = 355
@@ -481,6 +487,8 @@ class KronosDesktopApp:
             "cooldown_until": None,
             "last_cooldown_deal_ticket": None,
             "basket_cooldown_until": None,
+            "fast_sl_cooldown_until": None,
+            "last_fast_sl_deal_ticket": None,
             "is_basket_closing": False,
             "cached_scenarios": None,
             "cached_mean_df": None,
@@ -1384,6 +1392,7 @@ class KronosDesktopApp:
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0")
         self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0")
         self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30")
+        self.fast_sl_cooldown_mins_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL < 5 phút (phút, 0=Tắt):", "15")
         tk.Button(
             sec3.content, text="↺ Khôi phục mặc định Mục 3 (Quản lý lệnh & Chốt lời)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -1867,6 +1876,7 @@ class KronosDesktopApp:
             "daily_sl_usd": self.daily_sl_usd_var,
             "max_consec_loss": self.max_consec_loss_var,
             "cooldown_mins": self.cooldown_mins_var,
+            "fast_sl_cooldown_mins": self.fast_sl_cooldown_mins_var,
             "engine": self.engine_var,
             "model": self.model_var,
             "hf_space": self.hf_space_var,
@@ -2092,7 +2102,7 @@ class KronosDesktopApp:
                     "lot", "max_pos", "scenarios", "consensus", "max_dispersion", "sl_atr", "rr",
                     "auto_be", "be_trigger_r", "auto_trail", "trail_dist_r",
                     "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price",
-                    "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins",
+                    "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins",
                     "engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "realtime_chart"
                 )
                 for pk in ("XAUUSD", "BTCUSD"):
@@ -2171,7 +2181,7 @@ class KronosDesktopApp:
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
             2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins"]),
+            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
         }
         if section_num not in section_map:
@@ -3266,9 +3276,11 @@ class KronosDesktopApp:
                 close_p = d.price
                 open_t = datetime.fromtimestamp(ed.time, tz=VN_TZ).strftime("%H:%M:%S") if ed else "---"
                 close_t = d_vn_dt.strftime("%H:%M:%S")
-                dur_str = self._format_duration(max(0, int(d.time) - int(ed.time))) if ed else "---"
+                dur_sec = max(0, int(d.time) - int(ed.time)) if ed else -1
+                dur_str = self._format_duration(dur_sec) if ed else "---"
                 net_pnl = float(d.profit + d.swap + d.commission + getattr(d, "fee", 0.0))
                 cmt = str(d.comment or "").lower()
+                is_sl_loss = ("[sl" in cmt or "sl" in cmt) and (net_pnl < -0.05)
 
                 if "[tp" in cmt:
                     status = f"✅ ĐÃ CHỐT TP ({close_t})"
@@ -3287,8 +3299,11 @@ class KronosDesktopApp:
                     "ticket": d.position_id,
                     "open_time": open_t,
                     "close_time": close_t,
+                    "close_ts": int(d.time),
                     "time_display": f"{open_t} → {close_t}",
                     "duration": dur_str,
+                    "duration_sec": dur_sec,
+                    "is_sl_loss": is_sl_loss,
                     "symbol": d.symbol,
                     "type": orig_type,
                     "volume": d.volume,
@@ -3332,6 +3347,10 @@ class KronosDesktopApp:
             cooldown_mins = max(float(cfg.get("cooldown_mins", 30.0)), 0.0)
         except ValueError:
             cooldown_mins = 0.0
+        try:
+            fast_sl_cd_mins = max(float(cfg.get("fast_sl_cooldown_mins", 15.0)), 0.0)
+        except ValueError:
+            fast_sl_cd_mins = 0.0
 
         # 1. Xử lý Tạm ngừng sau chuỗi lệnh thua liên tiếp (= 0 là tắt)
         if max_consec_loss == 0 or cooldown_mins == 0.0:
@@ -3357,6 +3376,42 @@ class KronosDesktopApp:
                             f"⏸️ [{pk} - Tạm Ngừng Chuỗi Thua] Đã thua liên tiếp {consec_losses} lệnh (>= {max_consec_loss} lệnh) -> "
                             f"Tạm ngừng vào lệnh {cooldown_mins:.0f} phút (đến {ctx['cooldown_until'].strftime('%H:%M:%S')})!"
                         )
+
+        # 1.5. Xử lý Tạm ngừng khi có lệnh dính SL < 5 phút (= 0 là tắt)
+        if fast_sl_cd_mins == 0.0:
+            if ctx.get("fast_sl_cooldown_until") is not None:
+                ctx["fast_sl_cooldown_until"] = None
+                self.log(f"🔓 [{pk}] Đã tắt tạm nghỉ do SL < 5 phút (do thông số cài = 0).")
+        else:
+            if ctx.get("fast_sl_cooldown_until") is not None and datetime.now() >= ctx["fast_sl_cooldown_until"]:
+                ctx["fast_sl_cooldown_until"] = None
+                self.log(f"▶️ [{pk}] Đã hết thời gian tạm nghỉ sau lệnh dính SL < 5 phút! Bot tiếp tục canh lệnh.")
+
+            closed_deals = self._get_today_closed_deals(symbol=symbol)
+            for cd in closed_deals:
+                if cd.get("is_sl_loss") and (0 <= cd.get("duration_sec", -1) < 300):
+                    last_ticket = cd.get("ticket")
+                    if ctx.get("last_fast_sl_deal_ticket") != last_ticket:
+                        now_ts = int(time.time())
+                        close_ts = cd.get("close_ts", now_ts)
+                        elapsed_sec = max(0, now_ts - close_ts)
+                        total_cd_sec = fast_sl_cd_mins * 60.0
+                        ctx["last_fast_sl_deal_ticket"] = last_ticket
+                        if elapsed_sec < total_cd_sec:
+                            rem_sec = total_cd_sec - elapsed_sec
+                            ctx["fast_sl_cooldown_until"] = datetime.now() + timedelta(seconds=rem_sec)
+                            ctx["pending_pullback_order"] = None
+                            dur_display = cd.get("duration", f"{cd.get('duration_sec', 0)}s")
+                            self.log(
+                                f"⚡ [{pk} - TẠM NGHỈ SL < 5 PHÚT] Lệnh #{last_ticket} dính SL sau chỉ {dur_display} (< 5 phút, Lỗ: {cd.get('net_pnl', 0.0):+.2f}$) -> "
+                                f"Tạm ngừng giao dịch {fast_sl_cd_mins:.0f} phút (đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')}) để tránh thị trường biến động giật quét!"
+                            )
+                            self.show_toast(
+                                f"⚡ [{pk}] Lệnh #{last_ticket} SL sau {dur_display} (< 5p) -> Tạm nghỉ {fast_sl_cd_mins:.0f} phút!",
+                                is_error=True,
+                                duration_ms=4000
+                            )
+                    break
 
         # 2. Sang ngày mới theo giờ Việt Nam -> Tự động mở khóa giao dịch
         if ctx["daily_limit_locked_date"] is not None and ctx["daily_limit_locked_date"] != today_str:
@@ -3402,6 +3457,8 @@ class KronosDesktopApp:
             self.consec_loss_count = ctx["consec_loss_count"]
             self.cooldown_until = ctx["cooldown_until"]
             self.last_cooldown_deal_ticket = ctx["last_cooldown_deal_ticket"]
+            self.fast_sl_cooldown_until = ctx.get("fast_sl_cooldown_until")
+            self.last_fast_sl_deal_ticket = ctx.get("last_fast_sl_deal_ticket")
             self.daily_limit_locked_date = ctx["daily_limit_locked_date"]
             self.daily_limit_reason = ctx["daily_limit_reason"]
             self.pending_pullback_order = ctx["pending_pullback_order"]
@@ -3416,10 +3473,12 @@ class KronosDesktopApp:
         ctx = self.profile_ctx[pk]
         cd = self.cooldown_until if pk == self.active_profile_key else ctx.get("cooldown_until")
         bcd = ctx.get("basket_cooldown_until")
+        fscd = self.fast_sl_cooldown_until if pk == self.active_profile_key else ctx.get("fast_sl_cooldown_until")
         now = datetime.now()
         is_loss_cd = (cd is not None and now < cd)
         is_basket_cd = (bcd is not None and now < bcd)
-        return is_loss_cd or is_basket_cd
+        is_fast_sl_cd = (fscd is not None and now < fscd)
+        return is_loss_cd or is_basket_cd or is_fast_sl_cd
 
     def _get_cooldown_remaining_str(self, profile_key: str = None) -> str:
         pk = profile_key or self.active_profile_key
@@ -3427,6 +3486,7 @@ class KronosDesktopApp:
         now = datetime.now()
         cd = self.cooldown_until if pk == self.active_profile_key else ctx.get("cooldown_until")
         bcd = ctx.get("basket_cooldown_until")
+        fscd = self.fast_sl_cooldown_until if pk == self.active_profile_key else ctx.get("fast_sl_cooldown_until")
         parts = []
         if cd is not None and now < cd:
             losses = self.consec_loss_count if pk == self.active_profile_key else ctx.get("consec_loss_count", 0)
@@ -3437,6 +3497,10 @@ class KronosDesktopApp:
             rem = max(0, int((bcd - now).total_seconds()))
             m, s = divmod(rem, 60)
             parts.append(f"☕ Nghỉ sau chốt chùm ({m:02d}p:{s:02d}s)")
+        if fscd is not None and now < fscd:
+            rem = max(0, int((fscd - now).total_seconds()))
+            m, s = divmod(rem, 60)
+            parts.append(f"⚡ Nghỉ do SL < 5p ({m:02d}p:{s:02d}s)")
         return " | ".join(parts)
 
     def _get_profile_magic_number(self, profile_key: str = None) -> int:
