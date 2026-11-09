@@ -4884,7 +4884,7 @@ class KronosDesktopApp:
                 if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
                     lic_st = self.lic_mgr.check_status()
                     if not lic_st.get("is_valid", False):
-                        return False, f"⚠️ {lic_st.get('message', 'Bản quyền chưa kích hoạt hoặc đã hết hạn!')}"
+                        return False, str(lic_st.get('message', 'Bản quyền chưa kích hoạt hoặc đã hết hạn!'))
                 if self._is_daily_limit_locked(pk):
                     reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
                     return False, f"Đã tự động dừng giao dịch hết hôm nay ({reason})."
@@ -5188,7 +5188,7 @@ class KronosDesktopApp:
         if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
             lic_st = self.lic_mgr.check_status(force_refresh=True)
             if not lic_st.get("is_valid", False):
-                self.show_toast("⚠️ Bản quyền chưa kích hoạt hoặc đã hết hạn!", is_error=True, duration_ms=3000)
+                self.show_toast("Bản quyền chưa kích hoạt hoặc đã hết hạn!", is_error=True, duration_ms=3000)
                 self._open_license_dialog()
                 return
         self.auto_loop_running = True

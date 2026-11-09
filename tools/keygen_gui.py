@@ -66,7 +66,7 @@ THEME = {
 class KeygenAdminApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("KeyGen VideoTranslateAI")
+        self.title("KeyGen Admin — Trading AI PRO by Kha Tran Design")
         self.geometry("1200x850")
         self.minsize(1080, 780)
         self.configure(bg=THEME["bg"])
@@ -161,7 +161,7 @@ class KeygenAdminApp(tk.Tk):
 
         title_lbl = tk.Label(
             header,
-            text="⚡ VideoTranslate AI — Bộ Quản Trị & Cấp Bản Quyền Nội Bộ",
+            text="Trading AI PRO by Kha Tran Design — Quản Trị & Cấp Bản Quyền Nội Bộ",
             font=("Segoe UI", 13, "bold"),
             bg=THEME["card_bg"],
             fg=THEME["text_main"],
@@ -284,12 +284,14 @@ class KeygenAdminApp(tk.Tk):
         plans_frame.pack(fill="x", pady=(4, 12))
 
         plans = [
-            ("⭐ Vĩnh Viễn (Lifetime PRO)", "lifetime"),
-            ("📅 1 Năm (365 Ngày)", "365"),
-            ("📅 3 Tháng (90 Ngày)", "90"),
-            ("📅 1 Tháng (30 Ngày)", "30"),
-            ("⏳ Dùng Thử (7 Ngày)", "7"),
-            ("⚙️ Tùy chỉnh số ngày", "custom"),
+            ("Vĩnh Viễn (Lifetime PRO)", "lifetime"),
+            ("1 Năm (365 Ngày)", "365"),
+            ("3 Tháng (90 Ngày)", "90"),
+            ("1 Tháng (30 Ngày)", "30"),
+            ("Demo (7 Ngày)", "7"),
+            ("Demo (3 Ngày)", "3"),
+            ("Demo (1 Ngày)", "1"),
+            ("Tùy chỉnh số ngày (Demo / Bản quyền)", "custom"),
         ]
 
         for text, val in plans:
@@ -455,7 +457,7 @@ class KeygenAdminApp(tk.Tk):
 
     def _paste_hwid(self):
         try:
-            clipboard_text = self.clipboard_get().strip()
+            clipboard_text = tk.Tk.clipboard_get(self).strip()
             self.hwid_entry.delete(0, tk.END)
             self.hwid_entry.insert(0, clipboard_text)
         except Exception:
@@ -485,14 +487,21 @@ class KeygenAdminApp(tk.Tk):
             except ValueError:
                 messagebox.showerror("Số Ngày Không Hợp Lệ", "Vui lòng nhập một số nguyên dương cho số ngày sử dụng!")
                 return
-            tier = "PRO"
-            plan_name = f"{days} Ngày"
+            tier = "DEMO" if days <= 7 else "PRO"
+            plan_name = f"Demo ({days} Ngày)" if days <= 7 else f"{days} Ngày"
+            exp_date = datetime.now() + timedelta(days=days)
+            expiry_str = exp_date.strftime("%d/%m/%Y")
+            expiry_val = exp_date.strftime("%Y-%m-%d")
+        elif choice in ("1", "3", "7"):
+            days = int(choice)
+            tier = "DEMO"
+            plan_name = f"Demo ({days} Ngày)"
             exp_date = datetime.now() + timedelta(days=days)
             expiry_str = exp_date.strftime("%d/%m/%Y")
             expiry_val = exp_date.strftime("%Y-%m-%d")
         else:
             days = int(choice)
-            tier = "TRIAL" if days == 7 else "PRO"
+            tier = "PRO"
             plan_name = f"{days} Ngày"
             exp_date = datetime.now() + timedelta(days=days)
             expiry_str = exp_date.strftime("%d/%m/%Y")
@@ -549,19 +558,18 @@ class KeygenAdminApp(tk.Tk):
             # Soạn tin nhắn mẫu gửi khách
             msg = (
                 f"Xin chào {client},\n\n"
-                f"Cảm ơn bạn đã đăng ký sử dụng phần mềm VideoTranslate AI!\n"
-                f"Dưới đây là thông tin kích hoạt bản quyền của bạn:\n\n"
+                f"Cảm ơn bạn đã đăng ký sử dụng phần mềm Trading AI PRO by Kha Tran Design!\n"
+                f"Dưới đây là thông tin kích hoạt của bạn:\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📌 Gói bản quyền : {plan_name}\n"
-                f"📅 Hạn sử dụng   : {expiry_str}\n"
-                f"💻 Ràng buộc HWID: {hwid}\n"
-                f"🔑 MÃ BẢN QUYỀN :\n{license_key}\n"
+                f"Gói sử dụng   : {plan_name}\n"
+                f"Hạn sử dụng   : {expiry_str}\n"
+                f"Ràng buộc HWID: {hwid}\n"
+                f"MÃ KÍCH HOẠT  :\n{license_key}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"👉 Hướng dẫn kích hoạt:\n"
-                f"1. Mở ứng dụng VideoTranslate AI.\n"
-                f"2. Bấm vào nút 'Nâng Cấp PRO' hoặc Badge bản quyền ở góc trên màn hình.\n"
-                f"3. Dán mã key ở trên vào ô 'Nhập License Key' và bấm 'Kích hoạt ngay'.\n\n"
-                f"Chúc bạn có trải nghiệm tuyệt vời cùng VideoTranslate AI!"
+                f"Hướng dẫn kích hoạt:\n"
+                f"1. Mở ứng dụng Trading AI PRO.\n"
+                f"2. Dán mã kích hoạt ở trên vào ô 'Chuỗi mã bản quyền' và bấm 'Xác Thực & Kích Hoạt'.\n\n"
+                f"Chúc bạn giao dịch thành công cùng Trading AI PRO!"
             )
             self.msg_box.delete("1.0", tk.END)
             self.msg_box.insert(tk.END, msg)

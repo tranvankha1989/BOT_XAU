@@ -43,7 +43,7 @@ else:
 PRIVATE_KEY_FILE = TOOLS_DIR / "ed25519_private.pem"
 PUBLIC_KEY_FILE = TOOLS_DIR / "ed25519_public.pem"
 
-DEFAULT_FEATURES = ["tts_unlimited", "video_dub", "voice_clone", "auto_caption"]
+DEFAULT_FEATURES = ["gold_scalping", "realtime_ai", "risk_manager", "multi_symbol"]
 
 
 def ensure_keypair() -> tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey]:

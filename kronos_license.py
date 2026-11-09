@@ -76,8 +76,9 @@ HWID_SALT = "OMNIVOICE_STUDIO_HWID_SALT_2026_OFFLINE_IMMUTABLE_CORE"
 # Salt mã hóa lưu trữ file local
 PERSISTENCE_SALT = "KRONOS_SCALPING_BOT_LICENSE_PERSISTENCE_SALT_2026_OFFLINE_GCM"
 
-TRIAL_DAYS = 7
-TRIAL_DURATION_SECONDS = TRIAL_DAYS * 86400
+# Thời hạn sử dụng hoàn toàn do License Key quy định (không tự động cấp ngày khi chưa có key)
+TRIAL_DAYS = 0
+TRIAL_DURATION_SECONDS = 0
 
 _CACHED_HWID: Optional[str] = None
 _CACHED_HWID_RAW: Optional[str] = None
@@ -592,7 +593,7 @@ class LicenseManager:
                         "is_valid": True,
                         "status_type": "LIFETIME",
                         "days_remaining": 9999,
-                        "badge_text": "[  Bản quyền: Vĩnh viễn (PRO) ]",
+                        "badge_text": "[ Bản quyền: Vĩnh viễn (PRO) ]",
                         "badge_color": "#38bdf8",  # Cyan nhã nhặn
                         "message": "Bản quyền Vĩnh viễn (PRO) đã kích hoạt.",
                         "hwid": self.hwid,
@@ -603,13 +604,24 @@ class LicenseManager:
                     exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
                     today_utc = datetime.now(timezone.utc).date()
                     rem_days = max(0, (exp_date - today_utc).days)
+                    tier_name = str(payload.get("tier", "PRO")).upper()
+                    if tier_name in ("DEMO", "TRIAL"):
+                        badge_txt = f"[ Demo: Còn {rem_days} ngày ]"
+                        badge_color = "#fb923c"  # Cam ấm cảnh báo demo
+                        st_type = "DEMO"
+                        msg_txt = f"Bản Demo còn {rem_days} ngày (đến ngày {exp_str})."
+                    else:
+                        badge_txt = f"[ Bản quyền: Còn {rem_days} ngày ]"
+                        badge_color = "#fcd34d" if rem_days <= 5 else "#38bdf8"
+                        st_type = "DAYS"
+                        msg_txt = f"Bản quyền còn {rem_days} ngày (đến ngày {exp_str})."
                     res = {
                         "is_valid": True,
-                        "status_type": "DAYS",
+                        "status_type": st_type,
                         "days_remaining": rem_days,
-                        "badge_text": f"[ Bản quyền: Còn {rem_days} ngày ]",
-                        "badge_color": "#fcd34d" if rem_days <= 5 else "#38bdf8",  # Vàng nhẹ nếu sắp hết hạn
-                        "message": f"Bản quyền còn {rem_days} ngày (đến ngày {exp_str}).",
+                        "badge_text": badge_txt,
+                        "badge_color": badge_color,
+                        "message": msg_txt,
                         "hwid": self.hwid,
                         "payload": payload,
                     }
@@ -632,33 +644,17 @@ class LicenseManager:
                 self._last_status_check = now
                 return res
 
-        # ─── TRƯỜNG HỢP 2: CHƯA KÍCH HOẠT KEY -> DÙNG THỬ (TRIAL 7 NGÀY) ───────
-        elapsed_sec = max(0.0, now - install_ts)
-        if elapsed_sec < TRIAL_DURATION_SECONDS:
-            rem_sec = TRIAL_DURATION_SECONDS - elapsed_sec
-            rem_days = math.ceil(rem_sec / 86400.0)
-            res = {
-                "is_valid": True,
-                "status_type": "TRIAL",
-                "days_remaining": rem_days,
-                "badge_text": f"[ Dùng thử: Còn {rem_days} ngày ]",
-                "badge_color": "#fb923c",  # Cam vàng cảnh báo dùng thử
-                "message": f"Bạn đang sử dụng bản dùng thử 7 ngày (còn {rem_days} ngày).",
-                "hwid": self.hwid,
-                "payload": None,
-            }
-        else:
-            res = {
-                "is_valid": False,
-                "status_type": "TRIAL_EXPIRED",
-                "days_remaining": 0,
-                "badge_text": "[ Hết hạn dùng thử ]",
-                "badge_color": "#f87171",
-                "message": "Đã hết thời hạn 7 ngày dùng thử miễn phí. Vui lòng kích hoạt bản quyền để tiếp tục sử dụng.",
-                "hwid": self.hwid,
-                "payload": None,
-            }
-
+        # ─── TRƯỜNG HỢP 2: CHƯA KÍCH HOẠT KEY -> BẮT BUỘC PHẢI NHẬP KEY ─────────
+        res = {
+            "is_valid": False,
+            "status_type": "UNACTIVATED",
+            "days_remaining": 0,
+            "badge_text": "[ Chưa kích hoạt ]",
+            "badge_color": "#f87171",
+            "message": "Ứng dụng chưa được kích hoạt bản quyền. Vui lòng gửi mã HWID cho Admin để nhận mã kích hoạt.",
+            "hwid": self.hwid,
+            "payload": None,
+        }
         self._cached_status = res
         self._last_status_check = now
         return res

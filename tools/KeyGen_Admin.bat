@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title VideoTranslate AI - KeyGen Admin
+title Trading AI PRO - KeyGen Admin
 
 :: Uu tien su dung backend venv de dam bao day du thu vien cryptography va tkinter
 set "PY_EXE="
