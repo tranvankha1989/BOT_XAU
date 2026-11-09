@@ -1,6 +1,7 @@
 {
   "version": "1.0.1",
-  "name": "Trading AI PRO By Desing Kha Tran",
+  "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-09",
   "description": "Phiên bản v1.0.1:\n- Tự động căn chỉnh tỷ lệ RR >= 2R bằng cơ chế thu gọn SL tối đa.\n- Đồng bộ thanh trạng thái đếm ngược chính xác, loại bỏ icon AI rườm rà.\n- Tự động tiếp tục giao dịch 100% khi hết thời gian tạm nghỉ trên VPS.\n- Tích hợp hệ thống bản quyền Ed25519 xác thực offline an toàn."
 }
+

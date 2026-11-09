@@ -1,5 +1,5 @@
 # ====================================================================
-# Trading AI PRO By Desing Kha Tran - Auto Create OTA Patch Script (PowerShell)
+# Trading AI PRO by Kha Tran Design - Auto Create OTA Patch Script (PowerShell)
 # Dung de dong goi nhanh goi cap nhat Pre-built Patch upload len GitHub Release
 # ====================================================================
 
@@ -11,7 +11,7 @@ Set-Location $Root
 
 Write-Host "====================================================================" -ForegroundColor Cyan
 Write-Host "   DONG GOI BAN CAP NHAT PRE-BUILT PATCH - TRADING AI PRO" -ForegroundColor Cyan
-Write-Host "                  By Desing Kha Tran" -ForegroundColor Cyan
+Write-Host "                  by Kha Tran Design" -ForegroundColor Cyan
 Write-Host "====================================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -76,3 +76,4 @@ Write-Host " DONG GOI THANH CONG BAN PATCH v$version ($sizeKB KB)!" -ForegroundC
 Write-Host " File xuat tai: $patchZip" -ForegroundColor Cyan
 Write-Host " Huong dan: Upload file patch nay len muc Release tren GitHub voi tag 'v$version'" -ForegroundColor Gray
 Write-Host "====================================================================" -ForegroundColor Green
+

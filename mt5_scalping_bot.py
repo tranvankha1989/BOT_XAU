@@ -315,7 +315,7 @@ class CollapsibleSection(tk.Frame):
 class KronosDesktopApp:
     def __init__(self, root: tk.Tk, lic_mgr=None):
         self.root = root
-        self.root.title("Trading AI PRO By Desing Kha Tran — Scalping Vàng & Quản Lý Lệnh Real-Time (MT5 Exness)")
+        self.root.title("Trading AI PRO by Kha Tran Design — Scalping Vàng & Quản Lý Lệnh Real-Time (MT5 Exness)")
         self.root.geometry("1450x880")
         self.root.configure(bg=BG_DARK)
         self._apply_window_and_taskbar_icon()
@@ -1294,7 +1294,7 @@ class KronosDesktopApp:
         self.menu_toggle_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         app_title_lbl = tk.Label(
-            top_bar, text="Trading AI PRO By Desing Kha Tran",
+            top_bar, text="Trading AI PRO by Kha Tran Design",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold")
         )
         app_title_lbl.pack(side=tk.LEFT, padx=(0, 8))

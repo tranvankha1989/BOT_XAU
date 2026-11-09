@@ -2,7 +2,7 @@
 kronos_updater.py
 ─────────────────
 Hệ thống Tự Động Cập Nhật Trực Tuyến qua GitHub Release (OTA Patch Updater)
-cho ứng dụng Trading AI PRO By Desing Kha Tran.
+cho ứng dụng Trading AI PRO by Kha Tran Design.
 
 Đặc tính kỹ thuật:
 1. Hoàn toàn sử dụng thư viện tiêu chuẩn (urllib, zipfile, json, tkinter), không phụ thuộc bên ngoài.
@@ -444,3 +444,4 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
         command=dialog.destroy,
     )
     btn_later.pack(side=tk.RIGHT)
+
