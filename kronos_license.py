@@ -706,21 +706,19 @@ class LicenseActivationDialog:
         else:
             self.dialog = tk.Tk()
 
+        # Ẩn cửa sổ ban đầu để nạp giao diện và tính toán tọa độ căn giữa chuẩn xác, tránh bị lệch hoặc nhấp nháy
+        self.dialog.withdraw()
         self.dialog.title("Kích Hoạt Bản Quyền Ứng Dụng — AI Scalping Bot")
-        self.dialog.geometry("640x540")
-        self.dialog.minsize(600, 500)
         self.dialog.configure(bg="#0f172a")  # Slate 900
         self.dialog.resizable(False, False)
 
-        # Căn giữa màn hình
-        self.dialog.update_idletasks()
-        w = 640
-        h = 540
-        sw = self.dialog.winfo_screenwidth()
-        sh = self.dialog.winfo_screenheight()
-        pos_x = max(0, int((sw - w) / 2))
-        pos_y = max(0, int((sh - h) / 2))
-        self.dialog.geometry(f"{w}x{h}+{pos_x}+{pos_y}")
+        # Thiết lập Icon cửa sổ nếu có
+        try:
+            icon_path = Path(__file__).resolve().parent / "tools" / "license-key-icon.ico"
+            if icon_path.exists():
+                self.dialog.iconbitmap(str(icon_path))
+        except Exception:
+            pass
 
         try:
             self.dialog.attributes("-topmost", True)
@@ -730,7 +728,42 @@ class LicenseActivationDialog:
         # Bắt sự kiện đóng cửa sổ
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # 1. Dựng đầy đủ giao diện trước
         self._build_ui()
+
+        # 2. Căn giữa màn hình chuẩn xác 100%
+        self._center_on_screen(640, 540)
+        self.dialog.deiconify()
+        self.dialog.lift()
+        self.dialog.focus_force()
+
+        # Đảm bảo giữ đúng vị trí trung tâm màn hình sau khi Windows hoàn tất vẽ (chống DWM cascade)
+        self.dialog.after(50, lambda: self._center_on_screen(640, 540))
+
+    def _center_on_screen(self, width: int = 640, height: int = 540):
+        """Căn giữa cửa sổ chính xác 100% trên màn hình hiển thị (hỗ trợ đa màn hình & DPI scaling)."""
+        self.dialog.update_idletasks()
+        w = width
+        h = height
+
+        try:
+            import ctypes
+            # Lấy độ phân giải màn hình chuẩn xác qua Windows API
+            sw = ctypes.windll.user32.GetSystemMetrics(0)
+            sh = ctypes.windll.user32.GetSystemMetrics(1)
+        except Exception:
+            sw = self.dialog.winfo_screenwidth()
+            sh = self.dialog.winfo_screenheight()
+
+        if not sw or sw <= 0:
+            sw = 1920
+        if not sh or sh <= 0:
+            sh = 1080
+
+        pos_x = max(0, int((sw - w) / 2))
+        pos_y = max(0, int((sh - h) / 2))
+
+        self.dialog.geometry(f"{w}x{h}+{pos_x}+{pos_y}")
 
     def _build_ui(self):
         root_f = tk.Frame(self.dialog, bg="#0f172a", padx=30, pady=25)
@@ -881,3 +914,4 @@ def show_activation_dialog(parent: Optional[tk.Tk], license_mgr: LicenseManager,
     else:
         dlg.dialog.mainloop()
     return dlg.success
+
