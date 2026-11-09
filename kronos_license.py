@@ -345,7 +345,7 @@ def verify_license_string(
         except ValueError:
             return False, payload, "Định dạng ngày hết hạn trong bản quyền không hợp lệ."
 
-    msg = "🎉 Bản quyền VĨNH VIỄN (PRO) hợp lệ!" if is_lifetime else f"🎉 Bản quyền hợp lệ đến ngày {expiry_date_str}!"
+    msg = "Bản quyền VĨNH VIỄN (PRO) hợp lệ!" if is_lifetime else f"Bản quyền hợp lệ đến ngày {expiry_date_str}!"
     return True, payload, msg
 
 
@@ -567,7 +567,7 @@ class LicenseManager:
                 "is_valid": False,
                 "status_type": "TAMPERED",
                 "days_remaining": 0,
-                "badge_text": "[ ⚠️ Thời gian hệ thống sai ]",
+                "badge_text": "[ Thời gian hệ thống sai ]",
                 "badge_color": "#f87171",
                 "message": "Phát hiện thời gian trên máy tính bị tua lùi bất thường! Vui lòng chỉnh lại ngày giờ chuẩn.",
                 "hwid": self.hwid,
@@ -622,7 +622,7 @@ class LicenseManager:
                     "is_valid": False,
                     "status_type": "EXPIRED",
                     "days_remaining": 0,
-                    "badge_text": "[ ⚠️ Bản quyền đã hết hạn ]",
+                    "badge_text": "[ Bản quyền đã hết hạn ]",
                     "badge_color": "#f87171",
                     "message": msg or "Bản quyền đã hết hạn. Vui lòng gia hạn thêm.",
                     "hwid": self.hwid,
@@ -652,7 +652,7 @@ class LicenseManager:
                 "is_valid": False,
                 "status_type": "TRIAL_EXPIRED",
                 "days_remaining": 0,
-                "badge_text": "[ ⚠️ Hết hạn dùng thử ]",
+                "badge_text": "[ Hết hạn dùng thử ]",
                 "badge_color": "#f87171",
                 "message": "Đã hết thời hạn 7 ngày dùng thử miễn phí. Vui lòng kích hoạt bản quyền để tiếp tục sử dụng.",
                 "hwid": self.hwid,
@@ -769,11 +769,7 @@ class LicenseActivationDialog:
         root_f = tk.Frame(self.dialog, bg="#0f172a", padx=30, pady=25)
         root_f.pack(fill=tk.BOTH, expand=True)
 
-        # 1. ICON VÀ TIÊU ĐỀ
-        icon_box = tk.Frame(root_f, bg="#1e293b", highlightthickness=1, highlightbackground="#334155", padx=12, pady=8)
-        icon_box.pack(pady=(0, 10))
-        tk.Label(icon_box, text="🔑", bg="#1e293b", fg="#f59e0b", font=("Segoe UI", 24)).pack()
-
+        # 1. TIÊU ĐỀ
         tk.Label(
             root_f, text="Kích Hoạt Bản Quyền Ứng Dụng",
             bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 16, "bold")
@@ -805,7 +801,7 @@ class LicenseActivationDialog:
         self.hwid_lbl.pack(anchor="w", pady=(2, 0))
 
         self.copy_btn = tk.Button(
-            hwid_card, text="📋 Sao chép mã", bg="#25334c", fg="#ffffff",
+            hwid_card, text="Sao chép mã", bg="#25334c", fg="#ffffff",
             activebackground="#324567", activeforeground="#ffffff",
             font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=12, pady=6, cursor="hand2",
             command=self._copy_hwid
@@ -816,7 +812,7 @@ class LicenseActivationDialog:
         key_header = tk.Frame(root_f, bg="#0f172a")
         key_header.pack(fill=tk.X, pady=(0, 4))
         tk.Label(
-            key_header, text="🔑 Chuỗi mã bản quyền (Ed25519)",
+            key_header, text="Chuỗi mã bản quyền (Ed25519)",
             bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 9, "bold")
         ).pack(side=tk.LEFT)
 
@@ -852,7 +848,7 @@ class LicenseActivationDialog:
         self.cancel_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
 
         self.activate_btn = tk.Button(
-            btn_row, text="✨ Xác Thực & Kích Hoạt", bg="#0284c7", fg="#ffffff",
+            btn_row, text="Xác Thực & Kích Hoạt", bg="#0284c7", fg="#ffffff",
             activebackground="#0369a1", activeforeground="#ffffff",
             font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=16, pady=8, cursor="hand2",
             command=self._on_activate
@@ -874,8 +870,8 @@ class LicenseActivationDialog:
         try:
             self.dialog.clipboard_clear()
             self.dialog.clipboard_append(self.license_mgr.get_hwid())
-            self.copy_btn.config(text="✓ Đã chép mã!", fg="#34d399")
-            self.dialog.after(2000, lambda: self.copy_btn.config(text="📋 Sao chép mã", fg="#ffffff"))
+            self.copy_btn.config(text="Đã chép mã!", fg="#34d399")
+            self.dialog.after(2000, lambda: self.copy_btn.config(text="Sao chép mã", fg="#ffffff"))
         except Exception as e:
             self.msg_lbl.config(text=f"Lỗi sao chép: {e}", fg="#f87171")
 
@@ -885,16 +881,16 @@ class LicenseActivationDialog:
             raw_key = ""
 
         if not raw_key:
-            self.msg_lbl.config(text="⚠️ Vui lòng dán chuỗi mã bản quyền nhận được từ Admin!", fg="#f87171")
+            self.msg_lbl.config(text="Vui lòng dán chuỗi mã bản quyền nhận được từ Admin!", fg="#f87171")
             return
 
         ok, msg = self.license_mgr.activate_key(raw_key)
         if ok:
             self.success = True
-            messagebox.showinfo("Kích Hoạt Thành Công", f"🎉 Chúc mừng bạn!\n{msg}", parent=self.dialog)
+            messagebox.showinfo("Kích Hoạt Thành Công", f"Chúc mừng bạn!\n{msg}", parent=self.dialog)
             self.dialog.destroy()
         else:
-            self.msg_lbl.config(text=f"❌ {msg}", fg="#f87171")
+            self.msg_lbl.config(text=f"{msg}", fg="#f87171")
 
     def _on_close(self):
         if self.is_startup_block and not self.success:
