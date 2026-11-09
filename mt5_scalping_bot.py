@@ -1648,30 +1648,42 @@ class KronosDesktopApp:
         summary_lbl.pack(side=tk.LEFT)
 
         pos_cols = ("ticket", "time", "symbol", "type", "volume", "open_price", "current_price", "sl", "tp", "profit", "status")
-        tree = ttk.Treeview(pos_tab, columns=pos_cols, show="headings", height=5)
         pos_headers = {
             "ticket": "Mã Lệnh (Ticket)",
-            "time": "Giờ mở",
+            "time": "Giờ",
             "symbol": "Mã",
             "type": "Loại",
             "volume": "Lot",
             "open_price": "Giá Vào (Entry)",
-            "current_price": "Giá Hiện Tại",
+            "current_price": "Giá Hiện Tại / Đóng",
             "sl": "SL (Cắt lỗ)",
             "tp": "TP (Chốt lời)",
             "profit": "Lãi / Lỗ (USD)",
-            "status": "Trạng thái Bảo vệ"
+            "status": "Trạng thái Bảo vệ / Kết quả"
         }
         pos_widths = {
-            "ticket": 95, "time": 90, "symbol": 75, "type": 55, "volume": 50,
-            "open_price": 90, "current_price": 85, "sl": 85, "tp": 85, "profit": 95, "status": 160
+            "ticket": 95, "time": 115, "symbol": 75, "type": 55, "volume": 50,
+            "open_price": 90, "current_price": 95, "sl": 80, "tp": 80, "profit": 95, "status": 175
         }
+
+        tree_container = tk.Frame(pos_tab, bg=PANEL_BG)
+        tree_container.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+
+        tree = ttk.Treeview(tree_container, columns=pos_cols, show="headings", height=5)
+        scrollbar = ttk.Scrollbar(tree_container, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
         for c in pos_cols:
             tree.heading(c, text=pos_headers[c])
             tree.column(c, width=pos_widths[c], anchor=tk.CENTER)
+
         tree.tag_configure("profit_pos", foreground=GREEN_UP)
         tree.tag_configure("profit_neg", foreground=RED_DOWN)
-        tree.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        tree.tag_configure("closed_pos", foreground="#34d399")
+        tree.tag_configure("closed_neg", foreground="#f87171")
+        tree.tag_configure("closed_be", foreground="#94a3b8")
 
         self.pos_tree_by_profile[profile_key] = tree
         self.pos_summary_lbl_by_profile[profile_key] = summary_lbl
@@ -2996,6 +3008,95 @@ class KronosDesktopApp:
             self.log_error("GET_TODAY_DEALS_STATS", e, show_in_ui=False)
             return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
+    def _get_today_closed_deals(self, symbol: str = None) -> list:
+        """Lấy danh sách các lệnh đã đóng hôm nay (theo giờ VN GMT+7) kèm giờ vào/ra, giá vào/ra, lãi/lỗ và trạng thái."""
+        if not MT5_AVAILABLE:
+            return []
+        sym_key = symbol or "__ALL__"
+        now_mono = time.monotonic()
+        if not hasattr(self, "_cached_closed_deals_map"):
+            self._cached_closed_deals_map = {}
+        cached = self._cached_closed_deals_map.get(sym_key)
+        if cached is not None and (now_mono - cached[0]) < 2.0:
+            return cached[1]
+
+        try:
+            vn_now = datetime.now(tz=VN_TZ)
+            vn_today_str = vn_now.strftime("%Y-%m-%d")
+            vn_today_start = vn_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            vn_today_start_ts = int(vn_today_start.timestamp())
+
+            query_from = datetime.fromtimestamp(vn_today_start_ts - 7200)
+            query_to = datetime.fromtimestamp(int(time.time()) + 7200)
+
+            with self._mt5_lock:
+                deals = mt5.history_deals_get(query_from, query_to)
+
+            if not deals:
+                self._cached_closed_deals_map[sym_key] = (now_mono, [])
+                return []
+
+            entry_by_pos = {}
+            for d in deals:
+                if d.entry == mt5.DEAL_ENTRY_IN:
+                    entry_by_pos[d.position_id] = d
+
+            closed_items = []
+            closed_deals = [
+                d for d in deals
+                if d.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT, getattr(mt5, "DEAL_ENTRY_OUT_BY", 3))
+            ]
+            closed_deals.sort(key=lambda x: x.time, reverse=True)
+
+            for d in closed_deals:
+                if symbol and d.symbol and d.symbol != symbol:
+                    continue
+                d_vn_dt = datetime.fromtimestamp(int(d.time), tz=VN_TZ)
+                if d_vn_dt.strftime("%Y-%m-%d") != vn_today_str:
+                    continue
+
+                ed = entry_by_pos.get(d.position_id)
+                orig_type = "BUY" if (ed and ed.type == mt5.DEAL_TYPE_BUY) else ("SELL" if d.type == mt5.DEAL_TYPE_BUY else "BUY")
+                open_p = ed.price if ed else 0.0
+                close_p = d.price
+                open_t = datetime.fromtimestamp(ed.time, tz=VN_TZ).strftime("%H:%M:%S") if ed else "---"
+                close_t = d_vn_dt.strftime("%H:%M:%S")
+                net_pnl = float(d.profit + d.swap + d.commission + getattr(d, "fee", 0.0))
+                cmt = str(d.comment or "").lower()
+
+                if "[tp" in cmt:
+                    status = f"✅ ĐÃ CHỐT TP ({close_t})"
+                elif "[sl" in cmt and net_pnl > 0.05:
+                    status = f"🛡️ DỜI SL CHỐT LÃI ({close_t})"
+                elif "[sl" in cmt and net_pnl < -0.05:
+                    status = f"🛑 ĐÃ CẮT LỖ SL ({close_t})"
+                elif abs(net_pnl) <= 0.05:
+                    status = f"🛡️ HÒA VỐN ({close_t})"
+                elif net_pnl > 0.05:
+                    status = f"✅ ĐÃ CHỐT LÃI ({close_t})"
+                else:
+                    status = f"🛑 ĐÃ ĐÓNG LỖ ({close_t})"
+
+                closed_items.append({
+                    "ticket": d.position_id,
+                    "open_time": open_t,
+                    "close_time": close_t,
+                    "time_display": f"{open_t} → {close_t}",
+                    "symbol": d.symbol,
+                    "type": orig_type,
+                    "volume": d.volume,
+                    "open_price": open_p,
+                    "close_price": close_p,
+                    "net_pnl": net_pnl,
+                    "status": status,
+                })
+
+            self._cached_closed_deals_map[sym_key] = (now_mono, closed_items)
+            return closed_items
+        except Exception as e:
+            self.log_error("GET_CLOSED_DEALS", e, show_in_ui=False)
+            return []
+
     def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None, profile_key: str = None):
         """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp cho từng Tab (XAUUSD / BTCUSD) theo Giờ Việt Nam (GMT+7)."""
         pk = profile_key or self.active_profile_key
@@ -3557,13 +3658,40 @@ class KronosDesktopApp:
             if str(pos.ticket) in selected_tickets:
                 tree_widget.selection_add(item_id)
 
+        # Thêm toàn bộ các lệnh đã chốt hôm nay (hiển thị chung trong cùng bảng, xếp mới nhất lên đầu)
+        closed_deals = self._get_today_closed_deals(symbol=symbol)
+        closed_profit_sum = 0.0
+        for cd in closed_deals:
+            closed_profit_sum += cd["net_pnl"]
+            tag = "closed_pos" if cd["net_pnl"] > 0.05 else ("closed_neg" if cd["net_pnl"] < -0.05 else "closed_be")
+            item_id = tree_widget.insert(
+                "", tk.END,
+                values=(
+                    str(cd["ticket"]),
+                    cd["time_display"],
+                    cd["symbol"],
+                    cd["type"],
+                    f"{cd['volume']:.2f}",
+                    f"{cd['open_price']:.2f}" if cd["open_price"] > 0 else "---",
+                    f"{cd['close_price']:.2f} [Đóng]",
+                    "---",
+                    "---",
+                    f"{cd['net_pnl']:+.2f} $",
+                    cd["status"]
+                ),
+                tags=(tag,)
+            )
+            if str(cd["ticket"]) in selected_tickets:
+                tree_widget.selection_add(item_id)
+
         pnl_color = GREEN_UP if total_profit >= 0 else RED_DOWN
         daily_pnl_val = self.cached_daily_pnl if pk == self.active_profile_key else ctx.get("cached_daily_pnl", 0.0)
         daily_reason_val = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
         is_locked = self._is_daily_limit_locked(pk)
         daily_lock_tag = f"  |  🔒 ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
+        closed_count = len(closed_deals)
         summary_widget.config(
-            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh  |  PnL nổi: {total_profit:+.2f}$  |  Lãi/Lỗ Hôm Nay (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
+            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh ({total_profit:+.2f}$)  |  Đã chốt hôm nay: {closed_count} lệnh ({closed_profit_sum:+.2f}$)  |  Tổng Lãi/Lỗ Ngày (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
             fg=GOLD_ACCENT if is_locked else (pnl_color if len(positions) > 0 else CYAN_LIVE)
         )
         return len(positions), total_profit
@@ -3648,14 +3776,20 @@ class KronosDesktopApp:
         if not sel:
             messagebox.showwarning("Chưa chọn lệnh", "Hãy bấm chọn 1 dòng lệnh trong bảng bên dưới trước khi bấm Đóng!")
             return
-        ticket_str = self.pos_tree.item(sel[0], "values")[0]
+        ticket_raw = str(self.pos_tree.item(sel[0], "values")[0]).replace("#", "").strip()
+        try:
+            ticket_int = int(ticket_raw)
+        except ValueError:
+            return
         with self._mt5_lock:
-            positions = mt5.positions_get(ticket=int(ticket_str))
+            positions = mt5.positions_get(ticket=ticket_int)
         if positions:
             ok, msg = self._close_single_pos(positions[0])
             self.log(msg)
             symbol = self.symbol_var.get().strip()
             self._update_open_positions_and_manage(symbol, profile_key=self.active_profile_key)
+        else:
+            self.show_toast(f"Lệnh #{ticket_int} là lệnh đã đóng trong lịch sử, không thể đóng lại.", is_error=True, duration_ms=2500)
 
     def close_all_positions(self):
         symbol = self.symbol_var.get().strip()
