@@ -5481,7 +5481,7 @@ class KronosDesktopApp:
         )
         handles, labels = self.ax.get_legend_handles_labels()
         if handles and any(bool(lbl and not lbl.startswith("_")) for lbl in labels):
-            self.ax.legend(loc="upper right", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8)
+            self.ax.legend(loc="upper left", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8, framealpha=0.85)
 
         if self.user_zoomed and self.saved_xlim is not None and self.saved_ylim is not None:
             self.ax.set_xlim(self.saved_xlim)
