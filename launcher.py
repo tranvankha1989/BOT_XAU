@@ -75,13 +75,37 @@ def load_binary_engine():
         container_bytes = aesgcm.decrypt(nonce, ciphertext, AAD_HEADER)
         raw_dict = marshal.loads(container_bytes)
 
-        # Nạp tất cả các module vào sys.modules
-        for mod_name, code_bytes in raw_dict.items():
-            code_obj = marshal.loads(code_bytes)
+        # B1: Khởi tạo tất cả module và thiết lập __package__, __path__ trong sys.modules
+        for mod_name in raw_dict.keys():
             mod = types.ModuleType(mod_name)
+            if "." in mod_name:
+                pkg_name = mod_name.rsplit(".", 1)[0]
+                mod.__package__ = pkg_name
+            else:
+                mod.__package__ = mod_name
+                mod.__path__ = []
             mod.__file__ = os.path.join(app_dir, f"{mod_name}.pyd")
             sys.modules[mod_name] = mod
-            exec(code_obj, mod.__dict__)
+
+        # B2: Gán submodules vào parent packages
+        for mod_name in raw_dict.keys():
+            if "." in mod_name:
+                pkg_name, sub_name = mod_name.rsplit(".", 1)
+                if pkg_name in sys.modules:
+                    setattr(sys.modules[pkg_name], sub_name, sys.modules[mod_name])
+
+        # B3: Thực thi code objects theo thứ tự phụ thuộc
+        order = ["model.module", "model.kronos", "model", "kronos_license", "kronos_updater", "mt5_scalping_bot"]
+        executed = set()
+        for mod_name in order:
+            if mod_name in raw_dict:
+                code_obj = marshal.loads(raw_dict[mod_name])
+                exec(code_obj, sys.modules[mod_name].__dict__)
+                executed.add(mod_name)
+        for mod_name, code_bytes in raw_dict.items():
+            if mod_name not in executed:
+                code_obj = marshal.loads(code_bytes)
+                exec(code_obj, sys.modules[mod_name].__dict__)
 
         # Giải phóng bộ nhớ đệm giải mã
         del container_bytes

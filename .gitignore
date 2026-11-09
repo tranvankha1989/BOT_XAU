@@ -83,6 +83,7 @@ tools/ed25519_private.pem
 tools/issued_licenses.json
 tools/build/
 tools/dist/
+*.spec
 installer_output/
 build_staging/
 core_engine.bin

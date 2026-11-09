@@ -82,13 +82,37 @@ def unpack_and_load_in_memory(bin_path: Path, target_module: str = "mt5_scalping
     container_bytes = aesgcm.decrypt(nonce, ciphertext, AAD_HEADER)
     raw_dict = marshal.loads(container_bytes)
 
-    # Đăng ký các module phụ thuộc trước (kronos_license, kronos_updater...)
-    for mod_name, code_bytes in raw_dict.items():
-        code_obj = marshal.loads(code_bytes)
+    # B1: Khởi tạo tất cả module và thiết lập __package__, __path__ trong sys.modules
+    for mod_name in raw_dict.keys():
         mod = types.ModuleType(mod_name)
+        if "." in mod_name:
+            pkg_name = mod_name.rsplit(".", 1)[0]
+            mod.__package__ = pkg_name
+        else:
+            mod.__package__ = mod_name
+            mod.__path__ = []
         mod.__file__ = f"<native_binary_{mod_name}>"
         sys.modules[mod_name] = mod
-        exec(code_obj, mod.__dict__)
+
+    # B2: Gán submodules vào parent packages
+    for mod_name in raw_dict.keys():
+        if "." in mod_name:
+            pkg_name, sub_name = mod_name.rsplit(".", 1)
+            if pkg_name in sys.modules:
+                setattr(sys.modules[pkg_name], sub_name, sys.modules[mod_name])
+
+    # B3: Thực thi code objects theo thứ tự phụ thuộc
+    order = ["model.module", "model.kronos", "model", "kronos_license", "kronos_updater", "mt5_scalping_bot"]
+    executed = set()
+    for mod_name in order:
+        if mod_name in raw_dict:
+            code_obj = marshal.loads(raw_dict[mod_name])
+            exec(code_obj, sys.modules[mod_name].__dict__)
+            executed.add(mod_name)
+    for mod_name, code_bytes in raw_dict.items():
+        if mod_name not in executed:
+            code_obj = marshal.loads(code_bytes)
+            exec(code_obj, sys.modules[mod_name].__dict__)
 
     # Xóa sạch container_bytes khỏi RAM ngay sau khi nạp xong
     del container_bytes
@@ -100,10 +124,13 @@ def unpack_and_load_in_memory(bin_path: Path, target_module: str = "mt5_scalping
 if __name__ == "__main__":
     out_file = ROOT_DIR / "core_engine.bin"
     src = {
+        "model.module": ROOT_DIR / "model" / "module.py",
+        "model.kronos": ROOT_DIR / "model" / "kronos.py",
+        "model": ROOT_DIR / "model" / "__init__.py",
         "kronos_license": ROOT_DIR / "kronos_license.py",
         "kronos_updater": ROOT_DIR / "kronos_updater.py",
         "mt5_scalping_bot": ROOT_DIR / "mt5_scalping_bot.py",
     }
-    print("[*] Đang băm và mã hóa mã nguồn sang file nhị phân (core_engine.bin)...")
+    print("[*] Đang băm và mã hóa toàn bộ mã nguồn sang file nhị phân (core_engine.bin)...")
     sz = pack_code_to_binary(src, out_file)
     print(f"[OK] Đã xuất file nhị phân: {out_file} ({sz / 1024:.1f} KB)")

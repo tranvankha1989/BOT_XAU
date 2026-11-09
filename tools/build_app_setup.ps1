@@ -50,7 +50,7 @@ if (-not (Test-Path $outputDir)) { New-Item -ItemType Directory -Path $outputDir
 Write-Host ""
 Write-Host "[4/5] Bien dich Bootloader nhan may bang PyInstaller..." -ForegroundColor Yellow
 $iconPath = Join-Path $Root "tools\license-key-icon.ico"
-pyinstaller --noconsole `
+python -m PyInstaller --noconsole `
     --name="Trading AI PRO" `
     --icon="$iconPath" `
     --clean `
@@ -63,6 +63,9 @@ pyinstaller --noconsole `
     --hidden-import="pandas" `
     --hidden-import="PIL" `
     --hidden-import="matplotlib" `
+    --hidden-import="tqdm" `
+    --hidden-import="huggingface_hub" `
+    --hidden-import="gradio_client" `
     launcher.py
 
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller gap loi trong qua trinh build bootloader!" }
