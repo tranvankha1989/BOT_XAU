@@ -366,6 +366,7 @@ class KronosDesktopApp:
         self._forming_body_rect = None
         self._live_price_hline = None
         self._live_price_annot = None
+        self._candle_countdown_annot = None
         self._last_drawn_chart_key = None
         self._last_drawn_pos_sig = None
         self._redraw_pending = False
@@ -2602,6 +2603,61 @@ class KronosDesktopApp:
                 except Exception:
                     pass
 
+    def _get_candle_countdown_str(self, candle_ts, tf_str: str, symbol: str = None) -> str:
+        """Tính chuỗi thời gian đếm ngược (phút:giây) cho đến khi đóng cây nến hiện tại (chuẩn TradingView)."""
+        if candle_ts is None:
+            return "00:00"
+        try:
+            if hasattr(candle_ts, "timestamp"):
+                c_ts = int(candle_ts.timestamp())
+            elif isinstance(candle_ts, (int, float)):
+                c_ts = int(candle_ts)
+            else:
+                c_ts = int(pd.to_datetime(candle_ts).timestamp())
+        except Exception:
+            return "00:00"
+
+        tf_map = {
+            "M1": 60,
+            "M5": 300,
+            "M15": 900,
+            "M30": 1800,
+            "H1": 3600,
+            "H4": 14400,
+            "D1": 86400,
+        }
+        dur = tf_map.get(str(tf_str).upper().strip(), 60)
+
+        # Lấy mốc thời gian hiện tại (ưu tiên broker server time từ tick nếu có)
+        now_ts = int(time.time())
+        if MT5_AVAILABLE and symbol:
+            try:
+                with self._mt5_lock:
+                    tick = mt5.symbol_info_tick(symbol)
+                if tick and getattr(tick, "time", 0) > 0:
+                    if abs(now_ts - tick.time) < 600:
+                        now_ts = int(tick.time)
+            except Exception:
+                pass
+
+        elapsed = max(0, now_ts - c_ts)
+        if elapsed <= dur:
+            rem = dur - elapsed
+        else:
+            rem = max(0, dur - (elapsed % dur))
+            if rem == dur:
+                rem = 0
+
+        if rem >= 3600:
+            h = rem // 3600
+            m = (rem % 3600) // 60
+            s = rem % 60
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        else:
+            m = rem // 60
+            s = rem % 60
+            return f"{m:02d}:{s:02d}"
+
     def _on_mouse_scroll(self, event):
         """Lăn chuột lên để mở rộng nến (xem rõ chi tiết), lăn chuột xuống để thu hẹp nến (xem bao quát nhiều nến hơn)."""
         if event.inaxes != self.ax:
@@ -4365,11 +4421,17 @@ class KronosDesktopApp:
                     self._forming_body_rect.set_facecolor(col)
                     self._forming_body_rect.set_edgecolor(col)
 
+                    last_candle_ts = last_row["timestamps"]
+                    cd_str = self._get_candle_countdown_str(last_candle_ts, active_tf, symbol=symbol)
+
                     if self._live_price_hline is not None:
                         self._live_price_hline.set_ydata([c, c])
                     if self._live_price_annot is not None:
                         self._live_price_annot.xy = (1.0, c)
                         self._live_price_annot.set_text(f" {c:.2f} ")
+                    if self._candle_countdown_annot is not None:
+                        self._candle_countdown_annot.xy = (1.0, c)
+                        self._candle_countdown_annot.set_text(f" {cd_str} ")
 
                     # Cập nhật số Lãi/Lỗ ($) đang nhảy trên nhãn Entry của các lệnh đang mở (giữ nguyên nhãn lệnh chọn nếu có)
                     if open_positions and self._pos_text_artists:
@@ -4399,7 +4461,7 @@ class KronosDesktopApp:
                     if self.chart_mode == "AI_FORECAST" and active_tf != ana_tf:
                         zoom_hint = f" [⚠ Nến dự báo AI thuộc khung {ana_tf} — bấm nút {ana_tf} để xem]"
                     self.ax.set_title(
-                        f"[{mode_label}] {symbol} ({active_tf}) — Giá Live: {c:.2f}{zoom_hint}",
+                        f"[{mode_label}] {symbol} ({active_tf}) — Giá Live: {c:.2f} ({cd_str}){zoom_hint}",
                         color=GOLD_ACCENT, fontsize=9, fontweight="bold"
                     )
                     self._request_canvas_redraw()
@@ -5334,6 +5396,9 @@ class KronosDesktopApp:
             y=live_price, color=CYAN_LIVE, linestyle="-.", linewidth=0.9, alpha=0.85
         )
 
+        last_candle_ts = hist["timestamps"].iloc[-1]
+        cd_str = self._get_candle_countdown_str(last_candle_ts, tf, symbol=symbol)
+
         # Hiển thị Nhãn Mức Giá Hiện Tại trực tiếp trên Thanh Giá bên phải (như TradingView)
         self._live_price_annot = self.ax.annotate(
             f" {live_price:.2f} ",
@@ -5348,7 +5413,24 @@ class KronosDesktopApp:
             ha="left",
             bbox=dict(boxstyle="square,pad=0.22", facecolor=CYAN_LIVE, edgecolor="#00b8d4", lw=1),
             annotation_clip=False,
-            zorder=15
+            zorder=20
+        )
+
+        # Đồng hồ đếm ngược thời gian đóng cây nến hiện tại trực tiếp dưới nhãn giá (chuẩn TradingView)
+        self._candle_countdown_annot = self.ax.annotate(
+            f" {cd_str} ",
+            xy=(1.0, live_price),
+            xycoords=("axes fraction", "data"),
+            xytext=(2, -13),
+            textcoords="offset points",
+            color="#00e5ff",
+            fontsize=8.0,
+            fontweight="bold",
+            va="center",
+            ha="left",
+            bbox=dict(boxstyle="square,pad=0.20", facecolor="#131722", edgecolor="#2a2e39", lw=1),
+            annotation_clip=False,
+            zorder=19
         )
 
         span_x = max(view_xlim[1] - view_xlim[0], 10.0)
@@ -5606,7 +5688,7 @@ class KronosDesktopApp:
         if self.chart_mode == "AI_FORECAST" and tf != ana_tf_hint:
             zoom_hint = f" [⚠ Nến dự báo AI thuộc khung {ana_tf_hint} — bấm nút {ana_tf_hint} để xem]"
         self.ax.set_title(
-            f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f}{zoom_hint}",
+            f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f} ({cd_str}){zoom_hint}",
             color=GOLD_ACCENT, fontsize=9, fontweight="bold"
         )
         handles, labels = self.ax.get_legend_handles_labels()
