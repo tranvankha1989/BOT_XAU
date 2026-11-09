@@ -23,6 +23,11 @@ import marshal
 import hashlib
 import traceback
 
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 # 1. Đảm bảo thư mục làm việc luôn cố định tại thư mục chứa file thực thi
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -78,6 +83,12 @@ if False:
     import einops
     import safetensors
     import tqdm
+    import cryptography
+    import cryptography.hazmat.primitives.asymmetric.ed25519
+    import cryptography.hazmat.primitives.ciphers.aead
+    import cryptography.hazmat.primitives.kdf.pbkdf2
+    import cryptography.hazmat.primitives.hashes
+    import cryptography.exceptions
 
 # Khóa bí mật dẫn xuất nội bộ của ứng dụng (32 bytes AES-256)
 PROPRIETARY_SALT = b"TRADING_AI_PRO_KHA_TRAN_DESIGN_IMMUTABLE_PROPRIETARY_SALT_2026"
@@ -225,7 +236,19 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
+    except SystemExit as se:
+        if se.code not in (0, None):
+            err_msg = f"Ứng dụng đã thoát sớm với mã lỗi: {se.code}\n\nTraceback:\n{traceback.format_exc()}"
+            try:
+                log_dir = os.path.join(get_app_dir(), "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                with open(os.path.join(log_dir, "crash_startup.log"), "w", encoding="utf-8") as f:
+                    f.write(err_msg)
+            except Exception:
+                pass
+            show_native_error("Lỗi Khởi Động Ứng Dụng", err_msg)
+            sys.exit(se.code)
+    except BaseException as e:
         err_msg = traceback.format_exc()
         try:
             log_dir = os.path.join(get_app_dir(), "logs")

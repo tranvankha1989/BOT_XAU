@@ -57,6 +57,11 @@ python -m PyInstaller --noconsole `
     --distpath="$stagingDir\dist" `
     --workpath="$stagingDir\work" `
     --hidden-import="cryptography" `
+    --hidden-import="cryptography.hazmat.primitives.asymmetric.ed25519" `
+    --hidden-import="cryptography.hazmat.primitives.kdf.pbkdf2" `
+    --hidden-import="cryptography.hazmat.primitives.hashes" `
+    --hidden-import="cryptography.hazmat.primitives.ciphers.aead" `
+    --hidden-import="cryptography.exceptions" `
     --hidden-import="MetaTrader5" `
     --hidden-import="torch" `
     --hidden-import="numpy" `
@@ -68,6 +73,7 @@ python -m PyInstaller --noconsole `
     --hidden-import="gradio_client" `
     --hidden-import="einops" `
     --hidden-import="safetensors" `
+    --collect-all="cryptography" `
     --collect-all="einops" `
     --collect-all="safetensors" `
     launcher.py

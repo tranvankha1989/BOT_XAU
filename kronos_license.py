@@ -60,10 +60,18 @@ try:
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.primitives import hashes
     from cryptography.exceptions import InvalidSignature
-except ImportError:
-    print("[ERROR] Thư viện 'cryptography' chưa được cài đặt.")
-    print("Vui lòng chạy: pip install cryptography")
-    sys.exit(1)
+except Exception as e:
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"Lỗi khởi động bảo mật (kronos_license):\nThiếu mô-đun cryptography hoặc các phần tử mật mã ({e}).\nVui lòng cài đặt lại phần mềm.",
+            "Lỗi Bản Quyền — Trading AI PRO",
+            0x10 | 0x10000
+        )
+    except Exception:
+        pass
+    raise
 
 logger = logging.getLogger("Kronos.License")
 
