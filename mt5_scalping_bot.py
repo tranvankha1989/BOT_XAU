@@ -691,11 +691,12 @@ class KronosDesktopApp:
         sig_color = self._sig_color or GOLD_ACCENT
         self.signal_title_lbl.config(text=sig_title, fg=sig_color)
         if self._last_detail_prefix:
-            self.signal_detail_lbl.config(text=f"{self._last_detail_prefix}{self._get_live_bot_status_text()}")
+            self.signal_detail_lbl.config(text=self._last_detail_prefix)
         else:
             self.signal_detail_lbl.config(
                 text="💡 Rê chuột: Crosshair | Lăn chuột: Co giãn nến | Kéo chuột: Di chuyển | Chuột phải / Nháy đúp: Reset."
             )
+        self._update_bot_status_bar(target_key)
 
         # Cập nhật bảng 6 cây nến dự báo AI theo đúng Tab đang mở
         if hasattr(self, "tree"):
@@ -1635,6 +1636,32 @@ class KronosDesktopApp:
             bg=PANEL_BG, fg=TEXT_MAIN, font=("Consolas", 8), justify=tk.LEFT, anchor="w"
         )
         self.signal_detail_lbl.pack(fill=tk.X, pady=(2, 0))
+
+        # THANH TRẠNG THÁI HOẠT ĐỘNG BOT CHUYÊN DỤNG (BOT STATUS & REAL-TIME COUNTDOWN STRIP)
+        self.bot_status_frame = tk.Frame(
+            sig_left, bg="#121824", padx=8, pady=3,
+            highlightthickness=1, highlightbackground="#222f44"
+        )
+        self.bot_status_frame.pack(fill=tk.X, pady=(4, 0))
+
+        self.bot_status_icon_lbl = tk.Label(
+            self.bot_status_frame, text="⚪", bg="#121824", font=("Segoe UI", 9)
+        )
+        self.bot_status_icon_lbl.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.bot_status_text_lbl = tk.Label(
+            self.bot_status_frame,
+            text="TRẠNG THÁI BOT: ĐANG KHỞI TẠO...",
+            bg="#121824", fg=TEXT_MUTED, font=("Segoe UI", 8, "bold"), anchor="w"
+        )
+        self.bot_status_text_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.bot_countdown_lbl = tk.Label(
+            self.bot_status_frame,
+            text="--:--",
+            bg="#121824", fg=GOLD_ACCENT, font=("Consolas", 9, "bold"), anchor="e"
+        )
+        self.bot_countdown_lbl.pack(side=tk.RIGHT, padx=(6, 0))
 
         # Menu chuột phải trên biểu đồ kiểu TradingView
         self.chart_context_menu = tk.Menu(
@@ -3226,6 +3253,7 @@ class KronosDesktopApp:
                 if tick is not None:
                     self._check_pending_pullback_order(symbol, tick, profile_key=active_pk)
                 self._update_left_quick_info(symbol, tf_str, tick, pos_count, total_profit)
+                self._update_bot_status_bar(active_pk)
                 self._sync_self_to_active_ctx()
 
                 # Quản lý song song Tab còn lại ở chế độ chạy ngầm (Auto-Hòa vốn, Trailing Stop, Thoát đảo chiều, Chờ giá hồi, Giới hạn Lãi/Lỗ ngày)
@@ -3740,8 +3768,9 @@ class KronosDesktopApp:
                 self.pending_pullback_order = None
             return
 
-        # 2. Nếu giá đã hồi về vùng cho phép: Khoảng cách SL hiện tại <= SL tối đa (hoặc max_sl_price == 0 là theo AI)
-        if max_sl_price <= 0.0 or cur_sl_dist <= max_sl_price + tols["max_sl_tol"]:
+        # 2. Nếu giá đã hồi về vùng cho phép: Khoảng cách SL hiện tại <= SL tối đa (hoặc max_sl_cap == 0 là theo AI)
+        max_sl_cap = p.get("effective_max_sl", max_sl_price)
+        if max_sl_cap <= 0.0 or cur_sl_dist <= max_sl_cap + tols["max_sl_tol"]:
             is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
             should_execute = is_auto_on or p.get("manual_queued", False)
             if not should_execute:
@@ -3759,14 +3788,17 @@ class KronosDesktopApp:
             if spread_usd > max_spread:
                 return
 
-            cached_tp_val = self.cached_tp if pk == self.active_profile_key else ctx.get("cached_tp")
-            if rr > 0.0:
-                tp_dist = cur_sl_dist * rr
-                tp_price = round(cur_price + tp_dist, 2) if action == "BUY" else round(cur_price - tp_dist, 2)
-            elif cached_tp_val is not None:
-                tp_price = float(cached_tp_val)
+            cached_tp_val = p.get("target_tp_price") or (self.cached_tp if pk == self.active_profile_key else ctx.get("cached_tp"))
+            min_rr = 2.0 if p.get("sl_tightened_for_2r") else (rr if rr > 0.0 else 2.0)
+            target_tp_dist = round(cur_sl_dist * max(rr, min_rr), 2)
+            if cached_tp_val is not None:
+                cached_dist = abs(float(cached_tp_val) - cur_price)
+                if cached_dist >= target_tp_dist:
+                    tp_price = float(cached_tp_val)
+                else:
+                    tp_price = round(cur_price + target_tp_dist, 2) if action == "BUY" else round(cur_price - target_tp_dist, 2)
             else:
-                tp_price = round(cur_price + cur_sl_dist * 1.5, 2) if action == "BUY" else round(cur_price - cur_sl_dist * 1.5, 2)
+                tp_price = round(cur_price + target_tp_dist, 2) if action == "BUY" else round(cur_price - target_tp_dist, 2)
             ctx["cached_tp"] = tp_price
             if pk == self.active_profile_key:
                 self.cached_tp = tp_price
@@ -3785,7 +3817,7 @@ class KronosDesktopApp:
                 if pk == self.active_profile_key:
                     self.pending_pullback_order = p
                 return
-            self.log(f"🎯 [{pk} - Khớp Lệnh Chờ Hồi SL <= {max_sl_price:.1f} giá] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f} giá) -> {ord_msg}")
+            self.log(f"🎯 [{pk} - Khớp Lệnh Chờ Hồi SL ≤ {max_sl_cap:.2f} giá (Đạt RR ≥ 2R)] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f} giá) -> {ord_msg}")
 
     def _update_left_quick_info(self, symbol, tf_str, tick, pos_count, total_profit):
         bid_str = f"{tick.bid:.2f}" if tick else "---"
@@ -3799,11 +3831,12 @@ class KronosDesktopApp:
             if self.pending_pullback_order is not None:
                 p = self.pending_pullback_order
                 try:
-                    max_sl_p = max(float(self.max_sl_price_var.get()), 0.5)
-                except ValueError:
+                    max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
+                except (ValueError, TypeError):
                     max_sl_p = 5.0
                 lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
-                ai_state = f"⏳ Chờ hồi {p['action']} @ {lim_entry:.2f}"
+                rr_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
+                ai_state = f"⏳ Chờ hồi {p['action']}{rr_tag} @ {lim_entry:.2f}"
             else:
                 ai_state = "Đã có dự báo AI"
             trend_str = self.cached_action if self.cached_action else "ĐỨNG NGOÀI (WAIT)"
@@ -4777,7 +4810,7 @@ class KronosDesktopApp:
                 order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
                 price = tick.ask if action == "BUY" else tick.bid
 
-                # Kiểm tra cứng điều kiện khoảng cách SL tối đa (nếu cài > 0 thì không cho phép vào lệnh khi khoảng cách SL vượt quá SL tối đa; nếu = 0 là lấy 100% theo SL AI)
+                # Kiểm tra cứng điều kiện khoảng cách SL tối đa & tối ưu tỷ lệ RR >= 2R
                 try:
                     max_sl_price = max(float(cfg.get("max_sl_price", 5.0)), 0.0)
                 except ValueError:
@@ -4785,13 +4818,24 @@ class KronosDesktopApp:
 
                 tols = self._get_symbol_tolerances(symbol, tick)
                 actual_sl_dist = (price - sl_price) if action == "BUY" else (sl_price - price)
-                if max_sl_price > 0.0 and actual_sl_dist > max_sl_price + tols["max_sl_tol"]:
-                    limit_entry = (sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price)
+                dist_tp = abs(tp_price - price)
+
+                eff_max_sl = max_sl_price
+                if actual_sl_dist > 0.001 and dist_tp < 2.0 * actual_sl_dist:
+                    eff_max_sl = round(max_sl_price / 2.0, 2) if max_sl_price > 0.0 else round(actual_sl_dist / 2.0, 2)
+
+                if eff_max_sl > 0.0 and actual_sl_dist > eff_max_sl + tols["max_sl_tol"]:
+                    limit_entry = (sl_price + eff_max_sl) if action == "BUY" else (sl_price - eff_max_sl)
+                    reason_tag = " (Tự động giảm 1/2 Max SL do RR < 2R)" if eff_max_sl < max_sl_price else ""
                     return (
                         False,
-                        f"⏳ SL hiện tại cách {actual_sl_dist:.2f} giá > SL tối đa ({max_sl_price:.2f} giá). "
+                        f"⏳ SL hiện tại cách {actual_sl_dist:.2f} giá > SL tối đa ({eff_max_sl:.2f} giá{reason_tag}). "
                         f"Phải chờ giá hồi về {'<=' if action == 'BUY' else '>='} {limit_entry:.2f} mới vào lệnh!"
                     )
+
+                if actual_sl_dist > 0.001 and dist_tp < 2.0 * actual_sl_dist:
+                    min_2r_tp = round(actual_sl_dist * 2.0, digits)
+                    tp_price = round(price + min_2r_tp, digits) if action == "BUY" else round(price - min_2r_tp, digits)
 
                 magic_num = self._get_profile_magic_number(pk)
                 request = {
@@ -4900,6 +4944,104 @@ class KronosDesktopApp:
         pk = profile_key or self.active_profile_key
         self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
 
+    def _update_bot_status_bar(self, profile_key: str = None):
+        """Cập nhật thanh trạng thái hoạt động thực tế của Bot kèm thời gian đếm ngược chính xác từng giây."""
+        if not hasattr(self, "bot_status_frame") or not self.bot_status_frame.winfo_exists():
+            return
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx.get(pk, {})
+        now = datetime.now()
+        symbol = str(cfg.get("symbol", "")).strip() or pk
+        scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+
+        is_running = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
+        cd = self.cooldown_until if pk == self.active_profile_key else ctx.get("cooldown_until")
+        bcd = ctx.get("basket_cooldown_until")
+        fscd = self.fast_sl_cooldown_until if pk == self.active_profile_key else ctx.get("fast_sl_cooldown_until")
+        pending_pullback = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
+
+        # 1. Khóa do chạm giới hạn Lãi ngày / Cắt lỗ ngày
+        if self._is_daily_limit_locked(pk):
+            reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
+            icon = "🔒"
+            status_text = f"[{pk}] ĐÃ DỪNG GIAO DỊCH HÔM NAY — {reason}"
+            fg_color = GOLD_ACCENT if "LÃI" in reason.upper() else "#f87171"
+            countdown_text = "🌅 Tự động mở lúc 00:00 (VN)"
+            cd_fg = GOLD_ACCENT
+
+        # 2. Tạm nghỉ do lệnh dính SL < 5 phút
+        elif fscd is not None and now < fscd:
+            rem_sec = max(0, int((fscd - now).total_seconds()))
+            m, s = divmod(rem_sec, 60)
+            end_time_str = fscd.strftime("%H:%M:%S")
+            icon = "⚡"
+            status_text = f"[{pk}] TẠM NGHỈ DO LỆNH SL < 5 PHÚT — Tránh thị trường biến động giật quét (Mở lại lúc {end_time_str})"
+            fg_color = "#f59e0b"  # Vàng cam cảnh báo
+            countdown_text = f"⏱️ Còn: {m:02d}p:{s:02d}s"
+            cd_fg = "#fcd34d"
+
+        # 3. Tạm nghỉ sau chuỗi thua liên tiếp
+        elif cd is not None and now < cd:
+            losses = self.consec_loss_count if pk == self.active_profile_key else ctx.get("consec_loss_count", 0)
+            rem_sec = max(0, int((cd - now).total_seconds()))
+            m, s = divmod(rem_sec, 60)
+            end_time_str = cd.strftime("%H:%M:%S")
+            icon = "⏸️"
+            status_text = f"[{pk}] TẠM NGHỈ CHUỖI THUA ({losses} lệnh liên tiếp) — Tạm dừng giao dịch bảo toàn vốn (Mở lại lúc {end_time_str})"
+            fg_color = "#f87171"  # Đỏ cam
+            countdown_text = f"⏱️ Còn: {m:02d}p:{s:02d}s"
+            cd_fg = "#fca5a5"
+
+        # 4. Tạm nghỉ sau khi chốt lời chùm lệnh
+        elif bcd is not None and now < bcd:
+            rem_sec = max(0, int((bcd - now).total_seconds()))
+            m, s = divmod(rem_sec, 60)
+            end_time_str = bcd.strftime("%H:%M:%S")
+            icon = "☕"
+            status_text = f"[{pk}] TẠM NGHỈ SAU CHỐT LỜI CHÙM LỆNH — Tránh vào lại đỉnh/đáy (Mở lại lúc {end_time_str})"
+            fg_color = "#38bdf8"
+            countdown_text = f"⏱️ Còn: {m:02d}p:{s:02d}s"
+            cd_fg = "#7dd3fc"
+
+        # 5. Đang có lệnh Chờ Giá Hồi (Pullback)
+        elif pending_pullback is not None:
+            p_act = pending_pullback.get("action", "BUY")
+            p_sl = pending_pullback.get("sl_price", 0.0)
+            p_max_sl = pending_pullback.get("effective_max_sl", float(cfg.get("max_sl_price", 5.0)))
+            p_target = (p_sl + p_max_sl) if p_act == "BUY" else (p_sl - p_max_sl)
+            cond_str = "<=" if p_act == "BUY" else ">="
+            rr_tag = " [Siết RR ≥ 2R]" if pending_pullback.get("sl_tightened_for_2r") else ""
+            icon = "⏳"
+            status_text = f"[{pk}] ĐANG CHỜ GIÁ HỒI VÀO LỆNH {p_act}{rr_tag} — Cần hồi về {cond_str} {p_target:.2f} (Cách SL ≤ {p_max_sl:.2f} giá)"
+            fg_color = "#06b6d4"  # Cyan
+            countdown_text = "🎯 Đang rình Entry"
+            cd_fg = GOLD_ACCENT
+
+        # 6. Bot AUTO đang BẬT (RUNNING)
+        elif is_running:
+            icon = "🟢"
+            status_text = f"[{pk}] BOT ĐANG CHẠY TỰ ĐỘNG — Đang canh nến {scalp_tf} & tín hiệu AI để vào lệnh"
+            fg_color = "#10b981"  # Xanh ngọc
+            tf_sec_map = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
+            tf_sec = tf_sec_map.get(scalp_tf, 60)
+            rem_candle_sec = tf_sec - (int(time.time()) % tf_sec)
+            cm, cs = divmod(rem_candle_sec, 60)
+            countdown_text = f"⏱️ Nến {scalp_tf}: {cm:02d}p:{cs:02d}s"
+            cd_fg = CYAN_LIVE
+
+        # 7. Bot AUTO đang TẮT (Thủ công)
+        else:
+            icon = "⚪"
+            status_text = f"[{pk}] TẮT TỰ ĐỘNG (Thủ công) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh"
+            fg_color = "#94a3b8"  # Xám sáng
+            countdown_text = "TẠM DỪNG"
+            cd_fg = "#64748b"
+
+        self.bot_status_icon_lbl.config(text=icon)
+        self.bot_status_text_lbl.config(text=status_text, fg=fg_color)
+        self.bot_countdown_lbl.config(text=countdown_text, fg=cd_fg)
+
     def _get_live_bot_status_text(self, profile_key: str = None) -> str:
         """Lấy chuỗi trạng thái thực tế của Bot theo đúng Tab để hiển thị đồng bộ trên thanh tín hiệu."""
         pk = profile_key or self.active_profile_key
@@ -4907,7 +5049,7 @@ class KronosDesktopApp:
         ctx = self.profile_ctx[pk]
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-            return f"🔒 Đã dừng giao dịch hết hôm nay ({reason})"
+            return f"🔒 Đã dừng giao dịch hôm nay ({reason})"
         if self._is_cooldown_active(pk):
             return self._get_cooldown_remaining_str(pk)
         scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
@@ -4918,8 +5060,7 @@ class KronosDesktopApp:
 
     def _sync_signal_detail_status(self):
         """Cập nhật ngay lập tức dòng trạng thái Bot trên thanh tín hiệu khi người dùng gạt công tắc AUTO."""
-        if self._last_detail_prefix:
-            self.signal_detail_lbl.config(text=f"{self._last_detail_prefix}{self._get_live_bot_status_text()}")
+        self._update_bot_status_bar(self.active_profile_key)
 
     def toggle_bot_start_stop(self):
         """Gộp chung START và STOP trên 1 công tắc gạt thay đổi trạng thái riêng cho Tab đang mở."""
@@ -5358,9 +5499,25 @@ class KronosDesktopApp:
                                                 f"tự động thoát ngay khi giá hồi về {be_label_tag} ({be_target_price:.2f})!"
                                             )
 
-                # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL
+                # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL & TỶ LỆ REWARD/RISK >= 2R
                 cur_sl_dist = abs(entry_ref - sl_price)
-                limit_entry_price = round((sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price), 2) if max_sl_price > 0.0 else entry_ref
+                dist_tp = abs(tp_price - entry_ref)
+
+                effective_max_sl = max_sl_price
+                sl_tightened_for_2r = False
+                if action in ("BUY", "SELL") and cur_sl_dist > 0.001:
+                    # Kiểm tra khoảng cách từ entry đến TP có đạt mức >= 2R (dist_tp >= 2.0 * cur_sl_dist) không
+                    if dist_tp < 2.0 * cur_sl_dist:
+                        # Tự động giảm SL tối đa do người dùng cài chia 2 (ví dụ 5.0 -> 2.50) để thu gọn khoảng cách & nâng tỷ lệ RR
+                        base_sl_cap = max_sl_price if max_sl_price > 0.0 else cur_sl_dist
+                        effective_max_sl = round(base_sl_cap / 2.0, 2)
+                        sl_tightened_for_2r = True
+                        self.log(
+                            f"⚖️ [{pk} - Tối Ưu RR ≥ 2R] Khoảng cách TP ({dist_tp:.2f}$) < 2R của SL ({cur_sl_dist:.2f}$) -> "
+                            f"Tự động giảm SL tối đa: {base_sl_cap:.2f}$ ÷ 2 = {effective_max_sl:.2f}$ để thu gọn khoảng cách & tối ưu RR ≥ 2R!"
+                        )
+
+                limit_entry_price = round((sl_price + effective_max_sl) if action == "BUY" else (sl_price - effective_max_sl), 2) if effective_max_sl > 0.0 else entry_ref
                 is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
 
                 trade_msg = self._get_live_bot_status_text(pk)
@@ -5368,7 +5525,7 @@ class KronosDesktopApp:
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
                         reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
-                        trade_msg = f"🔒 Đã dừng giao dịch hết hôm nay ({reason_lk})"
+                        trade_msg = f"🔒 Đã dừng giao dịch hôm nay ({reason_lk})"
                         self.log(f"[{pk}] {trade_msg}")
                     elif self._is_cooldown_active(pk):
                         ctx["pending_pullback_order"] = None
@@ -5378,20 +5535,24 @@ class KronosDesktopApp:
                         ctx["pending_pullback_order"] = None
                         trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Không mở {action} đè)"
                         self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
-                    elif max_sl_price > 0.0 and cur_sl_dist > max_sl_price + tols["max_sl_tol"]:
+                    elif effective_max_sl > 0.0 and cur_sl_dist > effective_max_sl + tols["max_sl_tol"]:
                         ctx["pending_pullback_order"] = {
                             "symbol": symbol,
                             "action": action,
                             "sl_price": sl_price,
                             "manual_queued": False,
+                            "effective_max_sl": effective_max_sl,
+                            "sl_tightened_for_2r": sl_tightened_for_2r,
+                            "target_tp_price": tp_price,
                         }
                         cond_op = "<=" if action == "BUY" else ">="
+                        tight_tag = " [Siết 1/2 Max SL do RR < 2R]" if sl_tightened_for_2r else ""
                         trade_msg = (
-                            f"⏳ SL = {cur_sl_dist:.2f} giá > Max ({max_sl_price:.1f} giá) -> "
+                            f"⏳ SL = {cur_sl_dist:.2f} giá > Max ({effective_max_sl:.2f} giá{tight_tag}) -> "
                             f"Đang chờ giá hồi về {cond_op} {limit_entry_price:.2f} mới vào {action}"
                         )
                         self.log(
-                            f"⏳ [{pk} - Chờ Giá Hồi <= SL Max] AI báo {action} (SL AI+{sl_buffer:.1f} = {sl_price:.2f}, cách {cur_sl_dist:.2f} giá > SL Max {max_sl_price:.2f} giá). "
+                            f"⏳ [{pk} - Chờ Giá Hồi <= SL Max{tight_tag}] AI báo {action} (SL AI+{sl_buffer:.1f} = {sl_price:.2f}, cách {cur_sl_dist:.2f} giá > SL Max {effective_max_sl:.2f} giá). "
                             f"Đang canh giá hồi về {cond_op} {limit_entry_price:.2f} mới vào lệnh!"
                         )
                     elif spread_usd > max_spread:
@@ -5403,6 +5564,11 @@ class KronosDesktopApp:
                         self.log(f"🛡️ [{pk}] Đã mở lệnh trên cây nến {last_time}, tự động chặn mở thêm lệnh thứ 2 trên cùng một cây nến.")
                     elif is_auto_on:
                         ctx["pending_pullback_order"] = None
+                        # Nếu khoảng cách SL đã đạt chuẩn nhỏ <= effective_max_sl nhưng TP chưa đạt 2R -> tự động căn chỉnh TP để chắc chắn đạt >= 2R
+                        if sl_tightened_for_2r and dist_tp < 2.0 * cur_sl_dist:
+                            min_tp_dist = round(cur_sl_dist * 2.0, 2)
+                            tp_price = round(entry_ref + min_tp_dist, 2) if action == "BUY" else round(entry_ref - min_tp_dist, 2)
+                            dist_tp = min_tp_dist
                         ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
                         if ok_ord:
                             self._last_order_candle_ts[pk] = last_time
@@ -5419,13 +5585,17 @@ class KronosDesktopApp:
                     else:
                         self.log(f"[{pk} - {symbol}] Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
 
-                max_sl_str = f"Max: {max_sl_price:.1f} giá" if max_sl_price > 0.0 else "Theo AI"
+                max_sl_str = f"Max: {effective_max_sl:.2f} giá" if effective_max_sl > 0.0 else "Theo AI"
+                if sl_tightened_for_2r:
+                    max_sl_str += " (⚡ Siết 1/2 do RR<2R)"
+                actual_rr = (dist_tp / cur_sl_dist) if cur_sl_dist > 0.001 else 0.0
+                rr_str = f"1:{actual_rr:.2f}R" if actual_rr > 0 else "---"
                 detail_prefix = (
                     f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  Phân tán: {dispersion_r:.2f}x ATR ({scenario_std:.2f}$)  |  Tin cậy AI: {confidence_pct:.0f}%\n"
-                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f} (SL AI: {cur_sl_dist:.2f} giá [{max_sl_str}])   |   🎯 TP: {tp_price:.2f}   |   "
+                    f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   🛑 SL: {sl_price:.2f} (SL AI: {cur_sl_dist:.2f} giá [{max_sl_str}])   |   🎯 TP: {tp_price:.2f} (Cách {dist_tp:.2f} giá)   |   Tỷ lệ: {rr_str} ✅"
                 )
                 ctx["_last_detail_prefix"] = detail_prefix
-                detail_text = f"{detail_prefix}{trade_msg}"
+                detail_text = detail_prefix
 
                 if pk == self.active_profile_key:
                     self._set_loading_stage(96.0, f"Đang dựng biểu đồ nến Real-Time ({symbol})...")
@@ -5472,6 +5642,7 @@ class KronosDesktopApp:
             self._update_forecast_tab_header()
             self.signal_title_lbl.config(text=sig_title, fg=sig_color)
             self.signal_detail_lbl.config(text=detail_text)
+            self._update_bot_status_bar(profile_key)
 
             for row in self.tree.get_children():
                 self.tree.delete(row)
@@ -5789,14 +5960,15 @@ class KronosDesktopApp:
         if self.pending_pullback_order is not None:
             p = self.pending_pullback_order
             try:
-                max_sl_p = max(float(self.max_sl_price_var.get()), 0.5)
-            except ValueError:
+                max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
+            except (ValueError, TypeError):
                 max_sl_p = 5.0
             lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=1.2, alpha=0.9)
+            tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
             t_wait = self.ax.text(
                 base_label_x, lim_entry,
-                f" ⏳ Chờ {p['action']} <= {max_sl_p:.1f} giá (@ {lim_entry:.2f}) ",
+                f" ⏳ Chờ {p['action']}{tight_tag} <= {max_sl_p:.2f} giá (@ {lim_entry:.2f}) ",
                 color="#000000", backgroundcolor=GOLD_ACCENT,
                 fontsize=7.5, fontweight="bold", va="center", clip_on=True
             )
