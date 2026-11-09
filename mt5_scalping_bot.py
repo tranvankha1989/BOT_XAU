@@ -4974,80 +4974,83 @@ class KronosDesktopApp:
         self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
 
     def _update_bot_status_bar(self, profile_key: str = None):
-        """Cập nhật thanh trạng thái hoạt động thực tế của Bot canh giữa với chữ màu đỏ."""
+        """
+        Cập nhật thanh trạng thái dừng/nghỉ của Bot:
+        - Lỗi hoặc dính rủi ro cắt lỗ -> Chữ màu đỏ (RED_DOWN).
+        - Trạng thái dừng bình thường (tắt tự động, chốt chùm, lãi ngày) -> Chữ màu trắng (#ffffff).
+        - Khi Bot đang chạy bình thường (RUNNING) -> Không hiển thị (ẩn thanh trạng thái).
+        """
         if not hasattr(self, "bot_status_frame") or not self.bot_status_frame.winfo_exists():
             return
         pk = profile_key or self.active_profile_key
-        cfg = self._get_profile_cfg(pk)
         ctx = self.profile_ctx.get(pk, {})
         now = datetime.now()
-        symbol = str(cfg.get("symbol", "")).strip() or pk
-        scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
 
         is_running = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
         cd = self.cooldown_until if pk == self.active_profile_key else ctx.get("cooldown_until")
         bcd = ctx.get("basket_cooldown_until")
         fscd = self.fast_sl_cooldown_until if pk == self.active_profile_key else ctx.get("fast_sl_cooldown_until")
-        pending_pullback = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
+
+        status_text = ""
+        text_color = "#ffffff"
 
         # 1. Khóa do chạm giới hạn Lãi ngày / Cắt lỗ ngày
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
             status_text = f"[{pk}] Tạm ngưng giao dịch do {reason} [Mở lại 00:00]"
+            text_color = "#ffffff" if "LÃI" in reason.upper() else RED_DOWN
 
-        # 2. Tạm nghỉ do lệnh dính SL < 5 phút
+        # 2. Tạm nghỉ do lệnh dính SL < 5 phút (Lỗi / Cắt lỗ -> Màu đỏ)
         elif fscd is not None and now < fscd:
             rem_sec = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
             status_text = f"[{pk}] Tạm ngưng giao dịch do lệnh SL < 5 phút [{m:02d}p:{s:02d}s]"
+            text_color = RED_DOWN
 
-        # 3. Tạm nghỉ sau chuỗi thua liên tiếp
+        # 3. Tạm nghỉ sau chuỗi thua liên tiếp (Lỗi / Cắt lỗ -> Màu đỏ)
         elif cd is not None and now < cd:
             losses = self.consec_loss_count if pk == self.active_profile_key else ctx.get("consec_loss_count", 0)
             rem_sec = max(0, int((cd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
             status_text = f"[{pk}] Tạm ngưng giao dịch do chuỗi thua {losses} lệnh [{m:02d}p:{s:02d}s]"
+            text_color = RED_DOWN
 
-        # 4. Tạm nghỉ sau khi chốt lời chùm lệnh
+        # 4. Tạm nghỉ sau khi chốt lời chùm lệnh (Bình thường sau chốt lời -> Màu trắng)
         elif bcd is not None and now < bcd:
             rem_sec = max(0, int((bcd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
             status_text = f"[{pk}] Tạm ngưng giao dịch do sau chốt chùm [{m:02d}p:{s:02d}s]"
+            text_color = "#ffffff"
 
-        # 5. Đang có lệnh Chờ Giá Hồi (Pullback)
-        elif pending_pullback is not None:
-            p_act = pending_pullback.get("action", "BUY")
-            p_sl = pending_pullback.get("sl_price", 0.0)
-            p_max_sl = pending_pullback.get("effective_max_sl", float(cfg.get("max_sl_price", 5.0)))
-            p_target = (p_sl + p_max_sl) if p_act == "BUY" else (p_sl - p_max_sl)
-            cond_str = "<=" if p_act == "BUY" else ">="
-            rr_tag = " (RR>=2R)" if pending_pullback.get("sl_tightened_for_2r") else ""
-            status_text = f"[{pk}] Tạm ngưng vào lệnh do chờ giá hồi {p_act}: {cond_str} {p_target:.2f} (SL <= {p_max_sl:.2f}$){rr_tag} [Rình Entry]"
-
-        # 6. Bot AUTO đang BẬT (RUNNING) -> Không hiển thị đếm giờ nến (phía trên thanh giá đã có sẵn)
-        elif is_running:
-            status_text = f"[{pk}] Bot đang chạy tự động — Canh nến {scalp_tf} & tín hiệu AI"
-
-        # 7. Bot AUTO đang TẮT (Thủ công)
-        else:
+        # 5. Bot AUTO đang TẮT (Thủ công / Dừng bình thường -> Màu trắng)
+        elif not is_running:
             status_text = f"[{pk}] Tạm ngưng giao dịch (Tắt tự động)"
+            text_color = "#ffffff"
 
-        self.bot_status_text_lbl.config(text=status_text, fg=RED_DOWN)
+        # 6. Bot đang chạy bình thường (is_running = True và không bị vi phạm/tạm ngưng) -> Ẩn thanh trạng thái
+        else:
+            status_text = ""
+
+        if not status_text:
+            if self.bot_status_frame.winfo_ismapped():
+                self.bot_status_frame.pack_forget()
+        else:
+            if not self.bot_status_frame.winfo_ismapped():
+                self.bot_status_frame.pack(fill=tk.X, pady=(4, 0))
+            self.bot_status_text_lbl.config(text=status_text, fg=text_color)
 
     def _get_live_bot_status_text(self, profile_key: str = None) -> str:
         """Lấy chuỗi trạng thái thực tế của Bot theo đúng Tab để hiển thị đồng bộ trên thanh tín hiệu."""
         pk = profile_key or self.active_profile_key
-        cfg = self._get_profile_cfg(pk)
         ctx = self.profile_ctx[pk]
         if self._is_daily_limit_locked(pk):
             reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
             return f"Tạm ngưng giao dịch do {reason} [Mở lại 00:00]"
         if self._is_cooldown_active(pk):
             return self._get_cooldown_remaining_str(pk)
-        scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
         is_running = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
         if is_running:
-            return f"Bot {pk} đang chạy tự động (Canh nến {scalp_tf})"
+            return ""
         return f"Bot {pk} tạm ngưng giao dịch (Tắt tự động)"
 
     def _sync_signal_detail_status(self):
