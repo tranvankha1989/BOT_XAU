@@ -5441,8 +5441,8 @@ class KronosDesktopApp:
 
     def _compute_visible_ylim(self, x0: float, x1: float):
         """
-        Tính giới hạn trục giá Y (ylim) tự động ôm sát các cây nến nằm trong vùng hiển thị [x0, x1].
-        Đã tăng chiều cao nến lên thêm 50% (thu hẹp y_span theo tỉ lệ 1.5x) và neo tâm theo diễn biến giá mới nhất.
+        Tính giới hạn trục giá Y (ylim) tự động ôm sát toàn bộ nến, râu nến và giá Live nằm trong vùng hiển thị [x0, x1].
+        Đảm bảo giá và râu nến không bao giờ bị đâm xuyên qua trục Y hoặc bị mất khỏi màn hình khi thị trường biến động mạnh.
         """
         hist = self._chart_hist_df
         if hist is None or len(hist) == 0:
@@ -5453,43 +5453,49 @@ class KronosDesktopApp:
         sub = hist.iloc[i_start:i_end + 1]
         if len(sub) == 0:
             return None
+
         lows = [float(sub["low"].min())]
         highs = [float(sub["high"].max())]
+
+        # Luôn ôm cả giá đóng cửa Live và nến cuối cùng
+        last_row = hist.iloc[-1]
+        live_p = float(last_row["close"])
+        lows.append(live_p)
+        highs.append(live_p)
+        if x1 >= n_hist - 2:
+            lows.append(float(last_row["low"]))
+            highs.append(float(last_row["high"]))
+
+        # Nếu có đường Chờ giá hồi (pending pullback), ôm cả mức giá chờ vào lệnh
+        if getattr(self, "pending_pullback_order", None) is not None:
+            p = self.pending_pullback_order
+            try:
+                max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
+            except (ValueError, TypeError):
+                max_sl_p = 5.0
+            lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+            lows.append(float(lim_entry))
+            highs.append(float(lim_entry))
+
+        # Nếu ở chế độ Dự Báo AI, ôm cả kịch bản dự báo AI và mức SL/TP
         if self.chart_mode == "AI_FORECAST" and self._chart_mean_df is not None and x1 >= n_hist - 1:
             lows.append(float(self._chart_mean_df["low"].min()))
             highs.append(float(self._chart_mean_df["high"].max()))
-            if self.cached_sl is not None:
+            if getattr(self, "cached_sl", None) is not None:
                 lows.append(float(self.cached_sl))
                 highs.append(float(self.cached_sl))
-            if self.cached_tp is not None:
+            if getattr(self, "cached_tp", None) is not None:
                 lows.append(float(self.cached_tp))
                 highs.append(float(self.cached_tp))
+
         y_min = min(lows)
         y_max = max(highs)
         raw_span = max(y_max - y_min, 0.5)
 
-        # Trục giá ôm vừa khít toàn bộ nến trong vùng nhìn (nến nhỏ gọn, thấy rõ ~170 nến), chừa lề ~12% để không bị cắt đỉnh/đáy.
-        scaled_span = max(raw_span * 1.12, 0.8)
-
-        # Neo tâm vùng nhìn Y theo giá Live và các nến gần nhất để nến biến động sinh động, rõ nét
-        live_p = float(hist["close"].iloc[-1])
-        recent_cnt = max(5, min(len(sub), 25))
-        recent_sub = sub.iloc[-recent_cnt:]
-        recent_mid = (float(recent_sub["high"].max()) + float(recent_sub["low"].min())) * 0.5
-        center_y = (y_min + y_max) * 0.5
-
-        half_span = scaled_span * 0.5
-        target_y0 = center_y - half_span
-        target_y1 = center_y + half_span
-
-        # Giữ giá Live và các nến gần nhất luôn nằm trong tầm nhìn an toàn (cách lề tối thiểu 8%)
-        margin_safe = scaled_span * 0.08
-        if live_p < target_y0 + margin_safe:
-            target_y0 = live_p - margin_safe
-            target_y1 = target_y0 + scaled_span
-        elif live_p > target_y1 - margin_safe:
-            target_y1 = live_p + margin_safe
-            target_y0 = target_y1 - scaled_span
+        # Chừa lề an toàn 10% (tối thiểu 0.8 giá) ở cả đỉnh và đáy để nến không bao giờ chạm sát hay đâm xuyên biên
+        pad = max(raw_span * 0.10, 0.8)
+        target_y0 = y_min - pad
+        target_y1 = y_max + pad
 
         return (target_y0, target_y1)
 
@@ -7801,6 +7807,29 @@ class KronosDesktopApp:
                                 prefix = f"👉 [LỆNH #{p_obj.ticket}] " if p_obj.ticket in sel_tickets_live else ""
                                 txt_artist.set_text(f" {prefix}Entry: {p_obj.price_open:.2f} ({p_obj.profit:+.1f}$){be_tag} ")
 
+                    # ── TỰ ĐỘNG KÉO TRỤC GIÁ Y THEO NẾN VÀ GIÁ LIVE KHI ĐÂM XUYÊN BIÊN ──
+                    cur_y0, cur_y1 = self.ax.get_ylim()
+                    span_y = max(cur_y1 - cur_y0, 1.0)
+                    margin_edge = span_y * 0.04  # Vùng an toàn 4% biên trên/dưới
+
+                    if not self.user_zoomed:
+                        # Chế độ tự động: nếu giá/râu nến chạm sát hoặc vượt biên thì tự động ôm khít lại
+                        if l < cur_y0 + margin_edge or h > cur_y1 - margin_edge or c < cur_y0 + margin_edge or c > cur_y1 - margin_edge:
+                            x_lim = self.ax.get_xlim()
+                            new_ylim = self._compute_visible_ylim(x_lim[0], x_lim[1])
+                            if new_ylim is not None:
+                                self.ax.set_ylim(new_ylim)
+                    else:
+                        # Chế độ thu phóng thủ công: nếu giá đâm xuyên qua thì tự động tịnh tiến (pan) kéo trục Y theo giá
+                        if l < cur_y0 + margin_edge:
+                            shift = (cur_y0 + margin_edge) - l + (span_y * 0.06)
+                            self.saved_ylim = (cur_y0 - shift, cur_y1 - shift)
+                            self.ax.set_ylim(self.saved_ylim)
+                        elif h > cur_y1 - margin_edge:
+                            shift = h - (cur_y1 - margin_edge) + (span_y * 0.06)
+                            self.saved_ylim = (cur_y0 + shift, cur_y1 + shift)
+                            self.ax.set_ylim(self.saved_ylim)
+
                     mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
                     zoom_hint = " [Nháy đúp để Reset]" if self.user_zoomed else ""
                     if self.chart_mode == "AI_FORECAST" and active_tf != ana_tf:
@@ -9161,6 +9190,19 @@ class KronosDesktopApp:
             self.ax.legend(loc="upper left", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8, framealpha=0.85)
 
         if self.user_zoomed and self.saved_xlim is not None and self.saved_ylim is not None:
+            # Nếu người dùng đang zoom nhưng giá hoặc râu nến mới đâm xuyên ra ngoài thì tự động kéo trục Y theo
+            cur_y0, cur_y1 = self.saved_ylim
+            span_y = max(cur_y1 - cur_y0, 1.0)
+            margin_y = span_y * 0.04
+            last_l = float(hist["low"].iloc[-1])
+            last_h = float(hist["high"].iloc[-1])
+            if last_l < cur_y0 + margin_y:
+                shift = (cur_y0 + margin_y) - last_l + (span_y * 0.06)
+                self.saved_ylim = (cur_y0 - shift, cur_y1 - shift)
+            elif last_h > cur_y1 - margin_y:
+                shift = last_h - (cur_y1 - margin_y) + (span_y * 0.06)
+                self.saved_ylim = (cur_y0 + shift, cur_y1 + shift)
+
             self.ax.set_xlim(self.saved_xlim)
             self.ax.set_ylim(self.saved_ylim)
             self._sync_xlim_dependents(self.saved_xlim)
