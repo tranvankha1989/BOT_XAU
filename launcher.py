@@ -25,6 +25,15 @@ import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+# Khai báo nạp tĩnh các thư viện đồ họa để PyInstaller AST scanner phát hiện và đóng gói đầy đủ
+try:
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.backends.backend_tkagg
+    import matplotlib.figure
+except Exception:
+    pass
+
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w", encoding="utf-8")
 if sys.stderr is None:

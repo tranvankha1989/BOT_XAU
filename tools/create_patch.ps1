@@ -64,6 +64,16 @@ foreach ($f in $filesToInclude) {
     }
 }
 
+# Sao chep icon ca voi moi vao patch de cap nhat shortcut
+$iconIco = Join-Path $Root "tools\license-key-icon.ico"
+if (Test-Path $iconIco) {
+    Copy-Item -Path $iconIco -Destination (Join-Path $stagingDir "license-key-icon.ico") -Force
+    $toolsDest = Join-Path $stagingDir "tools"
+    if (-not (Test-Path $toolsDest)) { New-Item -ItemType Directory -Path $toolsDest -Force | Out-Null }
+    Copy-Item -Path $iconIco -Destination (Join-Path $toolsDest "license-key-icon.ico") -Force
+    Write-Host "  + Da them: license-key-icon.ico (Icon ca voi tron trong suot)" -ForegroundColor DarkGray
+}
+
 # Bo sung them thu vien Tkinter vao _internal/tkinter de sua loi missing ttk tren may ao/may cu v1.0.2
 $pyTkDir = "C:\Users\tranv\AppData\Local\Programs\Python\Python311\Lib\tkinter"
 if (Test-Path $pyTkDir) {
@@ -71,6 +81,20 @@ if (Test-Path $pyTkDir) {
     New-Item -ItemType Directory -Path $targetTkDir -Force | Out-Null
     Copy-Item -Path "$pyTkDir\*.py" -Destination $targetTkDir -Force
     Write-Host "  + Da them: _internal\tkinter (*.py de cuu may ao VM)" -ForegroundColor DarkGray
+}
+
+# Bo sung backend_tkagg va _backend_tk vao _internal/matplotlib/backends de cuu may ao
+$pyMplBackends = "C:\Users\tranv\AppData\Local\Programs\Python\Python311\Lib\site-packages\matplotlib\backends"
+if (Test-Path $pyMplBackends) {
+    $targetMplDir = Join-Path $stagingDir "_internal\matplotlib\backends"
+    New-Item -ItemType Directory -Path $targetMplDir -Force | Out-Null
+    Copy-Item -Path "$pyMplBackends\backend_tkagg.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\_backend_tk.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\_tkagg*.pyd" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\backend_agg.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\_backend_agg*.pyd" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\__init__.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
+    Write-Host "  + Da them: _internal\matplotlib\backends (de cuu may ao VM)" -ForegroundColor DarkGray
 }
 
 # Don sach __pycache__ va cac file rac

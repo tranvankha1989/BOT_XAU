@@ -68,6 +68,8 @@ python -m PyInstaller --noconsole `
     --hidden-import="pandas" `
     --hidden-import="PIL" `
     --hidden-import="matplotlib" `
+    --hidden-import="matplotlib.backends.backend_tkagg" `
+    --hidden-import="matplotlib.figure" `
     --hidden-import="tqdm" `
     --hidden-import="huggingface_hub" `
     --hidden-import="gradio_client" `
@@ -78,6 +80,7 @@ python -m PyInstaller --noconsole `
     --hidden-import="tkinter.messagebox" `
     --hidden-import="tkinter.filedialog" `
     --hidden-import="openpyxl" `
+    --collect-all="matplotlib" `
     --collect-all="tkinter" `
     --collect-all="cryptography" `
     --collect-all="einops" `
@@ -117,6 +120,29 @@ if (-not (Test-Path $vcRedistTools)) {
     if (Test-Path $officeRedist) {
         Copy-Item -Path $officeRedist -Destination $vcRedistTools -Force
     }
+}
+
+# 4.3 Dam bao 100% toan bo tep Python Tkinter co mat trong _internal\tkinter (dac biet la ttk.py va dialogs de sua triet de loi may ao)
+$pyTkSrc = "C:\Users\tranv\AppData\Local\Programs\Python\Python311\Lib\tkinter"
+if (Test-Path $pyTkSrc) {
+    $targetTkDist = Join-Path $internalDistDir "tkinter"
+    if (-not (Test-Path $targetTkDist)) { New-Item -ItemType Directory -Path $targetTkDist -Force | Out-Null }
+    Copy-Item -Path "$pyTkSrc\*.py" -Destination $targetTkDist -Force -ErrorAction SilentlyContinue
+    Write-Host "[OK] Da dong bo day du cac module Tkinter/ttk vao: $targetTkDist" -ForegroundColor Green
+}
+
+# 4.4 Dam bao 100% toan bo tep backend cua Matplotlib (dac biet backend_tkagg, _backend_tk, _tkagg.pyd) co mat trong _internal\matplotlib\backends
+$pyMplBackends = "C:\Users\tranv\AppData\Local\Programs\Python\Python311\Lib\site-packages\matplotlib\backends"
+if (Test-Path $pyMplBackends) {
+    $targetMplDist = Join-Path $internalDistDir "matplotlib\backends"
+    if (-not (Test-Path $targetMplDist)) { New-Item -ItemType Directory -Path $targetMplDist -Force | Out-Null }
+    Copy-Item -Path "$pyMplBackends\backend_tkagg.py" -Destination $targetMplDist -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\_backend_tk.py" -Destination $targetMplDist -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\_tkagg*.pyd" -Destination $targetMplDist -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\backend_agg.py" -Destination $targetMplDist -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\_backend_agg*.pyd" -Destination $targetMplDist -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$pyMplBackends\__init__.py" -Destination $targetMplDist -Force -ErrorAction SilentlyContinue
+    Write-Host "[OK] Da dong bo day du matplotlib backend_tkagg vao: $targetMplDist" -ForegroundColor Green
 }
 
 # 5. Dong goi bo cai dat Setup bang Inno Setup Ultra

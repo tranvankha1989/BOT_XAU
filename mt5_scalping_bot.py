@@ -108,6 +108,225 @@ GREEN_UP = "#0ecb81"
 RED_DOWN = "#f6465d"
 CYAN_LIVE = "#00e5ff"
 
+# =============================================================================
+# TỪ ĐIỂN HƯỚNG DẪN CHI TIẾT CÁC THÔNG SỐ CÀI ĐẶT (PARAM HELP GUIDE)
+# Hiển thị khi người dùng bấm vào biểu tượng chấm hỏi tròn [?] cạnh mỗi thông số
+# =============================================================================
+PARAM_HELP_GUIDE = {
+    # ─── MỤC 1: CÀI ĐẶT CƠ BẢN ───
+    "symbol": {
+        "title": "Mã giao dịch MT5 (Symbol)",
+        "what_is_it": "Tên cặp tiền hoặc hàng hóa giao dịch được khai báo trên sàn MT5 (ví dụ: XAUUSD, XAUUSDm, BTCUSD, EURUSD, GBPUSD...). Ký tự đuôi như 'm', 'c', 'pro' phụ thuộc vào loại tài khoản và sàn môi giới (Exness, ICMarkets, XM...).",
+        "how_to_set": "• Kiểm tra chính xác tên mã hiển thị trong cửa sổ Market Watch trên MT5 của bạn.\n• Tài khoản Standard Exness: Nhập 'XAUUSDm'. Tài khoản Pro/Zero: Nhập 'XAUUSD'.\n• Khi đổi mã, bot sẽ tự động nhận diện giá Bid/Ask, cấu trúc Spread và nạp cấu hình riêng của mã đó."
+    },
+    "analysis_tf": {
+        "title": "Khung phân tích AI (Analysis Timeframe)",
+        "what_is_it": "Khung thời gian nến mà mô hình Deep Learning phân tích ngữ cảnh lớn để dự báo xu hướng đa kịch bản (Ensemble) trong các bước tiếp theo.",
+        "how_to_set": "• M15 (Khuyên dùng chuẩn): Cho góc nhìn đa chu kỳ 90 phút cực kỳ tin cậy, khử nhiễu tốt cho vàng XAUUSD.\n• H1: Dành cho giao dịch theo sóng lớn trong ngày (Day Trading).\n• M5: Dành cho thị trường biến động nhanh hoặc đánh siêu lướt sóng."
+    },
+    "tf": {
+        "title": "Khung vào lệnh Scalp (Scalp Timeframe)",
+        "what_is_it": "Khung thời gian nến thực thi giao dịch. Bot sẽ quét các điều kiện Entry, tính toán biên độ nến ATR, độ giãn Spread và kích hoạt lệnh tại khung này.",
+        "how_to_set": "• M5 (Khuyên dùng chuẩn): Điểm cân bằng hoàn hảo cho Scalping vàng, nến đủ ổn định và tỷ lệ tín hiệu giả thấp.\n• M1: Chỉ nên dùng khi tài khoản có Spread cực thấp (< 0.20$) và muốn nhịp lệnh nhanh.\n• Khung vào lệnh nên nhỏ hơn hoặc bằng Khung phân tích AI."
+    },
+    "lot": {
+        "title": "Khối lượng vào lệnh (Lot Size)",
+        "what_is_it": "Số lot giao dịch cố định được mở cho mỗi lệnh giao dịch mới (hoặc mỗi lệnh nhồi).",
+        "how_to_set": "• Vốn 200$ - 500$: Cài 0.01 lot.\n• Vốn 1,000$: Cài 0.02 - 0.03 lot.\n• Vốn 3,000$ - 5,000$: Cài 0.05 - 0.10 lot.\n• Nguyên tắc vàng: Giữ tổng rủi ro khi dính SL của tất cả các lệnh không vượt quá 1% - 2% vốn tài khoản."
+    },
+    "max_pos": {
+        "title": "Số lệnh tối đa cùng lúc (Max Positions)",
+        "what_is_it": "Giới hạn số lượng vị thế (lệnh) mở đồng thời tối đa của cặp tiền này. Khi tổng số lệnh đang mở chạm ngưỡng này, bot sẽ khóa chức năng mở thêm lệnh.",
+        "how_to_set": "• Đánh an toàn tuyệt đối: Đặt 1 lệnh (Đóng lệnh này mới vào lệnh khác).\n• Đánh nhồi / DCA kiểm soát rủi ro: Đặt 2 đến 3 lệnh.\n• Cảnh báo: Không nên đặt > 4 lệnh vì dễ gây áp lực ký quỹ (Margin Call) khi thị trường chạy một chiều mạnh."
+    },
+    "magic_number": {
+        "title": "Mã định danh lệnh (Magic Number)",
+        "what_is_it": "Mã số định danh riêng biệt gắn vào mỗi lệnh của bot trên MT5, giúp bot nhận diện và chỉ quản lý đúng các lệnh của mình, hoàn toàn không can thiệp vào lệnh tay của bạn hoặc của bot khác.",
+        "how_to_set": "• Mỗi cặp tiền hoặc mỗi bot nên dùng 1 Magic Number khác nhau (VD: Tab XAUUSD dùng 20260501, Tab BTCUSD dùng 20260502).\n• Lưu ý: Không đổi Magic Number khi đang có lệnh mở, nếu đổi bot sẽ mất quyền quản lý lệnh cũ."
+    },
+
+    # ─── MỤC 2: BỘ LỌC ENTRY & NHỒI LỆNH ───
+    "scenarios": {
+        "title": "Số kịch bản AI (Ensemble Scenarios)",
+        "what_is_it": "Số lượng kịch bản đường đi giá ngẫu nhiên mà mô hình AI mô phỏng (Monte Carlo Ensemble) để tính toán xác suất tăng/giảm trong tương lai.",
+        "how_to_set": "• Khuyên dùng chuẩn: 16 đến 32 kịch bản (Cân bằng lý tưởng giữa tốc độ suy luận và độ chính xác).\n• Nếu máy có GPU mạnh (GTX/RTX) hoặc dùng Cloud: Có thể đặt 32 - 64 kịch bản để dự báo mượt và phân tán chuẩn xác hơn.\n• Lưu ý: Không nên đặt < 8 vì số kịch bản quá ít dễ gây sai lệch xác suất ngẫu nhiên."
+    },
+    "consensus": {
+        "title": "Độ đồng thuận tối thiểu (Consensus %)",
+        "what_is_it": "Tỷ lệ phần trăm tối thiểu các kịch bản AI phải cùng chỉ về một hướng (đồng thuận BUY hoặc đồng thuận SELL) thì mới thỏa điều kiện vào lệnh.",
+        "how_to_set": "• Chuẩn Scalping hiệu quả: 70% - 75% (Cho tỷ lệ vào lệnh hợp lý và Winrate cao).\n• Đánh chọn lọc / Rủi ro thấp: 80% - 85% (Ít lệnh hơn nhưng mỗi lệnh có độ tin cậy rất cao).\n• Tránh đặt < 65% vì tín hiệu bị nhiễu do hai phe Mua và Bán đang giằng co tương đương."
+    },
+    "max_dispersion": {
+        "title": "Độ phân tán tối đa (Max Dispersion x ATR)",
+        "what_is_it": "Đo lường độ lệch / bất đồng giữa các kịch bản dự báo của AI so với biên độ nến ATR. Nếu các đường dự báo tản ra quá xa nhau (thị trường đang biến động hỗn loạn hoặc sắp có tin mạnh), bot sẽ từ chối vào lệnh.",
+        "how_to_set": "• Khuyên dùng: 2.0 đến 2.5 (x ATR).\n• Nếu đặt 0: Tắt bộ lọc phân tán (chấp nhận vào lệnh kể cả khi AI phân vân).\n• Nên duy trì ở mức 2.5 để tự động né các pha quét râu 2 đầu lúc thị trường nhiễu loạn."
+    },
+    "min_move": {
+        "title": "Biên độ dự báo tối thiểu (Min Expected Move)",
+        "what_is_it": "Khoảng cách giá tối thiểu (USD) mà AI dự báo giá sẽ di chuyển tới đỉnh/đáy tiếp theo. Nếu AI dự báo giá chỉ nhích một đoạn quá ngắn, bot sẽ bỏ qua vì lợi nhuận không đủ bù phí giao dịch.",
+        "how_to_set": "• Vàng XAUUSD: Cài đặt từ 1.2$ đến 1.5$ (tương đương 12 - 15 pip).\n• Không nên để < 0.8$ vì biên độ quá hẹp dễ bị nuốt bởi Spread và trượt giá."
+    },
+    "max_spread": {
+        "title": "Spread tối đa cho phép (Max Spread)",
+        "what_is_it": "Mức chênh lệch tối đa giữa giá Mua (Ask) và giá Bán (Bid) tính bằng USD. Nếu Spread thực tế của sàn vượt quá giá trị này, bot sẽ chặn không cho mở lệnh.",
+        "how_to_set": "• Vàng tài khoản Pro/Zero: 0.25$ - 0.35$ (2.5 - 3.5 pip).\n• Vàng tài khoản Standard: 0.35$ - 0.45$.\n• Bảo vệ cực kỳ quan trọng: Giúp tránh vào lệnh lúc nửa đêm giao phiên (4h-6h sáng) hoặc lúc tin Non-Farm / CPI ra làm giãn Spread."
+    },
+    "sl_atr": {
+        "title": "Khoảng cách SL AI (x ATR14)",
+        "what_is_it": "Hệ số nhân với chỉ số ATR14 để tính điểm Cắt Lỗ (Stop Loss) tự động co giãn theo độ biến động thực tế của thị trường.",
+        "how_to_set": "• Chuẩn Scalping: 1.5 x ATR (Cho khoảng thở tự nhiên, chống bị quét râu nến ngẫu nhiên).\n• Đánh ngắn ép rủi ro: 1.0 - 1.2 x ATR.\n• Phiên Mỹ biến động mạnh: 1.8 - 2.0 x ATR."
+    },
+    "sl_buffer": {
+        "title": "Giá an toàn cộng thêm vào SL (+ Buffer)",
+        "what_is_it": "Khoảng giá cộng dồn thêm ra ngoài vùng cản/đáy dự báo của AI để làm lớp đệm an toàn chống các pha quét râu nến (Spike/Wick).",
+        "how_to_set": "• Vàng XAUUSD: Khuyên dùng 0.3$ đến 0.5$ (3 - 5 pip).\n• Giúp lệnh không bị dính SL oan rồi giá mới quay đầu chạy đúng xu hướng."
+    },
+    "max_sl_price": {
+        "title": "SL tối đa cố định (Max SL Price)",
+        "what_is_it": "Mức cắt lỗ trần cao nhất tính theo khoảng giá USD. Nếu tính theo AI mà khoảng cách SL vượt quá giá trị này, bot sẽ tự động ép chặt SL về đúng mức trần này.",
+        "how_to_set": "• Vàng XAUUSD: Đặt 4.0$ - 5.0$ (40 - 50 pip).\n• Nếu nhập 0: Bot sẽ hoàn toàn để SL tự do theo tính toán thích ứng của AI."
+    },
+    "rr": {
+        "title": "Tỷ lệ Lợi nhuận / Rủi ro (R:R Ratio)",
+        "what_is_it": "Tỷ lệ giữa khoảng cách Chốt Lời (TP) so với Cắt Lỗ (SL). Ví dụ R:R = 2.0 nghĩa là nếu SL cách 3$ thì TP sẽ tự động được đặt cách 6$.",
+        "how_to_set": "• Khuyên dùng: 1.5 đến 2.0 (Tỷ lệ vàng giúp tài khoản tăng trưởng bền vững kể cả khi Winrate chỉ cần 45%-55%).\n• Nếu nhập 0: Bot sẽ tự động lấy TP theo mục tiêu giá dự báo của mô hình AI."
+    },
+    "entry_mode": {
+        "title": "Chế độ nhồi lệnh (Entry Mode)",
+        "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n• 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n• 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân.\n• 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
+        "how_to_set": "• An toàn nhất: Chọn 'Risk-Free' (Không bao giờ gia tăng rủi ro khi lệnh cũ chưa an toàn).\n• Tận dụng sóng: Chọn 'Nhồi giá tốt hơn (DCA)' kết hợp giới hạn Số lệnh tối đa = 2 hoặc 3."
+    },
+    "min_entry_spacing": {
+        "title": "Khoảng cách nhồi tối thiểu (Min Spacing)",
+        "what_is_it": "Khoảng cách giá tối thiểu giữa lệnh mới và lệnh đã có gần nhất, chống việc bot vào nhiều lệnh liên tiếp sát sàn sạt nhau tại cùng một mức giá.",
+        "how_to_set": "• Vàng XAUUSD: Đặt 1.0$ đến 1.5$ (10 - 15 pip).\n• Giúp các vị thế được rải đều qua các vùng cản kháng cự/hỗ trợ khác nhau."
+    },
+    "one_order_per_candle": {
+        "title": "Chỉ mở tối đa 1 lệnh mỗi cây nến",
+        "what_is_it": "Chặn không cho bot mở quá 1 lệnh trong cùng một cây nến giao dịch (ví dụ nến M5). Ngăn ngừa việc thị trường giật nảy giá làm kích hoạt nhiều lệnh liên tục.",
+        "how_to_set": "• LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
+    },
+
+    # ─── MỤC 3: QUẢN LÝ LỆNH & CHỐT LỜI ───
+    "auto_be": {
+        "title": "Tự dời SL về hòa vốn (Break-Even - BE)",
+        "what_is_it": "Khi lệnh đang mở đạt mức lợi nhuận mục tiêu (tính theo R), bot sẽ tự động kéo đường Cắt Lỗ (SL) về đúng giá vào lệnh (Entry) để triệt tiêu hoàn toàn rủi ro thua lỗ.",
+        "how_to_set": "• LUÔN BẬT. Giúp bảo toàn vốn gốc, biến mọi lệnh đạt kỳ vọng ban đầu thành lệnh 'không thể thua'."
+    },
+    "be_trigger_r": {
+        "title": "Mức kích hoạt hòa vốn (BE Trigger R)",
+        "what_is_it": "Mức lợi nhuận (tính theo tỷ lệ R của SL ban đầu) mà lệnh phải đạt được để bot kích hoạt dời SL về hòa vốn.",
+        "how_to_set": "• Chuẩn mực: 1.0R (Ví dụ SL ban đầu là 3$, khi giá lãi đạt 3$ sẽ kéo ngay SL về hòa).\n• Muốn bảo vệ vốn sớm: Đặt 0.8R."
+    },
+    "auto_trail": {
+        "title": "Tự trượt SL khóa lãi (Trailing Stop)",
+        "what_is_it": "Khi giá tiếp tục chạy sâu vào vùng có lãi, bot sẽ tự động trượt đường SL tịnh tiến theo sau giá để khóa lợi nhuận và gồng lãi theo xu hướng.",
+        "how_to_set": "• RẤT NÊN BẬT khi thị trường có xu hướng rõ ràng, giúp tối đa hóa lợi nhuận mà không sợ bị thị trường đảo chiều bất ngờ lấy lại hết lãi."
+    },
+    "trail_dist_r": {
+        "title": "Khoảng cách bám giá Trailing (Trail Distance R)",
+        "what_is_it": "Khoảng cách thả lỏng (tính theo tỷ lệ R) giữa giá hiện tại và đường SL trượt theo sau.",
+        "how_to_set": "• Khuyên dùng: 0.35R đến 0.50R.\n• Khoảng cách này vừa đủ để giá có không gian rung lắc tự nhiên mà không bị dính SL quá sớm, đồng thời vẫn bảo vệ được phần lớn lợi nhuận khi đảo chiều."
+    },
+    "auto_rev_close": {
+        "title": "Bảo vệ đảo chiều thông minh (Reversal Guard)",
+        "what_is_it": "Tính năng bảo vệ chủ động: Khi bạn đang nắm giữ lệnh (ví dụ BUY) nhưng AI phát hiện cấu trúc thị trường bất ngờ đảo chiều sang SELL mạnh mẽ:\n• Nếu lệnh đang CÓ LÃI: Bot sẽ chủ động CHỐT LỜI NGAY để bảo vệ tiền lời.\n• Nếu lệnh đang TẠM LỖ: Bot KHÔNG cắt lỗ tháo chạy, mà nâng TP về sát giá hòa vốn (Entry+) để đón nhịp hồi thoát lệnh an toàn.",
+        "how_to_set": "• LUÔN BẬT (Mặc định). Tính năng này giúp giảm thiểu tối đa các pha lỗ nặng do thị trường quay ngoắt 180 độ."
+    },
+    "rev_consensus": {
+        "title": "Đồng thuận đảo chiều tối thiểu (%)",
+        "what_is_it": "Độ đồng thuận của AI theo chiều ngược lại cần đạt tối thiểu bao nhiêu % thì cơ chế Bảo vệ đảo chiều mới được kích hoạt.",
+        "how_to_set": "• Khuyên dùng: 75% đến 80%.\n• Ngăn việc thoát lệnh sớm do các đợt rung lắc đảo chiều giả trong thời gian ngắn."
+    },
+    "rev_min_move": {
+        "title": "Biên độ ngược chiều tối thiểu (Giá)",
+        "what_is_it": "Biên độ giá dự báo ngược chiều tối thiểu để kích hoạt bảo vệ đảo chiều. Nếu đặt 0, chỉ cần AI đạt đủ độ đồng thuận là bot sẽ kích hoạt ngay.",
+        "how_to_set": "• Khuyên dùng: Đặt 0 (hoặc 1.0$ nếu muốn chỉ phản ứng khi xu hướng ngược có xung lực mạnh)."
+    },
+    "be_plus_price": {
+        "title": "Giá lãi nhỏ cộng thêm vào Entry (BE+)",
+        "what_is_it": "Khoảng giá cộng thêm vào điểm Entry khi dời SL hoặc dời TP về hòa vốn (Break-Even Plus), nhằm bù đắp chi phí hoa hồng (Commission) và trượt giá sàn, giúp lệnh khi thoát vẫn có một chút tiền lãi xanh nhẹ.",
+        "how_to_set": "• Vàng XAUUSD: Đặt 0.2$ đến 0.3$ (2 - 3 pip).\n• Đảm bảo thoát lệnh hòa vốn mà không bị âm tiền phí sàn."
+    },
+    "basket_tp_usd": {
+        "title": "Chốt lời chùm lệnh tổng (Basket TP USD)",
+        "what_is_it": "Khi tổng lợi nhuận của TẤT CẢ các lệnh đang mở (chùm lệnh) cộng lại đạt số tiền USD này, bot sẽ đóng toàn bộ các lệnh ngay lập tức để thu lợi nhuận về.",
+        "how_to_set": "• Đánh 2-3 lệnh 0.01 lot: Đặt 10$ - 20$.\n• Nếu đặt 0: Tắt tính năng chốt chùm (mỗi lệnh sẽ chốt độc lập theo TP/SL riêng của nó)."
+    },
+    "basket_cooldown_mins": {
+        "title": "Thời gian nghỉ sau chốt chùm (Basket Cooldown)",
+        "what_is_it": "Số phút bot tạm dừng không mở thêm lệnh mới sau một pha chốt lời chùm lệnh thành công, giúp thị trường hạ nhiệt và tránh bị cuốn vào nhịp đu đỉnh/đáy.",
+        "how_to_set": "• Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
+    },
+    "max_hold_mins": {
+        "title": "Thời gian giữ lệnh tối đa (Max Holding Time)",
+        "what_is_it": "Giới hạn số phút tối đa một lệnh được phép duy trì trên thị trường (ví dụ 60 phút, 120 phút). Tránh việc lệnh bị ngâm qua đêm hoặc kẹt quá lâu trong vùng thị trường đi ngang (Sideway).",
+        "how_to_set": "• Scalping trong ngày: Đặt 60 - 120 phút.\n• Nếu đặt 0: Tắt tính năng giới hạn thời gian (lệnh sẽ chạy cho đến khi chạm TP, SL hoặc có tín hiệu đảo chiều)."
+    },
+    "max_hold_action": {
+        "title": "Xử lý khi vượt thời gian giữ lệnh",
+        "what_is_it": "Cách thức bot xử lý lệnh khi đã chạm mốc thời gian giữ tối đa:\n• 'Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)': Lãi thì đút túi ngay, lỗ thì dời TP về hòa vốn đón nhịp hồi.\n• 'Dời SL về hòa vốn (BE+)': Khóa rủi ro, cho thị trường thêm cơ hội chạy tiếp.\n• 'Đóng tất cả (Bất kể Lãi/Lỗ)': Cắt dứt khoát giải phóng lệnh ngay lập tức.",
+        "how_to_set": "• Khuyên dùng phương án 1 ('Chốt lời nếu lãi & Dời TP về hòa nếu lỗ') vì mang lại hiệu quả bảo vệ tài khoản cao nhất."
+    },
+    "daily_tp_usd": {
+        "title": "Mục tiêu Lãi trong ngày (Daily Take Profit)",
+        "what_is_it": "Mức lợi nhuận mục tiêu trong một ngày tính theo giờ Việt Nam (UTC+7). Khi tổng lãi chốt trong ngày chạm mốc này, bot sẽ tự động ngưng giao dịch để bảo toàn thành quả.",
+        "how_to_set": "• Khuyên dùng: Đặt tương đương 2% - 5% vốn tài khoản (Ví dụ TK 1,000$ thì đặt 30$ - 50$).\n• Nếu đặt 0: Bot sẽ chạy liên tục không giới hạn mục tiêu ngày."
+    },
+    "daily_sl_usd": {
+        "title": "Giới hạn Lỗ tối đa trong ngày (Daily Stop Loss)",
+        "what_is_it": "Mức thua lỗ tối đa cho phép trong một ngày. Nếu tổng lỗ trong ngày chạm ngưỡng này, bot lập tức ngừng toàn bộ giao dịch để cắt chuỗi xui và bảo vệ vốn gốc.",
+        "how_to_set": "• Khuyên dùng: Đặt tương đương 3% - 5% vốn tài khoản (Ví dụ TK 1,000$ thì đặt 30$ - 50$).\n• TUYỆT ĐỐI KHÔNG NÊN ĐỂ 0 (Luôn cài đặt để làm chốt chặn an toàn cho tài khoản)."
+    },
+    "max_consec_loss": {
+        "title": "Số lệnh thua liên tiếp để tạm nghỉ (Consecutive Losses)",
+        "what_is_it": "Nếu gặp liên tiếp N lệnh bị dính SL (thị trường đang trong pha bất thường không phù hợp mô hình), bot sẽ tự kích hoạt cơ chế đóng băng tạm thời.",
+        "how_to_set": "• Khuyên dùng: 2 đến 3 lệnh.\n• Giúp bảo toàn tâm lý và vốn khi thị trường vào phiên xấu."
+    },
+    "cooldown_mins": {
+        "title": "Thời gian tạm ngừng sau chuỗi thua (Cooldown Mins)",
+        "what_is_it": "Số phút bot tạm dừng hoạt động sau khi chạm giới hạn thua liên tiếp hoặc chạm SL nhanh.",
+        "how_to_set": "• Khuyên dùng: 30 đến 60 phút.\n• Cho thị trường thời gian hoàn thành nhịp biến động bất thường trước khi bot tiếp tục giao dịch."
+    },
+    "fast_sl_cooldown_mins": {
+        "title": "Nghỉ nếu dính SL nhanh dưới 5 phút",
+        "what_is_it": "Nếu một lệnh vừa mở chưa đầy 5 phút đã bị quét cắn SL ngay lập tức, chứng tỏ thị trường vừa có tin giật đột biến. Bot sẽ tự ngắt tạm thời để tránh bị quét liên hoàn.",
+        "how_to_set": "• Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
+    },
+
+    # ─── MỤC 4: PHÂN TÍCH AI & MÔ HÌNH ───
+    "engine": {
+        "title": "Chế độ chạy động cơ AI (Execution Engine)",
+        "what_is_it": "Lựa chọn môi trường thực thi suy luận mô hình AI:\n• 'Chạy trực tiếp máy Local': Chạy thẳng trên máy tính cá nhân của bạn (tận dụng CPU hoặc GPU NVIDIA nếu có).\n• 'Ưu tiên Hugging Face -> Local': Gửi dữ liệu nến lên máy chủ Cloud Hugging Face Space để suy luận không tốn tài nguyên máy, nếu mạng lỗi sẽ tự động chuyển về máy Local.",
+        "how_to_set": "• Nếu máy tính có GPU NVIDIA hoặc CPU khá: Chọn 'Chạy trực tiếp máy Local' để tốc độ nhanh nhất.\n• Nếu dùng VPS hoặc máy yếu: Chọn 'Ưu tiên Hugging Face'."
+    },
+    "model": {
+        "title": "Mô hình AI dự báo (AI Model Architecture)",
+        "what_is_it": "Chọn phiên bản trọng số mô hình Deep Learning:\n• AI-base (102.3M - Mạnh nhất): Mô hình kích thước lớn nhất, độ sâu phân tích cao nhất, khả năng nắm bắt xu hướng tốt nhất.\n• AI-Gold-Exness: Phiên bản tinh chỉnh riêng cho dữ liệu nến vàng sàn Exness.\n• AI-small (24.7M) / AI-mini: Nhẹ hơn, suy luận cực nhanh cho máy yếu.",
+        "how_to_set": "• Khuyên dùng: 'AI-base (102.3M - Mạnh nhất)' để đạt độ chính xác cao nhất."
+    },
+    "hf_space": {
+        "title": "Hugging Face Space ID",
+        "what_is_it": "Tên định danh Space API máy chủ của bạn trên nền tảng Hugging Face nếu chạy chế độ Cloud.",
+        "how_to_set": "• Giữ nguyên giá trị mặc định 'tranvankha2807/Kronos_Xau' trừ khi bạn tự xây dựng server Space riêng."
+    },
+    "hf_token": {
+        "title": "Hugging Face User Access Token",
+        "what_is_it": "Mã token xác thực API cá nhân trên Hugging Face (huggingface.co/settings/tokens) trong trường hợp Space được cài đặt ở chế độ Riêng tư (Private).",
+        "how_to_set": "• Để trống nếu Space của bạn ở chế độ Công khai (Public)."
+    },
+    "lookback": {
+        "title": "Số nến lịch sử đưa vào AI (Lookback Window)",
+        "what_is_it": "Số lượng cây nến quá khứ được trích xuất và đưa vào chuỗi thời gian để AI học quy luật và dự báo tương lai.",
+        "how_to_set": "• Khuyên dùng: 450 đến 512 nến (tương đương khoảng 40 - 50 giờ dữ liệu trên khung M5).\n• Đây là độ dài ngữ cảnh tối ưu theo kiến trúc Attention của mô hình Kronos."
+    },
+    "pred_len": {
+        "title": "Số nến dự báo tương lai (Prediction Length)",
+        "what_is_it": "Số lượng cây nến tiếp theo mà AI sẽ vẽ đường dự báo trên biểu đồ.",
+        "how_to_set": "• Mặc định: 6 nến (Trên khung M5 tương đương 30 phút, trên M15 tương đương 90 phút).\n• Khoảng cách 6 nến là tối ưu nhất để xác định đỉnh/đáy cho một nhịp Scalping."
+    }
+}
+
 DEFAULT_PROFILE_SETTINGS = {
     "XAUUSD": {
         "symbol": "XAUUSDm",
@@ -594,6 +813,8 @@ class KronosDesktopApp:
         self.cross_time_annot = None
         self.cross_ohlc_text = None
         self._last_hover_xy = None
+        self._saved_bottom_panel_h = 240
+        self.right_paned = None
 
         # Trạng thái hiển thị % trên nút Reload Pill góc phải trên & đồng bộ trạng thái Bot
         self._scan_pct = 100.0
@@ -1166,14 +1387,23 @@ class KronosDesktopApp:
         return f"{win_w}x{win_h}+{pos_x}+{pos_y}"
 
     def _apply_window_and_taskbar_icon(self):
-        """Gán biểu tượng KhaTran, căn giữa màn hình khi khởi động và kích hoạt thanh tiêu đề MacBook không viền."""
+        """Gán biểu tượng Cá Voi viền tròn trong suốt, căn giữa màn hình và kích hoạt thanh tiêu đề MacBook."""
         try:
             centered_geom = self._get_centered_geometry(1450, 880)
             self._win_normal_geom = centered_geom
             self.root.geometry(centered_geom)
-            if os.path.exists(ICON_ICO_FILE):
-                self.root.iconbitmap(default=ICON_ICO_FILE)
-                self.root.wm_iconbitmap(ICON_ICO_FILE)
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+            candidate_icos = [
+                os.path.join(app_dir, "license-key-icon.ico"),
+                os.path.join(app_dir, "tools", "license-key-icon.ico"),
+                os.path.join(app_dir, "tools", "app_icon.ico"),
+                ICON_ICO_FILE
+            ]
+            for ico_p in candidate_icos:
+                if os.path.exists(ico_p):
+                    self.root.iconbitmap(default=ico_p)
+                    self.root.wm_iconbitmap(ico_p)
+                    break
             if os.path.exists(ICON_PNG_FILE):
                 self._app_icon_img = tk.PhotoImage(file=ICON_PNG_FILE)
                 self.root.iconphoto(True, self._app_icon_img)
@@ -1233,6 +1463,7 @@ class KronosDesktopApp:
                 self.root.geometry(getattr(self, "_win_normal_geom", "1450x880+60+40"))
                 self._win_maximized = False
             self._draw_mac_window_controls()
+            self.root.after(100, self._init_right_paned_sash)
         except Exception:
             pass
 
@@ -1617,12 +1848,12 @@ class KronosDesktopApp:
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(1)
         )
-        self.symbol_var = self._add_labeled_entry(sec1.content, "Mã giao dịch MT5:", "XAUUSDm")
-        self.analysis_tf_var = self._add_labeled_combo(sec1.content, "Khung phân tích AI:", ["M1", "M5", "M15", "H1"], "M15")
-        self.tf_var = self._add_labeled_combo(sec1.content, "Khung vào lệnh (Scalp):", ["M1", "M5", "M15", "H1"], "M5")
-        self.lot_var = self._add_labeled_entry(sec1.content, "Khối lượng (Lot):", "0.01")
-        self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "3")
-        self.magic_number_var = self._add_labeled_entry(sec1.content, "Magic Number (Mã lệnh):", "20260501")
+        self.symbol_var = self._add_labeled_entry(sec1.content, "Mã giao dịch MT5:", "XAUUSDm", help_key="symbol")
+        self.analysis_tf_var = self._add_labeled_combo(sec1.content, "Khung phân tích AI:", ["M1", "M5", "M15", "H1"], "M15", help_key="analysis_tf")
+        self.tf_var = self._add_labeled_combo(sec1.content, "Khung vào lệnh (Scalp):", ["M1", "M5", "M15", "H1"], "M5", help_key="tf")
+        self.lot_var = self._add_labeled_entry(sec1.content, "Khối lượng (Lot):", "0.01", help_key="lot")
+        self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "3", help_key="max_pos")
+        self.magic_number_var = self._add_labeled_entry(sec1.content, "Magic Number (Mã lệnh):", "20260501", help_key="magic_number")
         tk.Button(
             sec1.content, text="↺ Khôi phục mặc định Mục 1 (Cài đặt cơ bản)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -1636,15 +1867,15 @@ class KronosDesktopApp:
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(2)
         )
-        self.scenarios_var = self._add_labeled_entry(sec2.content, "Số kịch bản AI (Ensemble):", "8")
-        self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75")
-        self.max_dispersion_var = self._add_labeled_entry(sec2.content, "Độ phân tán tối đa (x ATR, 0=Tắt):", "2.5")
-        self.min_move_var = self._add_labeled_entry(sec2.content, "Biên độ tối thiểu (Giá):", "1.2")
-        self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35")
-        self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5")
-        self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5")
-        self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "5.0")
-        self.rr_var = self._add_labeled_entry(sec2.content, "Tỷ lệ R:R (0=TP Theo AI):", "2.0")
+        self.scenarios_var = self._add_labeled_entry(sec2.content, "Số kịch bản AI (Ensemble):", "8", help_key="scenarios")
+        self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75", help_key="consensus")
+        self.max_dispersion_var = self._add_labeled_entry(sec2.content, "Độ phân tán tối đa (x ATR, 0=Tắt):", "2.5", help_key="max_dispersion")
+        self.min_move_var = self._add_labeled_entry(sec2.content, "Biên độ tối thiểu (Giá):", "1.2", help_key="min_move")
+        self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35", help_key="max_spread")
+        self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5", help_key="sl_atr")
+        self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5", help_key="sl_buffer")
+        self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "5.0", help_key="max_sl_price")
+        self.rr_var = self._add_labeled_entry(sec2.content, "Tỷ lệ R:R (0=TP Theo AI):", "2.0", help_key="rr")
 
         # Phân nhóm: Quy tắc nhồi lệnh & Chống trùng giá
         tk.Label(
@@ -1658,16 +1889,12 @@ class KronosDesktopApp:
                 "Nhồi giá tốt hơn (DCA)",
                 "Tự do theo AI (Cách >= khoảng cách tối thiểu)"
             ],
-            "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)"
+            "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
+            help_key="entry_mode"
         )
-        self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0")
+        self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0", help_key="min_entry_spacing")
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            sec2.content, text="Chỉ mở tối đa 1 lệnh mỗi cây nến",
-            variable=self.one_order_per_candle_var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
-            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w",
-            command=self.save_user_settings
-        ).pack(fill=tk.X, pady=(2, 2))
+        self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
 
         tk.Button(
             sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc Entry & Nhồi lệnh)", bg="#161e2e", fg="#94a3b8",
@@ -1683,42 +1910,27 @@ class KronosDesktopApp:
             on_reset=lambda: self.reset_section_settings(3)
         )
         self.auto_be_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            sec3.content, text="Tự dời SL về đúng Entry theo R:R:",
-            variable=self.auto_be_var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
-            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w",
-            command=self.save_user_settings
-        ).pack(fill=tk.X)
-        self.be_trigger_r_var = self._add_labeled_entry(sec3.content, "   Mức kích hoạt (R, VD 1.0 = 1R):", "1.0")
+        self._add_checkbutton(sec3.content, "Tự dời SL về đúng Entry theo R:R:", self.auto_be_var, help_key="auto_be")
+        self.be_trigger_r_var = self._add_labeled_entry(sec3.content, "   Mức kích hoạt (R, VD 1.0 = 1R):", "1.0", help_key="be_trigger_r")
 
         self.auto_trail_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            sec3.content, text="Tự trượt SL khóa lãi (Trailing Stop):",
-            variable=self.auto_trail_var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
-            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w",
-            command=self.save_user_settings
-        ).pack(fill=tk.X)
-        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R):", "0.35")
+        self._add_checkbutton(sec3.content, "Tự trượt SL khóa lãi (Trailing Stop):", self.auto_trail_var, help_key="auto_trail")
+        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R):", "0.35", help_key="trail_dist_r")
 
         self.auto_rev_close_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            sec3.content, text="Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry+)",
-            variable=self.auto_rev_close_var, bg=PANEL_BG, fg=GOLD_ACCENT, selectcolor=BG_DARK,
-            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w",
-            command=self.save_user_settings
-        ).pack(fill=tk.X, pady=(2, 2))
-        self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều (%):", "75")
-        self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0")
-        self.be_plus_price_var = self._add_labeled_entry(sec3.content, "   + Giá lãi nhỏ vào Entry (Giá):", "0.2")
+        self._add_checkbutton(sec3.content, "Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry+)", self.auto_rev_close_var, help_key="auto_rev_close", fg=GOLD_ACCENT)
+        self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều (%):", "75", help_key="rev_consensus")
+        self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0", help_key="rev_min_move")
+        self.be_plus_price_var = self._add_labeled_entry(sec3.content, "   + Giá lãi nhỏ vào Entry (Giá):", "0.2", help_key="be_plus_price")
 
         # Phân nhóm: Chốt lời chùm lệnh & Thời gian giữ lệnh
         tk.Label(
             sec3.content, text="─── CHỐT LỜI CHÙM LỆNH & THỜI GIAN ───",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), pady=4
         ).pack(fill=tk.X)
-        self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0")
-        self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15")
-        self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "0")
+        self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
+        self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
+        self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "0", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
             sec3.content, "   Xử lý khi vượt thời gian:",
             [
@@ -1726,7 +1938,8 @@ class KronosDesktopApp:
                 "Dời SL về hòa vốn (BE+)",
                 "Đóng tất cả (Bất kể Lãi/Lỗ)"
             ],
-            "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)"
+            "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
+            help_key="max_hold_action"
         )
 
         # Phân nhóm: Giới hạn Lãi/Lỗ ngày & Cooldown
@@ -1734,11 +1947,11 @@ class KronosDesktopApp:
             sec3.content, text="─── GIỚI HẠN LÃI/LỖ TRONG NGÀY ───",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), pady=4
         ).pack(fill=tk.X)
-        self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0")
-        self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0")
-        self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0")
-        self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30")
-        self.fast_sl_cooldown_mins_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL < 5 phút (phút, 0=Tắt):", "15")
+        self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0", help_key="daily_tp_usd")
+        self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0", help_key="daily_sl_usd")
+        self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0", help_key="max_consec_loss")
+        self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30", help_key="cooldown_mins")
+        self.fast_sl_cooldown_mins_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL < 5 phút (phút, 0=Tắt):", "15", help_key="fast_sl_cooldown_mins")
         tk.Button(
             sec3.content, text="↺ Khôi phục mặc định Mục 3 (Quản lý lệnh & Chốt lời)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -1755,17 +1968,19 @@ class KronosDesktopApp:
         self.engine_var = self._add_labeled_combo(
             sec4.content, "Chế độ chạy:",
             ["Ưu tiên Hugging Face -> GTX 1650", "Chạy trực tiếp máy Local"],
-            "Chạy trực tiếp máy Local"
+            "Chạy trực tiếp máy Local",
+            help_key="engine"
         )
         self.model_var = self._add_labeled_combo(
             sec4.content, "Mô hình:",
             list(MODEL_CONFIGS.keys()),
-            "AI-base (102.3M - Mạnh nhất)"
+            "AI-base (102.3M - Mạnh nhất)",
+            help_key="model"
         )
-        self.hf_space_var = self._add_labeled_entry(sec4.content, "HF Space ID:", "tranvankha2807/Kronos_Xau", entry_width=18)
-        self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18)
-        self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450")
-        self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6")
+        self.hf_space_var = self._add_labeled_entry(sec4.content, "HF Space ID:", "tranvankha2807/Kronos_Xau", entry_width=18, help_key="hf_space")
+        self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18, help_key="hf_token")
+        self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450", help_key="lookback")
+        self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6", help_key="pred_len")
         tk.Button(
             sec4.content, text="↺ Khôi phục mặc định Mục 4 (Phân tích AI & Mô hình)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -1954,9 +2169,22 @@ class KronosDesktopApp:
         self.chart_context_menu.add_command(label="➕ Mở rộng nến (Phóng to ngang)", command=lambda: self.adjust_chart_horizontal_scale(0.75))
         self.chart_context_menu.add_command(label="➖ Thu hẹp nến (Xem nhiều nến hơn)", command=lambda: self.adjust_chart_horizontal_scale(1.35))
 
+        # BỘ CHIA KHUNG KÉO GIÃN LINH HOẠT GIỮA BIỂU ĐỒ VÀ BẢNG LỆNH (VERTICAL PANEDWINDOW)
+        self.right_paned = tk.PanedWindow(
+            right_panel,
+            orient=tk.VERTICAL,
+            bg="#222c3c",
+            bd=0,
+            sashwidth=6,
+            sashpad=1,
+            sashrelief=tk.RAISED,
+            sashcursor="size_ns",
+            opaqueresize=True
+        )
+        self.right_paned.pack(fill=tk.BOTH, expand=True)
+
         # Biểu đồ Nến tương tác trực tiếp bằng chuột + Thanh công cụ chọn nhanh Khung M1/M5/M15/H1
-        chart_frame = tk.Frame(right_panel, bg=PANEL_BG)
-        chart_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+        chart_frame = tk.Frame(self.right_paned, bg=PANEL_BG)
 
         chart_toolbar = tk.Frame(chart_frame, bg="#131822", padx=10, pady=4, highlightthickness=1, highlightbackground="#232d3f")
         chart_toolbar.pack(fill=tk.X)
@@ -2004,8 +2232,7 @@ class KronosDesktopApp:
         self.canvas.mpl_connect("resize_event", lambda e: setattr(self, "_chart_bg_bbox", None))
 
         # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB (XAUUSD | BTCUSD | DỰ BÁO AI & NHẬT KÝ)
-        self.bottom_notebook = ttk.Notebook(right_panel, height=188)
-        self.bottom_notebook.pack(fill=tk.X)
+        self.bottom_notebook = ttk.Notebook(self.right_paned)
 
         # TAB 0 (Mặc định khi mở App): XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
         pos_tab_xau = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
@@ -2023,7 +2250,7 @@ class KronosDesktopApp:
 
         # TAB 2: CHI TIẾT 6 CÂY NẾN DỰ BÁO KRONOS AI & NHẬT KÝ LOG
         pred_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
-        self.bottom_notebook.add(pred_tab, text="📊 BẢNG GIÁ DỰ BÁO AI [XAUUSD] & NHẬT KÝ")
+        self.bottom_notebook.add(pred_tab, text="BẢNG GIÁ DỰ BÁO AI [XAUUSD] & NHẬT KÝ")
 
         pred_left = tk.Frame(pred_tab, bg=PANEL_BG)
         pred_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 4), pady=4)
@@ -2062,6 +2289,12 @@ class KronosDesktopApp:
             bg="#131822", fg=CYAN_LIVE, font=("Segoe UI", 8, "bold"), anchor="w"
         ).pack(side=tk.LEFT)
         tk.Button(
+            log_header_bar, text="⛶ Mở Rộng", bg="#1f293d", fg=TEXT_MAIN,
+            activebackground=GOLD_ACCENT, activeforeground="#000000",
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
+            command=self.toggle_bottom_panel_expand
+        ).pack(side=tk.RIGHT, padx=(3, 0))
+        tk.Button(
             log_header_bar, text="📂 Mở Thư Mục Log", bg="#232d3f", fg=TEXT_MAIN,
             activebackground=GOLD_ACCENT, activeforeground="#000000",
             font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
@@ -2084,10 +2317,25 @@ class KronosDesktopApp:
 
         self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
+        # Đưa Khung Biểu Đồ và Bảng Lệnh Đa Tab vào PanedWindow kéo giãn linh hoạt
+        self.right_paned.add(chart_frame, minsize=180, stretch="always")
+        self.right_paned.add(self.bottom_notebook, minsize=120, stretch="always")
+
+        self.right_paned.bind("<ButtonRelease-1>", self._on_sash_released, add="+")
+        self.right_paned.bind("<Double-Button-1>", self._on_paned_double_click, add="+")
+        self.root.after(150, self._init_right_paned_sash)
+
     def _build_positions_tab_ui(self, pos_tab: tk.Frame, profile_key: str):
         """Dựng giao diện bảng quản lý lệnh đang mở Real-Time riêng biệt cho từng Tab (XAUUSD / BTCUSD)."""
         pos_top_bar = tk.Frame(pos_tab, bg=PANEL_BG, pady=4, padx=6)
         pos_top_bar.pack(fill=tk.X)
+
+        tk.Button(
+            pos_top_bar, text="⛶ Mở Rộng", bg="#1f293d", fg=TEXT_MAIN,
+            activebackground=GOLD_ACCENT, activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2, cursor="hand2",
+            command=self.toggle_bottom_panel_expand
+        ).pack(side=tk.RIGHT, padx=(6, 2))
 
         tk.Button(
             pos_top_bar, text="🔥 ĐÓNG TẤT CẢ (CLOSE ALL)", bg=RED_DOWN, fg="#ffffff",
@@ -2181,7 +2429,7 @@ class KronosDesktopApp:
         """Xử lý sự kiện khi người dùng chọn lệnh trong danh sách phía dưới: làm nổi bật lệnh tương ứng trên biểu đồ."""
         pk = profile_key or self.active_profile_key
         if pk == self.active_profile_key:
-            sym = self.symbol_var.get().strip() or (SYMBOL_BTC if pk == "BTCUSD" else SYMBOL_XAU)
+            sym = self.symbol_var.get().strip() or DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "BTCUSDm" if pk == "BTCUSD" else "XAUUSDm")
             tf = self.tf_var.get().strip() or "M1"
             self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
 
@@ -2222,7 +2470,7 @@ class KronosDesktopApp:
                     if p_key == pk:
                         cleared = True
 
-        sym = self.symbol_var.get().strip() or (SYMBOL_BTC if pk == "BTCUSD" else SYMBOL_XAU)
+        sym = self.symbol_var.get().strip() or DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "BTCUSDm" if pk == "BTCUSD" else "XAUUSDm")
         tf = self.tf_var.get().strip() or "M1"
         self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
 
@@ -2276,10 +2524,17 @@ class KronosDesktopApp:
         right_ctrl.pack(side=tk.RIGHT, fill=tk.Y)
 
         tk.Button(
+            right_ctrl, text="⛶ Mở Rộng", bg="#1f293d", fg=TEXT_MAIN,
+            activebackground=GOLD_ACCENT, activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2, cursor="hand2",
+            command=self.toggle_bottom_panel_expand
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+
+        tk.Button(
             right_ctrl, text="📊 XUẤT EXCEL", bg="#107c41", fg="#ffffff",
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=2, cursor="hand2",
             command=self.export_history_to_excel
-        ).pack(side=tk.RIGHT, padx=(6, 0))
+        ).pack(side=tk.RIGHT, padx=4)
 
         tk.Button(
             right_ctrl, text="30 Ngày", bg="#232d3f", fg=TEXT_MAIN,
@@ -2360,6 +2615,65 @@ class KronosDesktopApp:
     def _open_calendar_popup(self, target_var: tk.StringVar):
         """Mở cửa sổ Pop-up Lịch chọn ngày và cập nhật vào biến StringVar đích."""
         DatePickerDialog(self.root, initial_date=target_var.get(), on_date_selected=target_var.set)
+
+    def _init_right_paned_sash(self):
+        """Đặt vị trí ban đầu cho thanh kéo giãn giữa Biểu đồ và Bảng lệnh."""
+        if not hasattr(self, "right_paned") or self.right_paned is None or not self.right_paned.winfo_exists():
+            return
+        try:
+            self.root.update_idletasks()
+            total_h = self.right_paned.winfo_height()
+            if total_h > 350:
+                saved_h = getattr(self, "_saved_bottom_panel_h", 240)
+                if not isinstance(saved_h, (int, float)) or saved_h < 120 or saved_h > total_h - 180:
+                    saved_h = 240
+                target_sash_y = max(180, total_h - int(saved_h))
+                self.right_paned.sash_place(0, 0, target_sash_y)
+        except Exception:
+            pass
+
+    def _on_sash_released(self, event=None):
+        """Lưu lại chiều cao bảng lệnh khi người dùng thả chuột kéo thanh splitter."""
+        if not hasattr(self, "bottom_notebook") or self.bottom_notebook is None or not self.bottom_notebook.winfo_exists():
+            return
+        try:
+            h = self.bottom_notebook.winfo_height()
+            if h >= 120:
+                self._saved_bottom_panel_h = h
+                self.save_user_settings()
+        except Exception:
+            pass
+
+    def _on_paned_double_click(self, event):
+        """Bắt sự kiện nhấp đúp vào thanh phân cách để mở rộng / thu gọn nhanh."""
+        if not hasattr(self, "right_paned") or self.right_paned is None or not self.right_paned.winfo_exists():
+            return
+        try:
+            ident = self.right_paned.identify(event.x, event.y)
+            if ident and len(ident) > 1 and ident[1] == "sash":
+                self.toggle_bottom_panel_expand()
+        except Exception:
+            pass
+
+    def toggle_bottom_panel_expand(self):
+        """Chuyển đổi nhanh giữa chiều cao chuẩn (~240px) và chiều cao mở rộng (~480px) của Bảng lệnh."""
+        if not hasattr(self, "right_paned") or self.right_paned is None or not self.right_paned.winfo_exists():
+            return
+        try:
+            total_h = self.right_paned.winfo_height()
+            if total_h <= 300:
+                return
+            cur_nb_h = self.bottom_notebook.winfo_height()
+            if cur_nb_h < 320:
+                target_nb_h = min(total_h - 180, max(460, int(total_h * 0.58)))
+            else:
+                target_nb_h = 240
+            target_sash_y = max(180, total_h - target_nb_h)
+            self.right_paned.sash_place(0, 0, target_sash_y)
+            self._saved_bottom_panel_h = target_nb_h
+            self.save_user_settings()
+        except Exception as e:
+            self.log_error("TOGGLE_PANEL_EXPAND", e)
 
     def _set_history_today(self):
         t_str = datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
@@ -2740,6 +3054,7 @@ class KronosDesktopApp:
             payload["hf_token"] = token_val
             payload["hf_space"] = space_val
             payload["last_active_tab"] = self.active_profile_key
+            payload["bottom_panel_height"] = int(getattr(self, "_saved_bottom_panel_h", 240))
             payload["profiles"] = {
                 "XAUUSD": dict(self.profile_settings["XAUUSD"]),
                 "BTCUSD": dict(self.profile_settings["BTCUSD"]),
@@ -2856,6 +3171,12 @@ class KronosDesktopApp:
                     self.bottom_notebook.select(1 if last_tab == "BTCUSD" else 0)
                 except Exception:
                     pass
+
+            if isinstance(data, dict) and "bottom_panel_height" in data:
+                try:
+                    self._saved_bottom_panel_h = int(data["bottom_panel_height"])
+                except Exception:
+                    self._saved_bottom_panel_h = 240
 
             self.log(f"Đã khôi phục hồ sơ cài đặt riêng cho Tab {last_tab} (XAUUSD & BTCUSD độc lập).")
             if token_saved:
@@ -3639,10 +3960,143 @@ class KronosDesktopApp:
             self._sync_xlim_dependents(self.saved_xlim)
             self._request_canvas_redraw()
 
-    def _add_labeled_entry(self, parent, label_text, default_val, show=None, entry_width=10):
+    def _create_help_badge(self, parent, help_key):
+        """Tạo biểu tượng chấm hỏi tròn [?] tương tác hiện hướng dẫn thông số chi tiết."""
+        c = tk.Canvas(parent, width=16, height=16, bg=PANEL_BG, highlightthickness=0, cursor="hand2")
+        circle = c.create_oval(1, 1, 15, 15, fill="#1c2438", outline="#3b82f6", width=1)
+        txt = c.create_text(8, 8, text="?", fill="#38bdf8", font=("Segoe UI", 7, "bold"))
+
+        def _on_enter(e):
+            c.itemconfig(circle, fill="#2a3a5c", outline="#eab308")
+            c.itemconfig(txt, fill="#facc15")
+
+        def _on_leave(e):
+            c.itemconfig(circle, fill="#1c2438", outline="#3b82f6")
+            c.itemconfig(txt, fill="#38bdf8")
+
+        c.bind("<Enter>", _on_enter)
+        c.bind("<Leave>", _on_leave)
+        c.bind("<Button-1>", lambda e, k=help_key: self.show_param_help(k))
+        c.pack(side=tk.LEFT, padx=(4, 0))
+        return c
+
+    def show_param_help(self, help_key):
+        """Hiển thị hộp thoại pop-up chỉ dẫn thông số là gì và cách cài đặt hiệu quả."""
+        guide = PARAM_HELP_GUIDE.get(help_key)
+        if not guide:
+            return
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"💡 Hướng Dẫn Thông Số - {guide.get('title', help_key)}")
+        dlg.configure(bg="#0f141c")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+
+        header = tk.Frame(dlg, bg="#161e2e", padx=14, pady=10)
+        header.pack(fill=tk.X)
+
+        title_lbl = tk.Label(
+            header, text=f"💡  {guide.get('title', help_key)}",
+            bg="#161e2e", fg="#eab308", font=("Segoe UI", 10, "bold"), anchor="w"
+        )
+        title_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        close_btn = tk.Label(
+            header, text="✕", bg="#161e2e", fg="#94a3b8",
+            font=("Segoe UI", 10, "bold"), cursor="hand2", padx=6
+        )
+        close_btn.pack(side=tk.RIGHT)
+        close_btn.bind("<Button-1>", lambda e: dlg.destroy())
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg="#ef4444"))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg="#94a3b8"))
+
+        content = tk.Frame(dlg, bg="#0f141c", padx=16, pady=12)
+        content.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Thông số này là gì?
+        tk.Label(
+            content, text="📌 THÔNG SỐ NÀY LÀ GÌ?",
+            bg="#0f141c", fg="#38bdf8", font=("Segoe UI", 9, "bold"), anchor="w"
+        ).pack(fill=tk.X, pady=(0, 4))
+
+        sec1_box = tk.Frame(content, bg="#141a24", padx=12, pady=10, highlightthickness=1, highlightbackground="#222d3d")
+        sec1_box.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(
+            sec1_box, text=guide.get("what_is_it", ""),
+            bg="#141a24", fg="#e2e8f0", font=("Segoe UI", 8),
+            justify="left", anchor="w", wraplength=500
+        ).pack(fill=tk.X)
+
+        # 2. Cách cài đặt hiệu quả
+        tk.Label(
+            content, text="🎯 CÁCH CÀI ĐẶT HIỆU QUẢ & KHUYÊN DÙNG:",
+            bg="#0f141c", fg="#4ade80", font=("Segoe UI", 9, "bold"), anchor="w"
+        ).pack(fill=tk.X, pady=(0, 4))
+
+        sec2_box = tk.Frame(content, bg="#141a24", padx=12, pady=10, highlightthickness=1, highlightbackground="#222d3d")
+        sec2_box.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
+
+        tk.Label(
+            sec2_box, text=guide.get("how_to_set", ""),
+            bg="#141a24", fg="#cbd5e1", font=("Segoe UI", 8),
+            justify="left", anchor="nw", wraplength=500
+        ).pack(fill=tk.BOTH, expand=True)
+
+        # Nút Đã hiểu
+        footer = tk.Frame(dlg, bg="#0f141c", padx=16, pady=10)
+        footer.pack(fill=tk.X)
+
+        tk.Button(
+            footer, text="✓  ĐÃ HIỂU (ĐÓNG)",
+            bg="#0d7a46", fg="#ffffff", activebackground="#159f54", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, cursor="hand2", pady=5,
+            command=dlg.destroy
+        ).pack(fill=tk.X)
+
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+
+        # Căn giữa cửa sổ dựa trên kích thước tự nhiên
+        dlg.update_idletasks()
+        w = max(560, dlg.winfo_reqwidth())
+        h = max(380, dlg.winfo_reqheight())
+        try:
+            rx = self.root.winfo_rootx()
+            ry = self.root.winfo_rooty()
+            rw = self.root.winfo_width()
+            rh = self.root.winfo_height()
+            x = max(50, rx + (rw - w) // 2)
+            y = max(50, ry + (rh - h) // 2)
+        except Exception:
+            x = 250
+            y = 150
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+        dlg.attributes("-topmost", True)
+        dlg.focus_set()
+
+    def _add_checkbutton(self, parent, text, var, help_key=None, fg=TEXT_MAIN):
         row = tk.Frame(parent, bg=PANEL_BG)
         row.pack(fill=tk.X, pady=2)
-        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        cb = tk.Checkbutton(
+            row, text=text, variable=var, bg=PANEL_BG, fg=fg, selectcolor=BG_DARK,
+            activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w",
+            command=self.save_user_settings
+        )
+        cb.pack(side=tk.LEFT)
+        if help_key and help_key in PARAM_HELP_GUIDE:
+            self._create_help_badge(row, help_key)
+        return cb
+
+    def _add_labeled_entry(self, parent, label_text, default_val, show=None, entry_width=10, help_key=None):
+        row = tk.Frame(parent, bg=PANEL_BG)
+        row.pack(fill=tk.X, pady=2)
+        lbl_frame = tk.Frame(row, bg=PANEL_BG)
+        lbl_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(lbl_frame, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT)
+        if help_key and help_key in PARAM_HELP_GUIDE:
+            self._create_help_badge(lbl_frame, help_key)
+
         var = tk.StringVar(value=default_val)
         entry = tk.Entry(
             row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN,
@@ -3654,10 +4108,15 @@ class KronosDesktopApp:
         entry.bind("<Return>", lambda e: self.save_user_settings())
         return var
 
-    def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=None):
+    def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=None, help_key=None):
         row = tk.Frame(parent, bg=PANEL_BG)
         row.pack(fill=tk.X, pady=2)
-        tk.Label(row, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        lbl_frame = tk.Frame(row, bg=PANEL_BG)
+        lbl_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(lbl_frame, text=label_text, bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT)
+        if help_key and help_key in PARAM_HELP_GUIDE:
+            self._create_help_badge(lbl_frame, help_key)
+
         var = tk.StringVar(value=default_val)
 
         # Tự động tính toán bề rộng combobox nếu có chuỗi dài để không bị che khuất chữ
