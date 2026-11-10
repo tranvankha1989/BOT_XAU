@@ -90,6 +90,7 @@ TRIAL_DURATION_SECONDS = 0
 
 _CACHED_HWID: Optional[str] = None
 _CACHED_HWID_RAW: Optional[str] = None
+_CACHED_LEGACY_HWID: Optional[str] = None
 
 
 # =============================================================================
@@ -349,6 +350,42 @@ def get_hardware_id() -> str:
     return _CACHED_HWID
 
 
+def get_legacy_hardware_id() -> str:
+    """
+    Tính HWID theo phương thức PowerShell CIM tương thích ngược với các phiên bản v1.0.6/v1.0.7.
+    Chỉ được gọi dự phòng khi cần giải mã hoặc đối soát key cũ của khách hàng nâng cấp từ bản trước.
+    """
+    global _CACHED_LEGACY_HWID
+    if _CACHED_LEGACY_HWID:
+        return _CACHED_LEGACY_HWID
+
+    cpu, mb, disk = _get_hardware_via_powershell()
+    if not (cpu and mb and disk):
+        w_cpu, w_mb, w_disk = _get_hardware_via_wmic()
+        cpu = cpu or w_cpu
+        mb = mb or w_mb
+        disk = disk or w_disk
+
+    if not (cpu and mb and disk):
+        r_cpu, r_mb, r_disk = _get_hardware_via_registry()
+        cpu = cpu or r_cpu
+        mb = mb or r_mb
+        disk = disk or r_disk
+
+    if not cpu:
+        import uuid
+        cpu = f"NODE{uuid.getnode()}"
+    if not mb:
+        mb = os.environ.get("COMPUTERNAME", "PC_DEFAULT")
+    if not disk:
+        disk = os.environ.get("USERNAME", "USER_DEFAULT")
+
+    raw = f"{cpu}:{mb}:{disk}:{HWID_SALT}"
+    hwid_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest().upper()
+    _CACHED_LEGACY_HWID = f"TTS-{hwid_hash[:4]}-{hwid_hash[4:8]}-{hwid_hash[8:12]}-{hwid_hash[12:16]}"
+    return _CACHED_LEGACY_HWID
+
+
 # =============================================================================
 # 2. XÁC THỰC MẬT MÃ BẤT ĐỐI XỨNG ED25519
 # =============================================================================
@@ -397,16 +434,18 @@ def verify_license_string(
     except Exception:
         return False, None, "Dữ liệu bản quyền không thể giải mã thành cấu trúc JSON hợp lệ."
 
-    # 3. So khớp Hardware ID
+    # 3. So khớp Hardware ID (Hỗ trợ Dual-HWID chuẩn mới WMI COM và đối soát tương thích ngược v1.0.6/v1.0.7)
     if expected_hwid:
         norm_expected = expected_hwid.strip().upper()
         norm_target = str(payload.get("hwid", "")).strip().upper()
         if norm_target != norm_expected:
-            return (
-                False,
-                payload,
-                f"Mã bản quyền được cấp cho thiết bị khác ({norm_target}), không khớp với máy này ({norm_expected}).",
-            )
+            legacy_expected = get_legacy_hardware_id().strip().upper()
+            if norm_target != legacy_expected:
+                return (
+                    False,
+                    payload,
+                    f"Mã bản quyền được cấp cho thiết bị khác ({norm_target}), không khớp với máy này ({norm_expected}).",
+                )
 
     # 4. Kiểm tra ngày hết hạn
     is_lifetime = payload.get("is_lifetime", False)
@@ -520,19 +559,8 @@ def _write_file_payload(file_path: Path, data: dict, hwid: str) -> bool:
         return False
 
 
-def load_license_state(hwid: str) -> Optional[Dict[str, Any]]:
-    """
-    Đọc đồng thời từ 3 vị trí độc lập đạt chuẩn Windows AppData:
-    1. %LOCALAPPDATA%\\Kronos\\Data\\lic_cache.dat
-    2. %APPDATA%\\Kronos\\Config\\app_state.dat
-    3. %ProgramData%\\Kronos\\shared_lic.dat (hoặc ~/.kronos/shared_lic.dat)
-
-    Áp dụng thuật toán đồng thuận (Consensus) + Tự phục hồi (Self-Healing):
-    - Lấy install_timestamp nhỏ nhất (mốc bắt đầu sớm nhất, chống reset Trial).
-    - Lấy last_run_timestamp lớn nhất (mốc chạy mới nhất, chống tua lùi giờ).
-    - Lấy license_key hợp lệ nếu có trong bất kỳ vị trí nào.
-    - Tự động ghi bù lại nếu có vị trí bị thiếu do người dùng hoặc trình gỡ xóa dở dang.
-    """
+def _read_all_license_states(hwid: str) -> Tuple[list, Tuple[Optional[dict], Optional[dict], Optional[dict]]]:
+    """Đọc dữ liệu thô từ 3 vị trí lưu trữ an toàn."""
     p1 = _get_localappdata_path()
     p2 = _get_roamingappdata_path()
     shared_paths = _get_shared_data_paths()
@@ -547,6 +575,44 @@ def load_license_state(hwid: str) -> Optional[Dict[str, Any]]:
             break
 
     states = [s for s in (s1, s2, s3) if s and isinstance(s, dict)]
+    return states, (s1, s2, s3)
+
+
+def load_license_state(hwid: str) -> Optional[Dict[str, Any]]:
+    """
+    Đọc đồng thời từ 3 vị trí độc lập đạt chuẩn Windows AppData:
+    1. %LOCALAPPDATA%\\Kronos\\Data\\lic_cache.dat
+    2. %APPDATA%\\Kronos\\Config\\app_state.dat
+    3. %ProgramData%\\Kronos\\shared_lic.dat (hoặc ~/.kronos/shared_lic.dat)
+
+    Áp dụng thuật toán đồng thuận (Consensus) + Tự phục hồi (Self-Healing) + Dual-HWID Migration:
+    - Nếu không tìm thấy key ở HWID chính, tự động thử giải mã bằng Legacy HWID (v1.0.6/v1.0.7).
+    - Tự động di trú (Migrate) sang HWID mới và ghi đè bảo lưu 100% khi người dùng nâng cấp.
+    - Lấy install_timestamp nhỏ nhất (mốc bắt đầu sớm nhất, chống reset Trial).
+    - Lấy last_run_timestamp lớn nhất (mốc chạy mới nhất, chống tua lùi giờ).
+    - Lấy license_key hợp lệ nếu có trong bất kỳ vị trí nào.
+    - Tự động ghi bù lại nếu có vị trí bị thiếu do người dùng hoặc trình gỡ xóa dở dang.
+    """
+    states, (s1, s2, s3) = _read_all_license_states(hwid)
+
+    # Kiểm tra xem có key hợp lệ trong các bản sao vừa đọc không
+    has_valid_key = any(
+        s.get("license_key") and str(s.get("license_key")).startswith("ED25519.")
+        for s in states
+    )
+
+    # Nếu chưa có key hợp lệ, đối soát dự phòng bằng Legacy HWID (để khách nâng cấp không phải nhập lại key)
+    if not has_valid_key:
+        legacy_hwid = get_legacy_hardware_id()
+        if legacy_hwid != hwid:
+            legacy_states, _ = _read_all_license_states(legacy_hwid)
+            for ls in legacy_states:
+                k = ls.get("license_key")
+                if k and isinstance(k, str) and k.startswith("ED25519."):
+                    # Di trú và lưu ngay lập tức sang HWID hiện tại
+                    save_license_state(hwid, ls)
+                    return ls
+
     if not states:
         return None
 
