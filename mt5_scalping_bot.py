@@ -117,213 +117,213 @@ PARAM_HELP_GUIDE = {
     "symbol": {
         "title": "Mã giao dịch MT5 (Symbol)",
         "what_is_it": "Tên cặp tiền hoặc hàng hóa giao dịch được khai báo trên sàn MT5 (ví dụ: XAUUSD, XAUUSDm, BTCUSD, EURUSD, GBPUSD...). Ký tự đuôi như 'm', 'c', 'pro' phụ thuộc vào loại tài khoản và sàn môi giới (Exness, ICMarkets, XM...).",
-        "how_to_set": "• Kiểm tra chính xác tên mã hiển thị trong cửa sổ Market Watch trên MT5 của bạn.\n• Tài khoản Standard Exness: Nhập 'XAUUSDm'. Tài khoản Pro/Zero: Nhập 'XAUUSD'.\n• Khi đổi mã, bot sẽ tự động nhận diện giá Bid/Ask, cấu trúc Spread và nạp cấu hình riêng của mã đó."
+        "how_to_set": "- Kiểm tra chính xác tên mã hiển thị trong cửa sổ Market Watch trên MT5 của bạn.\n- Tài khoản Standard Exness: Nhập 'XAUUSDm'. Tài khoản Pro/Zero: Nhập 'XAUUSD'.\n- Khi đổi mã, bot sẽ tự động nhận diện giá Bid/Ask, cấu trúc Spread và nạp cấu hình riêng của mã đó."
     },
     "analysis_tf": {
         "title": "Khung phân tích AI (Analysis Timeframe)",
         "what_is_it": "Khung thời gian nến mà mô hình Deep Learning phân tích ngữ cảnh lớn để dự báo xu hướng đa kịch bản (Ensemble) trong các bước tiếp theo.",
-        "how_to_set": "• M15 (Khuyên dùng chuẩn): Cho góc nhìn đa chu kỳ 90 phút cực kỳ tin cậy, khử nhiễu tốt cho vàng XAUUSD.\n• H1: Dành cho giao dịch theo sóng lớn trong ngày (Day Trading).\n• M5: Dành cho thị trường biến động nhanh hoặc đánh siêu lướt sóng."
+        "how_to_set": "- M15 (Khuyên dùng chuẩn): Cho góc nhìn đa chu kỳ 90 phút cực kỳ tin cậy, khử nhiễu tốt cho vàng XAUUSD.\n- H1: Dành cho giao dịch theo sóng lớn trong ngày (Day Trading).\n- M5: Dành cho thị trường biến động nhanh hoặc đánh siêu lướt sóng."
     },
     "tf": {
         "title": "Khung vào lệnh Scalp (Scalp Timeframe)",
         "what_is_it": "Khung thời gian nến thực thi giao dịch. Bot sẽ quét các điều kiện Entry, tính toán biên độ nến ATR, độ giãn Spread và kích hoạt lệnh tại khung này.",
-        "how_to_set": "• M5 (Khuyên dùng chuẩn): Điểm cân bằng hoàn hảo cho Scalping vàng, nến đủ ổn định và tỷ lệ tín hiệu giả thấp.\n• M1: Chỉ nên dùng khi tài khoản có Spread cực thấp (< 0.20$) và muốn nhịp lệnh nhanh.\n• Khung vào lệnh nên nhỏ hơn hoặc bằng Khung phân tích AI."
+        "how_to_set": "- M5 (Khuyên dùng chuẩn): Điểm cân bằng hoàn hảo cho Scalping vàng, nến đủ ổn định và tỷ lệ tín hiệu giả thấp.\n- M1: Chỉ nên dùng khi tài khoản có Spread cực thấp (< 0.20$) và muốn nhịp lệnh nhanh.\n- Khung vào lệnh nên nhỏ hơn hoặc bằng Khung phân tích AI."
     },
     "lot": {
         "title": "Khối lượng vào lệnh (Lot Size)",
         "what_is_it": "Số lot giao dịch cố định được mở cho mỗi lệnh giao dịch mới (hoặc mỗi lệnh nhồi).",
-        "how_to_set": "• Vốn 200$ - 500$: Cài 0.01 lot.\n• Vốn 1,000$: Cài 0.02 - 0.03 lot.\n• Vốn 3,000$ - 5,000$: Cài 0.05 - 0.10 lot.\n• Nguyên tắc vàng: Giữ tổng rủi ro khi dính SL của tất cả các lệnh không vượt quá 1% - 2% vốn tài khoản."
+        "how_to_set": "- Vốn 200$ - 500$: Cài 0.01 lot.\n- Vốn 1,000$: Cài 0.02 - 0.03 lot.\n- Vốn 3,000$ - 5,000$: Cài 0.05 - 0.10 lot.\n- Nguyên tắc vàng: Giữ tổng rủi ro khi dính SL của tất cả các lệnh không vượt quá 1% - 2% vốn tài khoản."
     },
     "max_pos": {
         "title": "Số lệnh tối đa cùng lúc (Max Positions)",
         "what_is_it": "Giới hạn số lượng vị thế (lệnh) mở đồng thời tối đa của cặp tiền này. Khi tổng số lệnh đang mở chạm ngưỡng này, bot sẽ khóa chức năng mở thêm lệnh.",
-        "how_to_set": "• Đánh an toàn tuyệt đối: Đặt 1 lệnh (Đóng lệnh này mới vào lệnh khác).\n• Đánh nhồi / DCA kiểm soát rủi ro: Đặt 2 đến 3 lệnh.\n• Cảnh báo: Không nên đặt > 4 lệnh vì dễ gây áp lực ký quỹ (Margin Call) khi thị trường chạy một chiều mạnh."
+        "how_to_set": "- Đánh an toàn tuyệt đối: Đặt 1 lệnh (Đóng lệnh này mới vào lệnh khác).\n- Đánh nhồi / DCA kiểm soát rủi ro: Đặt 2 đến 3 lệnh.\n- Cảnh báo: Không nên đặt > 4 lệnh vì dễ gây áp lực ký quỹ (Margin Call) khi thị trường chạy một chiều mạnh."
     },
     "magic_number": {
         "title": "Mã định danh lệnh (Magic Number)",
         "what_is_it": "Mã số định danh riêng biệt gắn vào mỗi lệnh của bot trên MT5, giúp bot nhận diện và chỉ quản lý đúng các lệnh của mình, hoàn toàn không can thiệp vào lệnh tay của bạn hoặc của bot khác.",
-        "how_to_set": "• Mỗi cặp tiền hoặc mỗi bot nên dùng 1 Magic Number khác nhau (VD: Tab XAUUSD dùng 20260501, Tab BTCUSD dùng 20260502).\n• Lưu ý: Không đổi Magic Number khi đang có lệnh mở, nếu đổi bot sẽ mất quyền quản lý lệnh cũ."
+        "how_to_set": "- Mỗi cặp tiền hoặc mỗi bot nên dùng 1 Magic Number khác nhau (VD: Tab XAUUSD dùng 20260501, Tab BTCUSD dùng 20260502).\n- Lưu ý: Không đổi Magic Number khi đang có lệnh mở, nếu đổi bot sẽ mất quyền quản lý lệnh cũ."
     },
 
     # ─── MỤC 2: BỘ LỌC ENTRY & NHỒI LỆNH ───
     "scenarios": {
         "title": "Số kịch bản AI (Ensemble Scenarios)",
         "what_is_it": "Số lượng kịch bản đường đi giá ngẫu nhiên mà mô hình AI mô phỏng (Monte Carlo Ensemble) để tính toán xác suất tăng/giảm trong tương lai.",
-        "how_to_set": "• Khuyên dùng chuẩn: 16 đến 32 kịch bản (Cân bằng lý tưởng giữa tốc độ suy luận và độ chính xác).\n• Nếu máy có GPU mạnh (GTX/RTX) hoặc dùng Cloud: Có thể đặt 32 - 64 kịch bản để dự báo mượt và phân tán chuẩn xác hơn.\n• Lưu ý: Không nên đặt < 8 vì số kịch bản quá ít dễ gây sai lệch xác suất ngẫu nhiên."
+        "how_to_set": "- Khuyên dùng chuẩn: 16 đến 32 kịch bản (Cân bằng lý tưởng giữa tốc độ suy luận và độ chính xác).\n- Nếu máy có GPU mạnh (GTX/RTX) hoặc dùng Cloud: Có thể đặt 32 - 64 kịch bản để dự báo mượt và phân tán chuẩn xác hơn.\n- Lưu ý: Không nên đặt < 8 vì số kịch bản quá ít dễ gây sai lệch xác suất ngẫu nhiên."
     },
     "consensus": {
         "title": "Độ đồng thuận tối thiểu (Consensus %)",
         "what_is_it": "Tỷ lệ phần trăm tối thiểu các kịch bản AI phải cùng chỉ về một hướng (đồng thuận BUY hoặc đồng thuận SELL) thì mới thỏa điều kiện vào lệnh.",
-        "how_to_set": "• Chuẩn Scalping hiệu quả: 70% - 75% (Cho tỷ lệ vào lệnh hợp lý và Winrate cao).\n• Đánh chọn lọc / Rủi ro thấp: 80% - 85% (Ít lệnh hơn nhưng mỗi lệnh có độ tin cậy rất cao).\n• Tránh đặt < 65% vì tín hiệu bị nhiễu do hai phe Mua và Bán đang giằng co tương đương."
+        "how_to_set": "- Chuẩn Scalping hiệu quả: 70% - 75% (Cho tỷ lệ vào lệnh hợp lý và Winrate cao).\n- Đánh chọn lọc / Rủi ro thấp: 80% - 85% (Ít lệnh hơn nhưng mỗi lệnh có độ tin cậy rất cao).\n- Tránh đặt < 65% vì tín hiệu bị nhiễu do hai phe Mua và Bán đang giằng co tương đương."
     },
     "max_dispersion": {
         "title": "Độ phân tán tối đa (Max Dispersion x ATR)",
         "what_is_it": "Đo lường độ lệch / bất đồng giữa các kịch bản dự báo của AI so với biên độ nến ATR. Nếu các đường dự báo tản ra quá xa nhau (thị trường đang biến động hỗn loạn hoặc sắp có tin mạnh), bot sẽ từ chối vào lệnh.",
-        "how_to_set": "• Khuyên dùng: 2.0 đến 2.5 (x ATR).\n• Nếu đặt 0: Tắt bộ lọc phân tán (chấp nhận vào lệnh kể cả khi AI phân vân).\n• Nên duy trì ở mức 2.5 để tự động né các pha quét râu 2 đầu lúc thị trường nhiễu loạn."
+        "how_to_set": "- Khuyên dùng: 2.0 đến 2.5 (x ATR).\n- Nếu đặt 0: Tắt bộ lọc phân tán (chấp nhận vào lệnh kể cả khi AI phân vân).\n- Nên duy trì ở mức 2.5 để tự động né các pha quét râu 2 đầu lúc thị trường nhiễu loạn."
     },
     "min_move": {
         "title": "Biên độ dự báo tối thiểu (Min Expected Move)",
         "what_is_it": "Khoảng cách giá tối thiểu (USD) mà AI dự báo giá sẽ di chuyển tới đỉnh/đáy tiếp theo. Nếu AI dự báo giá chỉ nhích một đoạn quá ngắn, bot sẽ bỏ qua vì lợi nhuận không đủ bù phí giao dịch.",
-        "how_to_set": "• Vàng XAUUSD: Cài đặt từ 1.2$ đến 1.5$ (tương đương 12 - 15 pip).\n• Không nên để < 0.8$ vì biên độ quá hẹp dễ bị nuốt bởi Spread và trượt giá."
+        "how_to_set": "- Vàng XAUUSD: Cài đặt từ 1.2$ đến 1.5$ (tương đương 12 - 15 pip).\n- Không nên để < 0.8$ vì biên độ quá hẹp dễ bị nuốt bởi Spread và trượt giá."
     },
     "max_spread": {
         "title": "Spread tối đa cho phép (Max Spread)",
         "what_is_it": "Mức chênh lệch tối đa giữa giá Mua (Ask) và giá Bán (Bid) tính bằng USD. Nếu Spread thực tế của sàn vượt quá giá trị này, bot sẽ chặn không cho mở lệnh.",
-        "how_to_set": "• Vàng tài khoản Pro/Zero: 0.25$ - 0.35$ (2.5 - 3.5 pip).\n• Vàng tài khoản Standard: 0.35$ - 0.45$.\n• Bảo vệ cực kỳ quan trọng: Giúp tránh vào lệnh lúc nửa đêm giao phiên (4h-6h sáng) hoặc lúc tin Non-Farm / CPI ra làm giãn Spread."
+        "how_to_set": "- Vàng tài khoản Pro/Zero: 0.25$ - 0.35$ (2.5 - 3.5 pip).\n- Vàng tài khoản Standard: 0.35$ - 0.45$.\n- Bảo vệ cực kỳ quan trọng: Giúp tránh vào lệnh lúc nửa đêm giao phiên (4h-6h sáng) hoặc lúc tin Non-Farm / CPI ra làm giãn Spread."
     },
     "sl_atr": {
         "title": "Khoảng cách SL AI (x ATR14)",
         "what_is_it": "Hệ số nhân với chỉ số ATR14 để tính điểm Cắt Lỗ (Stop Loss) tự động co giãn theo độ biến động thực tế của thị trường.",
-        "how_to_set": "• Chuẩn Scalping: 1.5 x ATR (Cho khoảng thở tự nhiên, chống bị quét râu nến ngẫu nhiên).\n• Đánh ngắn ép rủi ro: 1.0 - 1.2 x ATR.\n• Phiên Mỹ biến động mạnh: 1.8 - 2.0 x ATR."
+        "how_to_set": "- Chuẩn Scalping: 1.5 x ATR (Cho khoảng thở tự nhiên, chống bị quét râu nến ngẫu nhiên).\n- Đánh ngắn ép rủi ro: 1.0 - 1.2 x ATR.\n- Phiên Mỹ biến động mạnh: 1.8 - 2.0 x ATR."
     },
     "sl_buffer": {
         "title": "Giá an toàn cộng thêm vào SL (+ Buffer)",
         "what_is_it": "Khoảng giá cộng dồn thêm ra ngoài vùng cản/đáy dự báo của AI để làm lớp đệm an toàn chống các pha quét râu nến (Spike/Wick).",
-        "how_to_set": "• Vàng XAUUSD: Khuyên dùng 0.3$ đến 0.5$ (3 - 5 pip).\n• Giúp lệnh không bị dính SL oan rồi giá mới quay đầu chạy đúng xu hướng."
+        "how_to_set": "- Vàng XAUUSD: Khuyên dùng 0.3$ đến 0.5$ (3 - 5 pip).\n- Giúp lệnh không bị dính SL oan rồi giá mới quay đầu chạy đúng xu hướng."
     },
     "max_sl_price": {
         "title": "SL tối đa cố định (Max SL Price)",
         "what_is_it": "Mức cắt lỗ trần cao nhất tính theo khoảng giá USD. Nếu tính theo AI mà khoảng cách SL vượt quá giá trị này, bot sẽ tự động ép chặt SL về đúng mức trần này.",
-        "how_to_set": "• Vàng XAUUSD: Đặt 4.0$ - 5.0$ (40 - 50 pip).\n• Nếu nhập 0: Bot sẽ hoàn toàn để SL tự do theo tính toán thích ứng của AI."
+        "how_to_set": "- Vàng XAUUSD: Đặt 4.0$ - 5.0$ (40 - 50 pip).\n- Nếu nhập 0: Bot sẽ hoàn toàn để SL tự do theo tính toán thích ứng của AI."
     },
     "rr": {
         "title": "Tỷ lệ Lợi nhuận / Rủi ro (R:R Ratio)",
         "what_is_it": "Tỷ lệ giữa khoảng cách Chốt Lời (TP) so với Cắt Lỗ (SL). Ví dụ R:R = 2.0 nghĩa là nếu SL cách 3$ thì TP sẽ tự động được đặt cách 6$.",
-        "how_to_set": "• Khuyên dùng: 1.5 đến 2.0 (Tỷ lệ vàng giúp tài khoản tăng trưởng bền vững kể cả khi Winrate chỉ cần 45%-55%).\n• Nếu nhập 0: Bot sẽ tự động lấy TP theo mục tiêu giá dự báo của mô hình AI."
+        "how_to_set": "- Khuyên dùng: 1.5 đến 2.0 (Tỷ lệ vàng giúp tài khoản tăng trưởng bền vững kể cả khi Winrate chỉ cần 45%-55%).\n- Nếu nhập 0: Bot sẽ tự động lấy TP theo mục tiêu giá dự báo của mô hình AI."
     },
     "entry_mode": {
         "title": "Chế độ nhồi lệnh (Entry Mode)",
-        "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n• 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n• 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân.\n• 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
-        "how_to_set": "• An toàn nhất: Chọn 'Risk-Free' (Không bao giờ gia tăng rủi ro khi lệnh cũ chưa an toàn).\n• Tận dụng sóng: Chọn 'Nhồi giá tốt hơn (DCA)' kết hợp giới hạn Số lệnh tối đa = 2 hoặc 3."
+        "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n- 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n- 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân.\n- 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
+        "how_to_set": "- An toàn nhất: Chọn 'Risk-Free' (Không bao giờ gia tăng rủi ro khi lệnh cũ chưa an toàn).\n- Tận dụng sóng: Chọn 'Nhồi giá tốt hơn (DCA)' kết hợp giới hạn Số lệnh tối đa = 2 hoặc 3."
     },
     "min_entry_spacing": {
         "title": "Khoảng cách nhồi tối thiểu (Min Spacing)",
         "what_is_it": "Khoảng cách giá tối thiểu giữa lệnh mới và lệnh đã có gần nhất, chống việc bot vào nhiều lệnh liên tiếp sát sàn sạt nhau tại cùng một mức giá.",
-        "how_to_set": "• Vàng XAUUSD: Đặt 1.0$ đến 1.5$ (10 - 15 pip).\n• Giúp các vị thế được rải đều qua các vùng cản kháng cự/hỗ trợ khác nhau."
+        "how_to_set": "- Vàng XAUUSD: Đặt 1.0$ đến 1.5$ (10 - 15 pip).\n- Giúp các vị thế được rải đều qua các vùng cản kháng cự/hỗ trợ khác nhau."
     },
     "one_order_per_candle": {
         "title": "Chỉ mở tối đa 1 lệnh mỗi cây nến",
         "what_is_it": "Chặn không cho bot mở quá 1 lệnh trong cùng một cây nến giao dịch (ví dụ nến M5). Ngăn ngừa việc thị trường giật nảy giá làm kích hoạt nhiều lệnh liên tục.",
-        "how_to_set": "• LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
+        "how_to_set": "- LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
     },
 
     # ─── MỤC 3: QUẢN LÝ LỆNH & CHỐT LỜI ───
     "auto_be": {
         "title": "Tự dời SL về hòa vốn (Break-Even - BE)",
         "what_is_it": "Khi lệnh đang mở đạt mức lợi nhuận mục tiêu (tính theo R), bot sẽ tự động kéo đường Cắt Lỗ (SL) về đúng giá vào lệnh (Entry) để triệt tiêu hoàn toàn rủi ro thua lỗ.",
-        "how_to_set": "• LUÔN BẬT. Giúp bảo toàn vốn gốc, biến mọi lệnh đạt kỳ vọng ban đầu thành lệnh 'không thể thua'."
+        "how_to_set": "- LUÔN BẬT. Giúp bảo toàn vốn gốc, biến mọi lệnh đạt kỳ vọng ban đầu thành lệnh 'không thể thua'."
     },
     "be_trigger_r": {
         "title": "Mức kích hoạt hòa vốn (BE Trigger R)",
         "what_is_it": "Mức lợi nhuận (tính theo tỷ lệ R của SL ban đầu) mà lệnh phải đạt được để bot kích hoạt dời SL về hòa vốn.",
-        "how_to_set": "• Chuẩn mực: 1.0R (Ví dụ SL ban đầu là 3$, khi giá lãi đạt 3$ sẽ kéo ngay SL về hòa).\n• Muốn bảo vệ vốn sớm: Đặt 0.8R."
+        "how_to_set": "- Chuẩn mực: 1.0R (Ví dụ SL ban đầu là 3$, khi giá lãi đạt 3$ sẽ kéo ngay SL về hòa).\n- Muốn bảo vệ vốn sớm: Đặt 0.8R."
     },
     "auto_trail": {
         "title": "Tự trượt SL khóa lãi (Trailing Stop)",
         "what_is_it": "Khi giá tiếp tục chạy sâu vào vùng có lãi, bot sẽ tự động trượt đường SL tịnh tiến theo sau giá để khóa lợi nhuận và gồng lãi theo xu hướng.",
-        "how_to_set": "• RẤT NÊN BẬT khi thị trường có xu hướng rõ ràng, giúp tối đa hóa lợi nhuận mà không sợ bị thị trường đảo chiều bất ngờ lấy lại hết lãi."
+        "how_to_set": "- RẤT NÊN BẬT khi thị trường có xu hướng rõ ràng, giúp tối đa hóa lợi nhuận mà không sợ bị thị trường đảo chiều bất ngờ lấy lại hết lãi."
     },
     "trail_dist_r": {
         "title": "Khoảng cách bám giá Trailing (Trail Distance R)",
         "what_is_it": "Khoảng cách thả lỏng (tính theo tỷ lệ R) giữa giá hiện tại và đường SL trượt theo sau.",
-        "how_to_set": "• Khuyên dùng: 0.35R đến 0.50R.\n• Khoảng cách này vừa đủ để giá có không gian rung lắc tự nhiên mà không bị dính SL quá sớm, đồng thời vẫn bảo vệ được phần lớn lợi nhuận khi đảo chiều."
+        "how_to_set": "- Khuyên dùng: 0.35R đến 0.50R.\n- Khoảng cách này vừa đủ để giá có không gian rung lắc tự nhiên mà không bị dính SL quá sớm, đồng thời vẫn bảo vệ được phần lớn lợi nhuận khi đảo chiều."
     },
     "auto_rev_close": {
         "title": "Bảo vệ đảo chiều thông minh (Reversal Guard)",
-        "what_is_it": "Tính năng bảo vệ chủ động: Khi bạn đang nắm giữ lệnh (ví dụ BUY) nhưng AI phát hiện cấu trúc thị trường bất ngờ đảo chiều sang SELL mạnh mẽ:\n• Nếu lệnh đang CÓ LÃI: Bot sẽ chủ động CHỐT LỜI NGAY để bảo vệ tiền lời.\n• Nếu lệnh đang TẠM LỖ: Bot KHÔNG cắt lỗ tháo chạy, mà nâng TP về sát giá hòa vốn (Entry+) để đón nhịp hồi thoát lệnh an toàn.",
-        "how_to_set": "• LUÔN BẬT (Mặc định). Tính năng này giúp giảm thiểu tối đa các pha lỗ nặng do thị trường quay ngoắt 180 độ."
+        "what_is_it": "Tính năng bảo vệ chủ động: Khi bạn đang nắm giữ lệnh (ví dụ BUY) nhưng AI phát hiện cấu trúc thị trường bất ngờ đảo chiều sang SELL mạnh mẽ:\n- Nếu lệnh đang CÓ LÃI: Bot sẽ chủ động CHỐT LỜI NGAY để bảo vệ tiền lời.\n- Nếu lệnh đang TẠM LỖ: Bot KHÔNG cắt lỗ tháo chạy, mà nâng TP về sát giá hòa vốn (Entry+) để đón nhịp hồi thoát lệnh an toàn.",
+        "how_to_set": "- LUÔN BẬT (Mặc định). Tính năng này giúp giảm thiểu tối đa các pha lỗ nặng do thị trường quay ngoắt 180 độ."
     },
     "rev_consensus": {
         "title": "Đồng thuận đảo chiều tối thiểu (%)",
         "what_is_it": "Độ đồng thuận của AI theo chiều ngược lại cần đạt tối thiểu bao nhiêu % thì cơ chế Bảo vệ đảo chiều mới được kích hoạt.",
-        "how_to_set": "• Khuyên dùng: 75% đến 80%.\n• Ngăn việc thoát lệnh sớm do các đợt rung lắc đảo chiều giả trong thời gian ngắn."
+        "how_to_set": "- Khuyên dùng: 75% đến 80%.\n- Ngăn việc thoát lệnh sớm do các đợt rung lắc đảo chiều giả trong thời gian ngắn."
     },
     "rev_min_move": {
         "title": "Biên độ ngược chiều tối thiểu (Giá)",
         "what_is_it": "Biên độ giá dự báo ngược chiều tối thiểu để kích hoạt bảo vệ đảo chiều. Nếu đặt 0, chỉ cần AI đạt đủ độ đồng thuận là bot sẽ kích hoạt ngay.",
-        "how_to_set": "• Khuyên dùng: Đặt 0 (hoặc 1.0$ nếu muốn chỉ phản ứng khi xu hướng ngược có xung lực mạnh)."
+        "how_to_set": "- Khuyên dùng: Đặt 0 (hoặc 1.0$ nếu muốn chỉ phản ứng khi xu hướng ngược có xung lực mạnh)."
     },
     "be_plus_price": {
         "title": "Giá lãi nhỏ cộng thêm vào Entry (BE+)",
         "what_is_it": "Khoảng giá cộng thêm vào điểm Entry khi dời SL hoặc dời TP về hòa vốn (Break-Even Plus), nhằm bù đắp chi phí hoa hồng (Commission) và trượt giá sàn, giúp lệnh khi thoát vẫn có một chút tiền lãi xanh nhẹ.",
-        "how_to_set": "• Vàng XAUUSD: Đặt 0.2$ đến 0.3$ (2 - 3 pip).\n• Đảm bảo thoát lệnh hòa vốn mà không bị âm tiền phí sàn."
+        "how_to_set": "- Vàng XAUUSD: Đặt 0.2$ đến 0.3$ (2 - 3 pip).\n- Đảm bảo thoát lệnh hòa vốn mà không bị âm tiền phí sàn."
     },
     "basket_tp_usd": {
         "title": "Chốt lời chùm lệnh tổng (Basket TP USD)",
         "what_is_it": "Khi tổng lợi nhuận của TẤT CẢ các lệnh đang mở (chùm lệnh) cộng lại đạt số tiền USD này, bot sẽ đóng toàn bộ các lệnh ngay lập tức để thu lợi nhuận về.",
-        "how_to_set": "• Đánh 2-3 lệnh 0.01 lot: Đặt 10$ - 20$.\n• Nếu đặt 0: Tắt tính năng chốt chùm (mỗi lệnh sẽ chốt độc lập theo TP/SL riêng của nó)."
+        "how_to_set": "- Đánh 2-3 lệnh 0.01 lot: Đặt 10$ - 20$.\n- Nếu đặt 0: Tắt tính năng chốt chùm (mỗi lệnh sẽ chốt độc lập theo TP/SL riêng của nó)."
     },
     "basket_cooldown_mins": {
         "title": "Thời gian nghỉ sau chốt chùm (Basket Cooldown)",
         "what_is_it": "Số phút bot tạm dừng không mở thêm lệnh mới sau một pha chốt lời chùm lệnh thành công, giúp thị trường hạ nhiệt và tránh bị cuốn vào nhịp đu đỉnh/đáy.",
-        "how_to_set": "• Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
+        "how_to_set": "- Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
     },
     "max_hold_mins": {
         "title": "Thời gian giữ lệnh tối đa (Max Holding Time)",
         "what_is_it": "Giới hạn số phút tối đa một lệnh được phép duy trì trên thị trường (ví dụ 60 phút, 120 phút). Tránh việc lệnh bị ngâm qua đêm hoặc kẹt quá lâu trong vùng thị trường đi ngang (Sideway).",
-        "how_to_set": "• Scalping trong ngày: Đặt 60 - 120 phút.\n• Nếu đặt 0: Tắt tính năng giới hạn thời gian (lệnh sẽ chạy cho đến khi chạm TP, SL hoặc có tín hiệu đảo chiều)."
+        "how_to_set": "- Scalping trong ngày: Đặt 60 - 120 phút.\n- Nếu đặt 0: Tắt tính năng giới hạn thời gian (lệnh sẽ chạy cho đến khi chạm TP, SL hoặc có tín hiệu đảo chiều)."
     },
     "max_hold_action": {
         "title": "Xử lý khi vượt thời gian giữ lệnh",
-        "what_is_it": "Cách thức bot xử lý lệnh khi đã chạm mốc thời gian giữ tối đa:\n• 'Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)': Lãi thì đút túi ngay, lỗ thì dời TP về hòa vốn đón nhịp hồi.\n• 'Dời SL về hòa vốn (BE+)': Khóa rủi ro, cho thị trường thêm cơ hội chạy tiếp.\n• 'Đóng tất cả (Bất kể Lãi/Lỗ)': Cắt dứt khoát giải phóng lệnh ngay lập tức.",
-        "how_to_set": "• Khuyên dùng phương án 1 ('Chốt lời nếu lãi & Dời TP về hòa nếu lỗ') vì mang lại hiệu quả bảo vệ tài khoản cao nhất."
+        "what_is_it": "Cách thức bot xử lý lệnh khi đã chạm mốc thời gian giữ tối đa:\n- 'Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)': Lãi thì đút túi ngay, lỗ thì dời TP về hòa vốn đón nhịp hồi.\n- 'Dời SL về hòa vốn (BE+)': Khóa rủi ro, cho thị trường thêm cơ hội chạy tiếp.\n- 'Đóng tất cả (Bất kể Lãi/Lỗ)': Cắt dứt khoát giải phóng lệnh ngay lập tức.",
+        "how_to_set": "- Khuyên dùng phương án 1 ('Chốt lời nếu lãi & Dời TP về hòa nếu lỗ') vì mang lại hiệu quả bảo vệ tài khoản cao nhất."
     },
     "daily_tp_usd": {
         "title": "Mục tiêu Lãi trong ngày (Daily Take Profit)",
         "what_is_it": "Mức lợi nhuận mục tiêu trong một ngày tính theo giờ Việt Nam (UTC+7). Khi tổng lãi chốt trong ngày chạm mốc này, bot sẽ tự động ngưng giao dịch để bảo toàn thành quả.",
-        "how_to_set": "• Khuyên dùng: Đặt tương đương 2% - 5% vốn tài khoản (Ví dụ TK 1,000$ thì đặt 30$ - 50$).\n• Nếu đặt 0: Bot sẽ chạy liên tục không giới hạn mục tiêu ngày."
+        "how_to_set": "- Khuyên dùng: Đặt tương đương 2% - 5% vốn tài khoản (Ví dụ TK 1,000$ thì đặt 30$ - 50$).\n- Nếu đặt 0: Bot sẽ chạy liên tục không giới hạn mục tiêu ngày."
     },
     "daily_sl_usd": {
         "title": "Giới hạn Lỗ tối đa trong ngày (Daily Stop Loss)",
         "what_is_it": "Mức thua lỗ tối đa cho phép trong một ngày. Nếu tổng lỗ trong ngày chạm ngưỡng này, bot lập tức ngừng toàn bộ giao dịch để cắt chuỗi xui và bảo vệ vốn gốc.",
-        "how_to_set": "• Khuyên dùng: Đặt tương đương 3% - 5% vốn tài khoản (Ví dụ TK 1,000$ thì đặt 30$ - 50$).\n• TUYỆT ĐỐI KHÔNG NÊN ĐỂ 0 (Luôn cài đặt để làm chốt chặn an toàn cho tài khoản)."
+        "how_to_set": "- Khuyên dùng: Đặt tương đương 3% - 5% vốn tài khoản (Ví dụ TK 1,000$ thì đặt 30$ - 50$).\n- TUYỆT ĐỐI KHÔNG NÊN ĐỂ 0 (Luôn cài đặt để làm chốt chặn an toàn cho tài khoản)."
     },
     "max_consec_loss": {
         "title": "Số lệnh thua liên tiếp để tạm nghỉ (Consecutive Losses)",
         "what_is_it": "Nếu gặp liên tiếp N lệnh bị dính SL (thị trường đang trong pha bất thường không phù hợp mô hình), bot sẽ tự kích hoạt cơ chế đóng băng tạm thời.",
-        "how_to_set": "• Khuyên dùng: 2 đến 3 lệnh.\n• Giúp bảo toàn tâm lý và vốn khi thị trường vào phiên xấu."
+        "how_to_set": "- Khuyên dùng: 2 đến 3 lệnh.\n- Giúp bảo toàn tâm lý và vốn khi thị trường vào phiên xấu."
     },
     "cooldown_mins": {
         "title": "Thời gian tạm ngừng sau chuỗi thua (Cooldown Mins)",
         "what_is_it": "Số phút bot tạm dừng hoạt động sau khi chạm giới hạn thua liên tiếp hoặc chạm SL nhanh.",
-        "how_to_set": "• Khuyên dùng: 30 đến 60 phút.\n• Cho thị trường thời gian hoàn thành nhịp biến động bất thường trước khi bot tiếp tục giao dịch."
+        "how_to_set": "- Khuyên dùng: 30 đến 60 phút.\n- Cho thị trường thời gian hoàn thành nhịp biến động bất thường trước khi bot tiếp tục giao dịch."
     },
     "fast_sl_cooldown_mins": {
         "title": "Nghỉ nếu dính SL nhanh dưới 5 phút",
         "what_is_it": "Nếu một lệnh vừa mở chưa đầy 5 phút đã bị quét cắn SL ngay lập tức, chứng tỏ thị trường vừa có tin giật đột biến. Bot sẽ tự ngắt tạm thời để tránh bị quét liên hoàn.",
-        "how_to_set": "• Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
+        "how_to_set": "- Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
     },
 
     # ─── MỤC 4: PHÂN TÍCH AI & MÔ HÌNH ───
     "engine": {
         "title": "Chế độ chạy động cơ AI (Execution Engine)",
-        "what_is_it": "Lựa chọn môi trường thực thi suy luận mô hình AI:\n• 'Chạy trực tiếp máy Local': Chạy thẳng trên máy tính cá nhân của bạn (tận dụng CPU hoặc GPU NVIDIA nếu có).\n• 'Ưu tiên Hugging Face -> Local': Gửi dữ liệu nến lên máy chủ Cloud Hugging Face Space để suy luận không tốn tài nguyên máy, nếu mạng lỗi sẽ tự động chuyển về máy Local.",
-        "how_to_set": "• Nếu máy tính có GPU NVIDIA hoặc CPU khá: Chọn 'Chạy trực tiếp máy Local' để tốc độ nhanh nhất.\n• Nếu dùng VPS hoặc máy yếu: Chọn 'Ưu tiên Hugging Face'."
+        "what_is_it": "Lựa chọn môi trường thực thi suy luận mô hình AI:\n- 'Chạy trực tiếp máy Local': Chạy thẳng trên máy tính cá nhân của bạn (tận dụng CPU hoặc GPU NVIDIA nếu có).\n- 'Ưu tiên Hugging Face -> Local': Gửi dữ liệu nến lên máy chủ Cloud Hugging Face Space để suy luận không tốn tài nguyên máy, nếu mạng lỗi sẽ tự động chuyển về máy Local.",
+        "how_to_set": "- Nếu máy tính có GPU NVIDIA hoặc CPU khá: Chọn 'Chạy trực tiếp máy Local' để tốc độ nhanh nhất.\n- Nếu dùng VPS hoặc máy yếu: Chọn 'Ưu tiên Hugging Face'."
     },
     "model": {
         "title": "Mô hình AI dự báo (AI Model Architecture)",
-        "what_is_it": "Chọn phiên bản trọng số mô hình Deep Learning:\n• AI-base (102.3M - Mạnh nhất): Mô hình kích thước lớn nhất, độ sâu phân tích cao nhất, khả năng nắm bắt xu hướng tốt nhất.\n• AI-Gold-Exness: Phiên bản tinh chỉnh riêng cho dữ liệu nến vàng sàn Exness.\n• AI-small (24.7M) / AI-mini: Nhẹ hơn, suy luận cực nhanh cho máy yếu.",
-        "how_to_set": "• Khuyên dùng: 'AI-base (102.3M - Mạnh nhất)' để đạt độ chính xác cao nhất."
+        "what_is_it": "Chọn phiên bản trọng số mô hình Deep Learning:\n- AI-base (102.3M - Mạnh nhất): Mô hình kích thước lớn nhất, độ sâu phân tích cao nhất, khả năng nắm bắt xu hướng tốt nhất.\n- AI-Gold-Exness: Phiên bản tinh chỉnh riêng cho dữ liệu nến vàng sàn Exness.\n- AI-small (24.7M) / AI-mini: Nhẹ hơn, suy luận cực nhanh cho máy yếu.",
+        "how_to_set": "- Khuyên dùng: 'AI-base (102.3M - Mạnh nhất)' để đạt độ chính xác cao nhất."
     },
     "hf_space": {
         "title": "Hugging Face Space ID",
         "what_is_it": "Tên định danh Space API máy chủ của bạn trên nền tảng Hugging Face nếu chạy chế độ Cloud.",
-        "how_to_set": "• Giữ nguyên giá trị mặc định 'tranvankha2807/Kronos_Xau' trừ khi bạn tự xây dựng server Space riêng."
+        "how_to_set": "- Giữ nguyên giá trị mặc định 'tranvankha2807/Kronos_Xau' trừ khi bạn tự xây dựng server Space riêng."
     },
     "hf_token": {
         "title": "Hugging Face User Access Token",
         "what_is_it": "Mã token xác thực API cá nhân trên Hugging Face (huggingface.co/settings/tokens) trong trường hợp Space được cài đặt ở chế độ Riêng tư (Private).",
-        "how_to_set": "• Để trống nếu Space của bạn ở chế độ Công khai (Public)."
+        "how_to_set": "- Để trống nếu Space của bạn ở chế độ Công khai (Public)."
     },
     "lookback": {
         "title": "Số nến lịch sử đưa vào AI (Lookback Window)",
         "what_is_it": "Số lượng cây nến quá khứ được trích xuất và đưa vào chuỗi thời gian để AI học quy luật và dự báo tương lai.",
-        "how_to_set": "• Khuyên dùng: 450 đến 512 nến (tương đương khoảng 40 - 50 giờ dữ liệu trên khung M5).\n• Đây là độ dài ngữ cảnh tối ưu theo kiến trúc Attention của mô hình Kronos."
+        "how_to_set": "- Khuyên dùng: 450 đến 512 nến (tương đương khoảng 40 - 50 giờ dữ liệu trên khung M5).\n- Đây là độ dài ngữ cảnh tối ưu theo kiến trúc Attention của mô hình Kronos."
     },
     "pred_len": {
         "title": "Số nến dự báo tương lai (Prediction Length)",
         "what_is_it": "Số lượng cây nến tiếp theo mà AI sẽ vẽ đường dự báo trên biểu đồ.",
-        "how_to_set": "• Mặc định: 6 nến (Trên khung M5 tương đương 30 phút, trên M15 tương đương 90 phút).\n• Khoảng cách 6 nến là tối ưu nhất để xác định đỉnh/đáy cho một nhịp Scalping."
+        "how_to_set": "- Mặc định: 6 nến (Trên khung M5 tương đương 30 phút, trên M15 tương đương 90 phút).\n- Khoảng cách 6 nến là tối ưu nhất để xác định đỉnh/đáy cho một nhịp Scalping."
     }
 }
 
@@ -847,6 +847,8 @@ class KronosDesktopApp:
         self._register_active_instance_lock()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
         self.root.bind("<Escape>", self._deselect_all_orders_and_reset)
+        self.root.bind("<ButtonPress>", lambda e: self._hide_hover_note(), add="+")
+        self.root.bind("<Escape>", lambda e: self._hide_hover_note(), add="+")
 
         # Khởi động luồng Hàng Đợi Phân Tích AI (FIFO Queue Worker) tuần tự, đảm bảo XAUUSD & BTCUSD không bao giờ tranh chấp hay trộn dữ liệu
         self._ai_queue_worker_thread = threading.Thread(target=self._ai_queue_consumer_loop, daemon=True)
@@ -3965,8 +3967,114 @@ class KronosDesktopApp:
             self._sync_xlim_dependents(self.saved_xlim)
             self._request_canvas_redraw()
 
+    def _hide_hover_note(self, event=None):
+        """Ẩn ghi chú nổi khi chuột rời khỏi dấu ?."""
+        if hasattr(self, "_hover_note_timer") and self._hover_note_timer:
+            try:
+                self.root.after_cancel(self._hover_note_timer)
+            except Exception:
+                pass
+            self._hover_note_timer = None
+
+        if hasattr(self, "_active_hover_note") and self._active_hover_note:
+            try:
+                self._active_hover_note.destroy()
+            except Exception:
+                pass
+            self._active_hover_note = None
+
+    def _show_hover_note(self, widget, help_key):
+        """Lên lịch hiển thị ghi chú nổi khi rê chuột vào dấu ?."""
+        self._hide_hover_note()
+        self._hover_note_timer = self.root.after(80, lambda: self._render_hover_note(widget, help_key))
+
+    def _render_hover_note(self, widget, help_key):
+        """Hiển thị bảng ghi chú nổi (như Excel/Google Sheets) chỉ với văn bản thuần túy, không dùng icon/ký tự."""
+        guide = PARAM_HELP_GUIDE.get(help_key)
+        if not guide or not widget.winfo_exists():
+            return
+
+        try:
+            note = tk.Toplevel(self.root)
+            note.wm_overrideredirect(True)
+            note.configure(bg="#182232")
+            note.attributes("-topmost", True)
+
+            # Khung ghi chú viền mỏng dạng Excel / Google Sheets
+            card = tk.Frame(
+                note, bg="#182232", padx=10, pady=8,
+                highlightthickness=1, highlightbackground="#3b4d66",
+                relief=tk.SOLID, bd=1
+            )
+            card.pack(fill=tk.BOTH, expand=True)
+
+            # Tiêu đề thông số - văn bản thuần túy không icon
+            t_lbl = tk.Label(
+                card, text=guide.get("title", help_key),
+                bg="#182232", fg="#38bdf8",
+                font=("Segoe UI", 9, "bold"), anchor="w"
+            )
+            t_lbl.pack(fill=tk.X, pady=(0, 4))
+
+            # Phần 1: Ý nghĩa thông số
+            m_hdr = tk.Label(
+                card, text="Ý nghĩa:",
+                bg="#182232", fg="#facc15",
+                font=("Segoe UI", 8, "bold"), anchor="w"
+            )
+            m_hdr.pack(fill=tk.X, pady=(2, 1))
+
+            m_txt = tk.Label(
+                card, text=guide.get("what_is_it", ""),
+                bg="#182232", fg="#e2e8f0",
+                font=("Segoe UI", 8), justify="left", anchor="w",
+                wraplength=380
+            )
+            m_txt.pack(fill=tk.X, pady=(0, 6))
+
+            # Phần 2: Cách cài đặt hiệu quả
+            s_hdr = tk.Label(
+                card, text="Cách cài đặt hiệu quả:",
+                bg="#182232", fg="#4ade80",
+                font=("Segoe UI", 8, "bold"), anchor="w"
+            )
+            s_hdr.pack(fill=tk.X, pady=(2, 1))
+
+            s_txt = tk.Label(
+                card, text=guide.get("how_to_set", ""),
+                bg="#182232", fg="#cbd5e1",
+                font=("Segoe UI", 8), justify="left", anchor="w",
+                wraplength=380
+            )
+            s_txt.pack(fill=tk.X)
+
+            # Tự động tính vị trí hiển thị nổi cạnh dấu [?]
+            note.update_idletasks()
+            nw = note.winfo_reqwidth()
+            nh = note.winfo_reqheight()
+
+            bx = widget.winfo_rootx() + widget.winfo_width() + 8
+            by = widget.winfo_rooty() - 4
+
+            sw = widget.winfo_screenwidth()
+            sh = widget.winfo_screenheight()
+
+            if bx + nw > sw - 12:
+                bx = max(10, widget.winfo_rootx() - nw - 8)
+            if by + nh > sh - 35:
+                by = max(10, sh - nh - 40)
+
+            note.geometry(f"{nw}x{nh}+{bx}+{by}")
+            self._active_hover_note = note
+
+            # Đóng ghi chú khi rê chuột ra ngoài hoặc click
+            note.bind("<Leave>", lambda e: self._hide_hover_note())
+            note.bind("<ButtonPress>", lambda e: self._hide_hover_note())
+        except Exception:
+            pass
+
     def _create_help_badge(self, parent, help_key):
-        """Tạo biểu tượng chấm hỏi tròn [?] tương tác hiện hướng dẫn thông số chi tiết."""
+        """Tạo biểu tượng chấm hỏi tròn [?] hiển thị ghi chú Excel/Google Sheet thuần văn bản khi rê chuột."""
         c = tk.Canvas(parent, width=16, height=16, bg=PANEL_BG, highlightthickness=0, cursor="hand2")
         circle = c.create_oval(1, 1, 15, 15, fill="#1c2438", outline="#3b82f6", width=1)
         txt = c.create_text(8, 8, text="?", fill="#38bdf8", font=("Segoe UI", 7, "bold"))
@@ -3974,111 +4082,18 @@ class KronosDesktopApp:
         def _on_enter(e):
             c.itemconfig(circle, fill="#2a3a5c", outline="#eab308")
             c.itemconfig(txt, fill="#facc15")
+            self._show_hover_note(c, help_key)
 
         def _on_leave(e):
             c.itemconfig(circle, fill="#1c2438", outline="#3b82f6")
             c.itemconfig(txt, fill="#38bdf8")
+            self._hide_hover_note()
 
         c.bind("<Enter>", _on_enter)
         c.bind("<Leave>", _on_leave)
-        c.bind("<Button-1>", lambda e, k=help_key: self.show_param_help(k))
+        c.bind("<Button-1>", lambda e: self._hide_hover_note())
         c.pack(side=tk.LEFT, padx=(4, 0))
         return c
-
-    def show_param_help(self, help_key):
-        """Hiển thị hộp thoại pop-up chỉ dẫn thông số là gì và cách cài đặt hiệu quả."""
-        guide = PARAM_HELP_GUIDE.get(help_key)
-        if not guide:
-            return
-
-        dlg = tk.Toplevel(self.root)
-        dlg.title(f"💡 Hướng Dẫn Thông Số - {guide.get('title', help_key)}")
-        dlg.configure(bg="#0f141c")
-        dlg.transient(self.root)
-        dlg.resizable(False, False)
-
-        header = tk.Frame(dlg, bg="#161e2e", padx=14, pady=10)
-        header.pack(fill=tk.X)
-
-        title_lbl = tk.Label(
-            header, text=f"💡  {guide.get('title', help_key)}",
-            bg="#161e2e", fg="#eab308", font=("Segoe UI", 10, "bold"), anchor="w"
-        )
-        title_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        close_btn = tk.Label(
-            header, text="✕", bg="#161e2e", fg="#94a3b8",
-            font=("Segoe UI", 10, "bold"), cursor="hand2", padx=6
-        )
-        close_btn.pack(side=tk.RIGHT)
-        close_btn.bind("<Button-1>", lambda e: dlg.destroy())
-        close_btn.bind("<Enter>", lambda e: close_btn.config(fg="#ef4444"))
-        close_btn.bind("<Leave>", lambda e: close_btn.config(fg="#94a3b8"))
-
-        content = tk.Frame(dlg, bg="#0f141c", padx=16, pady=12)
-        content.pack(fill=tk.BOTH, expand=True)
-
-        # 1. Thông số này là gì?
-        tk.Label(
-            content, text="📌 THÔNG SỐ NÀY LÀ GÌ?",
-            bg="#0f141c", fg="#38bdf8", font=("Segoe UI", 9, "bold"), anchor="w"
-        ).pack(fill=tk.X, pady=(0, 4))
-
-        sec1_box = tk.Frame(content, bg="#141a24", padx=12, pady=10, highlightthickness=1, highlightbackground="#222d3d")
-        sec1_box.pack(fill=tk.X, pady=(0, 10))
-
-        tk.Label(
-            sec1_box, text=guide.get("what_is_it", ""),
-            bg="#141a24", fg="#e2e8f0", font=("Segoe UI", 8),
-            justify="left", anchor="w", wraplength=500
-        ).pack(fill=tk.X)
-
-        # 2. Cách cài đặt hiệu quả
-        tk.Label(
-            content, text="🎯 CÁCH CÀI ĐẶT HIỆU QUẢ & KHUYÊN DÙNG:",
-            bg="#0f141c", fg="#4ade80", font=("Segoe UI", 9, "bold"), anchor="w"
-        ).pack(fill=tk.X, pady=(0, 4))
-
-        sec2_box = tk.Frame(content, bg="#141a24", padx=12, pady=10, highlightthickness=1, highlightbackground="#222d3d")
-        sec2_box.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
-
-        tk.Label(
-            sec2_box, text=guide.get("how_to_set", ""),
-            bg="#141a24", fg="#cbd5e1", font=("Segoe UI", 8),
-            justify="left", anchor="nw", wraplength=500
-        ).pack(fill=tk.BOTH, expand=True)
-
-        # Nút Đã hiểu
-        footer = tk.Frame(dlg, bg="#0f141c", padx=16, pady=10)
-        footer.pack(fill=tk.X)
-
-        tk.Button(
-            footer, text="✓  ĐÃ HIỂU (ĐÓNG)",
-            bg="#0d7a46", fg="#ffffff", activebackground="#159f54", activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, cursor="hand2", pady=5,
-            command=dlg.destroy
-        ).pack(fill=tk.X)
-
-        dlg.bind("<Escape>", lambda e: dlg.destroy())
-        dlg.bind("<Return>", lambda e: dlg.destroy())
-
-        # Căn giữa cửa sổ dựa trên kích thước tự nhiên
-        dlg.update_idletasks()
-        w = max(560, dlg.winfo_reqwidth())
-        h = max(380, dlg.winfo_reqheight())
-        try:
-            rx = self.root.winfo_rootx()
-            ry = self.root.winfo_rooty()
-            rw = self.root.winfo_width()
-            rh = self.root.winfo_height()
-            x = max(50, rx + (rw - w) // 2)
-            y = max(50, ry + (rh - h) // 2)
-        except Exception:
-            x = 250
-            y = 150
-        dlg.geometry(f"{w}x{h}+{x}+{y}")
-        dlg.attributes("-topmost", True)
-        dlg.focus_set()
 
     def _add_checkbutton(self, parent, text, var, help_key=None, fg=TEXT_MAIN):
         row = tk.Frame(parent, bg=PANEL_BG)
