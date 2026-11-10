@@ -392,7 +392,7 @@ class AppUpdater:
                         raise
 
             if progress_cb:
-                progress_cb(100, "Cập nhật hoàn tất! Đang khởi động lại ứng dụng...")
+                progress_cb(100, "Cập nhật hoàn tất! Đang áp dụng tính năng mới...")
 
             return True, "Cập nhật thành công!"
         except Exception as e:
@@ -557,11 +557,13 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
                 if ok:
                     messagebox.showinfo(
                         "Cập Nhật Thành Công",
-                        f"Đã nâng cấp ứng dụng lên phiên bản v{latest_ver} thành công!\nỨng dụng sẽ tự động khởi động lại ngay bây giờ.",
+                        f"Đã nâng cấp ứng dụng lên phiên bản v{latest_ver} thành công!\n"
+                        f"Tất cả tính năng mới đã được áp dụng ngay lập tức mà không cần khởi động lại.",
                         parent=dialog
                     )
                     dialog.destroy()
-                    updater.restart_application()
+                    if on_complete:
+                        on_complete(True, latest_ver)
                 else:
                     messagebox.showerror("Cập Nhật Thất Bại", f"Không thể cập nhật:\n{err}", parent=dialog)
                     btn_update.config(state=tk.NORMAL, text="Thử lại")

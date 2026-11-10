@@ -746,6 +746,12 @@ class KronosDesktopApp:
             self.app_version = "1.1.3"
             self.updater = None
 
+        self._has_new_version = False
+        self._latest_update_info = None
+        self._version_blink_after_id = None
+        self._version_blink_state = False
+        self._new_version_tag = ""
+
         self.local_cache = {}
         self.initial_r_cache = {}  # Lưu khoảng cách 1R (|Entry - SL ban đầu|) theo từng ticket
         self.pending_be_exit_tickets = set()  # Lưu các ticket đang âm bị AI báo đảo chiều -> chờ hồi về Entry thoát
@@ -1725,7 +1731,7 @@ class KronosDesktopApp:
             except Exception:
                 pass
             from kronos_updater import show_update_modal
-            show_update_modal(self.root, self.updater, self._latest_update_info)
+            show_update_modal(self.root, self.updater, self._latest_update_info, on_complete=self._on_update_hot_applied)
         else:
             self.version_badge_btn.config(text="Đang kiểm tra...", fg="#38bdf8")
 
@@ -1741,7 +1747,7 @@ class KronosDesktopApp:
                         except Exception:
                             pass
                         from kronos_updater import show_update_modal
-                        show_update_modal(self.root, self.updater, res)
+                        show_update_modal(self.root, self.updater, res, on_complete=self._on_update_hot_applied)
                     else:
                         self.version_badge_btn.config(
                             text=f"Phiên bản mới nhất  v{self.app_version}  🔄",
@@ -1753,6 +1759,72 @@ class KronosDesktopApp:
                 self._ui_after(0, _ui)
 
             self.updater.check_update_async(_on_checked)
+
+    def _stop_version_badge_blink(self):
+        """Dừng hiệu ứng nhấp nháy chữ trên nút phiên bản."""
+        self._has_new_version = False
+        after_id = getattr(self, "_version_blink_after_id", None)
+        if after_id is not None:
+            try:
+                self.root.after_cancel(after_id)
+            except Exception:
+                pass
+            self._version_blink_after_id = None
+
+    def _setup_backtest_tab(self):
+        """Khởi tạo tab Backtest nếu chưa có trong bottom_notebook."""
+        if hasattr(self, "bottom_notebook") and not hasattr(self, "backtest_tab"):
+            self.backtest_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+            self.bottom_notebook.add(self.backtest_tab, text="🔒 BACKTEST (ADMIN)")
+            self._build_backtest_tab_ui(self.backtest_tab)
+
+    def _on_update_hot_applied(self, success: bool, new_version: str = ""):
+        """Xử lý sau khi gói cập nhật OTA đã được nạp thành công mà không cần restart app."""
+        if not success:
+            return
+        v_str = str(new_version or self.app_version).strip().lstrip("vV")
+        self.app_version = v_str
+        self._has_new_version = False
+        self._latest_update_info = None
+        self._stop_version_badge_blink()
+
+        # 1. Cập nhật nhãn phiên bản trên thanh tiêu đề và Header
+        if hasattr(self, "version_badge_btn") and self.version_badge_btn.winfo_exists():
+            self.version_badge_btn.config(
+                text=f"Phiên bản mới nhất  v{v_str}  ✓",
+                bg=PANEL_BG,
+                fg="#10b981",
+            )
+        try:
+            self.root.title(f"Trading AI PRO — MT5 Bot Auto Scalping | v{v_str}")
+        except Exception:
+            pass
+
+        # 2. Hot-Reload mã nguồn mới vào RAM ngay lập tức mà không đóng cửa sổ hay ngắt kết nối MT5
+        try:
+            import importlib.util
+            bot_path = os.path.abspath(__file__)
+            if os.path.exists(bot_path):
+                spec = importlib.util.spec_from_file_location("mt5_scalping_bot_reloaded", bot_path)
+                reloaded_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(reloaded_mod)
+                if hasattr(reloaded_mod, "KronosDesktopApp"):
+                    new_cls = reloaded_mod.KronosDesktopApp
+                    for k, v in new_cls.__dict__.items():
+                        if callable(v):
+                            setattr(KronosDesktopApp, k, v)
+        except Exception as reload_err:
+            self.log(f"⚠️ [OTA HOT-PATCH] Nạp phương thức mới: {reload_err}")
+
+        # 3. Đảm bảo Tab Backtest được khởi tạo nếu phiên bản cũ chưa có
+        try:
+            if hasattr(self, "bottom_notebook") and self.bottom_notebook.index("end") < 5:
+                self._setup_backtest_tab()
+        except Exception:
+            pass
+
+        self.show_toast(f"✓ Đã áp dụng phiên bản v{v_str} trực tiếp! Không cần restart app.", is_error=False, duration_ms=3500)
+        self.log(f"🎉 [CẬP NHẬT TRỰC TIẾP] Phiên bản v{v_str} đã được nạp thành công ngay trong phiên làm việc hiện tại.")
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -2879,9 +2951,8 @@ class KronosDesktopApp:
         self.bt_sym_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.bt_sym_combo.bind("<<ComboboxSelected>>", self._on_bt_symbol_changed)
 
-        tk.Label(ctrl_frame, text="Khung:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
-        self.bt_tf_combo = ttk.Combobox(ctrl_frame, textvariable=self.bt_tf_var, values=["M1", "M5", "M15", "M30", "H1"], width=4, state="readonly")
-        self.bt_tf_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.bt_tf_info_lbl = tk.Label(ctrl_frame, text="⚡ Khung: Menu", bg="#131822", fg="#38bdf8", font=("Segoe UI", 8, "bold"))
+        self.bt_tf_info_lbl.pack(side=tk.LEFT, padx=(2, 6))
 
         # Chọn ngày bắt đầu kèm nút mở Lịch Pop-up (DatePickerDialog)
         tk.Label(ctrl_frame, text="Từ ngày:", bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(2, 2))
@@ -3042,6 +3113,7 @@ class KronosDesktopApp:
         self.bt_chart_canvas = tk.Canvas(right_chart_frame, bg="#0b0e14", highlightthickness=0)
         self.bt_chart_canvas.pack(fill=tk.BOTH, expand=True)
         self.bt_chart_canvas.bind("<Configure>", lambda e: self._draw_equity_curve(self._bt_equity_points))
+        self._update_bt_tf_display()
 
     def _create_kpi_card(self, parent: tk.Frame, col_idx: int, title: str, init_val: str, val_color: str) -> tk.Label:
         """Tạo thẻ hiển thị chỉ số tài chính dạng hộp nhỏ."""
@@ -3052,21 +3124,30 @@ class KronosDesktopApp:
         lbl.pack()
         return lbl
 
+    def _update_bt_tf_display(self):
+        """Cập nhật nhãn hiển thị khung thời gian theo Menu bên trái trên thanh Backtest."""
+        if hasattr(self, "bt_tf_info_lbl") and self.bt_tf_info_lbl.winfo_exists():
+            sym = self.bt_sym_var.get().strip()
+            pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
+            cfg = self._get_profile_cfg(pk)
+            ana_tf = str(cfg.get("analysis_tf", self.analysis_tf_var.get() if hasattr(self, "analysis_tf_var") else "M15")).strip()
+            scalp_tf = str(cfg.get("tf", self.tf_var.get() if hasattr(self, "tf_var") else "M5")).strip()
+            desc = f"{ana_tf}" if ana_tf == scalp_tf else f"{ana_tf} ➔ {scalp_tf}"
+            self.bt_tf_info_lbl.config(text=f"⚡ Khung: {desc} (Menu)")
+
     def _copy_menu_settings_to_bt(self):
         """Sao chép toàn bộ thông số đang chọn ở Menu bên trái vào cấu hình Backtest."""
         pk = self.active_profile_key
         cfg = self._get_profile_cfg(pk)
         sym = str(cfg.get("symbol", self.symbol_var.get())).strip()
-        tf = str(cfg.get("tf", self.tf_var.get())).strip()
         lot = str(cfg.get("lot", self.lot_var.get())).strip()
 
         if sym:
             self.bt_sym_var.set(sym)
-        if tf:
-            self.bt_tf_var.set(tf)
         if lot:
             self.bt_lot_var.set(lot)
 
+        self._update_bt_tf_display()
         self.show_toast(f"Đã nạp thông số Tab [{pk}] vào bộ kiểm thử Backtest!", is_error=False, duration_ms=2500)
 
     def _on_bt_symbol_changed(self, event=None):
@@ -3079,15 +3160,13 @@ class KronosDesktopApp:
         if self.active_profile_key != target_pk:
             self._switch_active_profile(target_pk)
 
-        # 2. Tự động đồng bộ khung thời gian và lot từ profile đang chọn vào Backtest
+        # 2. Tự động đồng bộ lot từ profile đang chọn vào Backtest
         cfg = self._get_profile_cfg(target_pk)
-        tf = str(cfg.get("tf", self.tf_var.get())).strip()
         lot = str(cfg.get("lot", self.lot_var.get())).strip()
-        if tf:
-            self.bt_tf_var.set(tf)
         if lot:
             self.bt_lot_var.set(lot)
 
+        self._update_bt_tf_display()
         self.show_toast(f"Menu đã chuyển sang [{target_pk}] ({sym}) & nạp thông số hiện tại!", is_error=False, duration_ms=2500)
 
     def _apply_bt_settings_to_menu(self):
@@ -3102,14 +3181,14 @@ class KronosDesktopApp:
 
         # 2. Cập nhật các biến giao diện & lưu vào profile
         self.symbol_var.set(sym)
-        self.tf_var.set(self.bt_tf_var.get().strip())
         self.lot_var.set(self.bt_lot_var.get().strip())
 
         # Đồng bộ ngược vào profile context và lưu xuống ổ cứng
         self._sync_self_to_active_ctx(include_ai_state=False)
         self.save_user_settings()
+        self._update_bt_tf_display()
         self.show_toast(f"✓ Đã lưu cài đặt Backtest vào Menu [{target_pk}] thành công!", is_error=False, duration_ms=3000)
-        self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Khung {self.bt_tf_var.get()} | Lot {self.bt_lot_var.get()}.")
+        self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Lot {self.bt_lot_var.get()}.")
 
     def _clear_backtest_data(self):
         """Xóa trắng toàn bộ dữ liệu bảng lệnh, biểu đồ và chỉ số KPI để chuẩn bị chạy lượt test mới."""
@@ -3254,7 +3333,6 @@ class KronosDesktopApp:
     def _run_backtest_simulation(self):
         """Động cơ mô phỏng giao dịch quá khứ chuẩn xác theo nến lịch sử hoặc nến Tick 1s và đệm giật giá Exness."""
         sym = self.bt_sym_var.get().strip()
-        tf_str = self.bt_tf_var.get().strip()
         start_s = self.bt_start_var.get().strip()
         end_s = self.bt_end_var.get().strip()
         is_s1_mode = "S1" in self.bt_data_precision_var.get()
@@ -3287,6 +3365,9 @@ class KronosDesktopApp:
         cfg = self._get_profile_cfg(pk)
         def_cfg = DEFAULT_PROFILE_SETTINGS.get(pk, {})
 
+        ana_tf_str = str(cfg.get("analysis_tf", self.analysis_tf_var.get() if hasattr(self, "analysis_tf_var") else "M15")).strip() or "M15"
+        scalp_tf_str = str(cfg.get("tf", self.tf_var.get() if hasattr(self, "tf_var") else "M5")).strip() or "M5"
+
         sl_atr = float(cfg.get("sl_atr", def_cfg.get("sl_atr", "1.5")))
         sl_buffer = float(cfg.get("sl_buffer", def_cfg.get("sl_buffer", "20.0" if is_btc else "0.5")))
         max_sl_price = float(cfg.get("max_sl_price", def_cfg.get("max_sl_price", "350.0" if is_btc else "5.0")))
@@ -3306,29 +3387,46 @@ class KronosDesktopApp:
             "M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5, "M15": mt5.TIMEFRAME_M15,
             "M30": mt5.TIMEFRAME_M30, "H1": mt5.TIMEFRAME_H1
         } if MT5_AVAILABLE else {}
-        mt5_tf = tf_map.get(tf_str, getattr(mt5, "TIMEFRAME_M5", 5))
+        mt5_ana_tf = tf_map.get(ana_tf_str, getattr(mt5, "TIMEFRAME_M15", 15))
+        mt5_scalp_tf = tf_map.get(scalp_tf_str, getattr(mt5, "TIMEFRAME_M5", 5))
 
-        self.root.after(0, lambda: self._update_bt_status("Đang tải dữ liệu lịch sử từ MetaTrader 5...", 5))
+        interval_map = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600}
+        interval_sec = interval_map.get(scalp_tf_str, 300)
 
-        rates = None
+        tf_desc = f"{ana_tf_str}" if ana_tf_str == scalp_tf_str else f"{ana_tf_str} ➔ {scalp_tf_str}"
+        self.root.after(0, lambda: self._update_bt_status(f"Đang tải dữ liệu {sym} ({tf_desc}) từ MetaTrader 5...", 5))
+
+        rates_ana = None
+        rates_scalp = None
         if MT5_AVAILABLE:
             with self._mt5_lock:
-                query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - (3600 * 48))
+                query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - (3600 * 72))
                 query_to = datetime.fromtimestamp(int(end_dt.timestamp()) + 7200)
-                rates = mt5.copy_rates_range(sym, mt5_tf, query_from, query_to)
+                rates_ana = mt5.copy_rates_range(sym, mt5_ana_tf, query_from, query_to)
+                if ana_tf_str == scalp_tf_str:
+                    rates_scalp = rates_ana
+                else:
+                    rates_scalp = mt5.copy_rates_range(sym, mt5_scalp_tf, query_from, query_to)
 
-        if rates is None or len(rates) < 30:
-            self.root.after(0, lambda: self.show_toast(f"Không lấy được nến lịch sử của {sym} trong khoảng ngày này!", is_error=True))
+        if rates_ana is None or len(rates_ana) < 30 or rates_scalp is None or len(rates_scalp) < 30:
+            self.root.after(0, lambda: self.show_toast(f"Không lấy được nến lịch sử của {sym} ({tf_desc}) trong khoảng ngày này!", is_error=True))
             self.root.after(0, lambda: self._update_bt_status("Kiểm thử thất bại: Không đủ nến lịch sử từ MT5.", 0))
             return
 
         # Chuẩn hóa bảng nến lịch sử thành DataFrame chuẩn với đầy đủ các cột phục vụ Não AI và phân tích kỹ thuật
-        df_rates_all = pd.DataFrame(rates)
-        if "timestamps" not in df_rates_all.columns:
-            df_rates_all["timestamps"] = pd.to_datetime(df_rates_all["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
-        if "volume" not in df_rates_all.columns:
-            df_rates_all["volume"] = df_rates_all["tick_volume"].astype(float) if "tick_volume" in df_rates_all.columns else 1.0
-        rate_times = df_rates_all["time"].values
+        df_rates_ana = pd.DataFrame(rates_ana)
+        if "timestamps" not in df_rates_ana.columns:
+            df_rates_ana["timestamps"] = pd.to_datetime(df_rates_ana["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
+        if "volume" not in df_rates_ana.columns:
+            df_rates_ana["volume"] = df_rates_ana["tick_volume"].astype(float) if "tick_volume" in df_rates_ana.columns else 1.0
+        rate_ana_times = df_rates_ana["time"].values
+
+        df_rates_scalp = pd.DataFrame(rates_scalp)
+        if "timestamps" not in df_rates_scalp.columns:
+            df_rates_scalp["timestamps"] = pd.to_datetime(df_rates_scalp["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
+        if "volume" not in df_rates_scalp.columns:
+            df_rates_scalp["volume"] = df_rates_scalp["tick_volume"].astype(float) if "tick_volume" in df_rates_scalp.columns else 1.0
+        rate_scalp_times = df_rates_scalp["time"].values
 
         # Nạp AI Predictor nếu người dùng bật Não AI Kronos
         predictor = None
@@ -3359,7 +3457,6 @@ class KronosDesktopApp:
         if is_s1_mode and len(s1_bars) > 50:
             total_s1 = len(s1_bars)
             self.root.after(0, lambda: self._update_bt_status(f"Đang mô phỏng {total_s1:,} nến 1 giây (giật nến thực tế)...", 22))
-            interval_sec = 60 if tf_str == "M1" else 300
             s1_idx = 0
 
             while s1_idx < total_s1 - 1 and not self._bt_cancel_flag:
@@ -3376,38 +3473,40 @@ class KronosDesktopApp:
                 atr = 20.0 if is_btc else 1.5
 
                 if is_candle_event:
-                    idx_cut = int(np.searchsorted(rate_times, cur_sec, side="right"))
-                    if idx_cut >= 20:
-                        sub_recent = df_rates_all.iloc[max(0, idx_cut - 14):idx_cut]
+                    idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right"))
+                    if idx_scalp >= 20:
+                        sub_recent = df_rates_scalp.iloc[max(0, idx_scalp - 14):idx_scalp]
                         highs = sub_recent["high"].values
                         lows = sub_recent["low"].values
                         closes = sub_recent["close"].values
                         trs = [max(highs[j] - lows[j], abs(highs[j] - closes[j-1]), abs(lows[j] - closes[j-1])) for j in range(1, len(highs))]
                         atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
 
-                        if use_ai and predictor is not None and idx_cut >= 50:
-                            sub_df = df_rates_all.iloc[max(0, idx_cut - 60):idx_cut].copy().reset_index(drop=True)
-                            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
-                            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
-                            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
-                            try:
-                                scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                                last_c = float(sub_df["close"].iloc[-1])
-                                bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
-                                bear_cnt = len(scenarios) - bull_cnt
-                                b_pct = (bull_cnt / len(scenarios)) * 100.0
-                                s_pct = (bear_cnt / len(scenarios)) * 100.0
-                                exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
-                                if b_pct >= min_consensus and exp_m >= min_move:
-                                    signal = "BUY"
-                                elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                                    signal = "SELL"
-                            except Exception:
-                                pass
+                    idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right"))
+                    if use_ai and predictor is not None and idx_ana >= 50:
+                        sub_df = df_rates_ana.iloc[max(0, idx_ana - 60):idx_ana].copy().reset_index(drop=True)
+                        x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
+                        dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+                        y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+                        try:
+                            scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                            last_c = float(sub_df["close"].iloc[-1])
+                            bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
+                            bear_cnt = len(scenarios) - bull_cnt
+                            b_pct = (bull_cnt / len(scenarios)) * 100.0
+                            s_pct = (bear_cnt / len(scenarios)) * 100.0
+                            exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                            if b_pct >= min_consensus and exp_m >= min_move:
+                                signal = "BUY"
+                            elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                                signal = "SELL"
+                        except Exception:
+                            pass
 
-                        if signal is None and not use_ai:
-                            # Thuật toán kỹ thuật dự phòng
-                            recent = df_rates_all.iloc[max(0, idx_cut - 14):idx_cut]
+                    if signal is None and not use_ai:
+                        idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right"))
+                        if idx_scalp >= 14:
+                            recent = df_rates_scalp.iloc[max(0, idx_scalp - 14):idx_scalp]
                             closes = recent["close"].values
                             highs = recent["high"].values
                             lows = recent["low"].values
@@ -3533,14 +3632,15 @@ class KronosDesktopApp:
 
         # ── KỊCH BẢN 2: MÔ PHỎNG NẾN TIÊU CHUẨN (M1 / M5) ─────────────────────
         else:
+            rates = rates_scalp
             total_bars = len(rates)
-            self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến. Đang mô phỏng giao dịch...", 20))
+            self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến ({scalp_tf_str}). Đang mô phỏng giao dịch...", 20))
             bar_idx = 20
 
             while bar_idx < total_bars - 1 and not self._bt_cancel_flag:
                 pct = 20 + int((bar_idx / total_bars) * 75)
                 if bar_idx % 40 == 0:
-                    self.root.after(0, lambda p=pct, b=bar_idx: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars}...", p))
+                    self.root.after(0, lambda p=pct, b=bar_idx: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars} ({scalp_tf_str})...", p))
 
                 window = rates[bar_idx-14:bar_idx]
                 closes = [r[4] for r in window]
@@ -3557,12 +3657,14 @@ class KronosDesktopApp:
                 atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
 
                 cur_bar = rates[bar_idx]
-                cur_time = datetime.fromtimestamp(int(cur_bar[0]), tz=VN_TZ)
+                cur_sec = int(cur_bar[0])
+                cur_time = datetime.fromtimestamp(cur_sec, tz=VN_TZ)
                 cur_close = float(cur_bar[4])
 
                 signal = None
-                if use_ai and predictor is not None and bar_idx >= 50:
-                    sub_df = df_rates_all.iloc[max(0, bar_idx-60):bar_idx].copy().reset_index(drop=True)
+                idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right"))
+                if use_ai and predictor is not None and idx_ana >= 50:
+                    sub_df = df_rates_ana.iloc[max(0, idx_ana-60):idx_ana].copy().reset_index(drop=True)
                     x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
                     dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
                     y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
@@ -5249,6 +5351,7 @@ class KronosDesktopApp:
                 target_pk = "BTCUSD" if "BTC" in bt_sym.upper() else "XAUUSD"
                 if self.active_profile_key != target_pk:
                     self._switch_active_profile(target_pk)
+                self._update_bt_tf_display()
 
         self.user_zoomed = False
         self.saved_xlim = None
