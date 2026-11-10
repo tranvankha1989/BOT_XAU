@@ -260,8 +260,8 @@ PARAM_HELP_GUIDE = {
     },
     "max_hold_mins": {
         "title": "Thời gian giữ lệnh tối đa (Max Holding Time)",
-        "what_is_it": "Giới hạn số phút tối đa một lệnh được phép duy trì trên thị trường (ví dụ 60 phút, 120 phút). Tránh việc lệnh bị ngâm qua đêm hoặc kẹt quá lâu trong vùng thị trường đi ngang (Sideway).",
-        "how_to_set": "- Scalping trong ngày: Đặt 60 - 120 phút.\n- Nếu đặt 0: Tắt tính năng giới hạn thời gian (lệnh sẽ chạy cho đến khi chạm TP, SL hoặc có tín hiệu đảo chiều)."
+        "what_is_it": "Giới hạn số phút tối đa một lệnh được phép duy trì trên thị trường do người dùng cài đặt (ví dụ 15 phút, 60 phút). Tránh việc lệnh bị ngâm quá lâu trong vùng thị trường đi ngang hoặc sideway.\n- THÔNG MINH: Bot tự động miễn trừ (không ép đóng) cho các lệnh ĐÃ DỜI HÒA VỐN (BE) hoặc ĐANG TRAILING STOP để bảo vệ trọn vẹn đà gồng lãi theo sóng lớn!",
+        "how_to_set": "- Scalping nhanh: Đặt 15 - 30 phút (lệnh không bứt phá được sẽ tự kích hoạt xử lý).\n- Nếu đặt 0: Tắt tính năng giới hạn thời gian (lệnh sẽ chạy cho đến khi chạm TP, SL hoặc có tín hiệu đảo chiều)."
     },
     "max_hold_action": {
         "title": "Xử lý khi vượt thời gian giữ lệnh",
@@ -5251,33 +5251,47 @@ class KronosDesktopApp:
             be_target_price = round((pos.price_open + be_plus_price) if is_buy else (pos.price_open - be_plus_price), digits)
             be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
 
-            # Quy tắc Giữ lệnh tối đa (Time-Stop): Nếu lệnh đã mở vượt quá số phút cài đặt
-            if max_hold_mins > 0.0 and (elapsed_sec / 60.0) >= max_hold_mins:
+            # Kiểm tra trạng thái an toàn: Lệnh đã được dời SL về Hòa vốn (BE) hoặc đang Trailing Stop hay chưa
+            is_be_or_trailing = False
+            if is_buy:
+                if pos.sl > 0 and (pos.sl >= be_target_price - eps_eq * 0.5 or pos.sl >= entry_exact - eps_eq * 0.5):
+                    is_be_or_trailing = True
+                elif auto_be and current_r >= be_trigger_r:
+                    is_be_or_trailing = True
+            else:
+                if pos.sl > 0 and (pos.sl <= be_target_price + eps_eq * 0.5 or pos.sl <= entry_exact + eps_eq * 0.5):
+                    is_be_or_trailing = True
+                elif auto_be and current_r >= be_trigger_r:
+                    is_be_or_trailing = True
+
+            # Quy tắc Giữ lệnh tối đa (Time-Stop): Chỉ áp dụng cho các lệnh CHƯA dời BE/Trailing (ngâm lệnh ì ạch hoặc đang âm)
+            # Lệnh đã dời BE / đang Trailing là lệnh Free-Risk hoàn toàn, được tự do chạy theo sóng để gồng lãi tối đa
+            if max_hold_mins > 0.0 and (elapsed_sec / 60.0) >= max_hold_mins and not is_be_or_trailing:
                 if "Chốt lời" in max_hold_action:
                     if pos.profit > 0.0:
                         ok_h, msg_h = self._close_single_pos(pos)
                         if ok_h:
-                            self.log(f"⌛ [{pk} - Giữ lệnh tối đa {max_hold_mins:g}p] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi ({pos.profit:+.2f}$) -> {msg_h}")
+                            self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi nhẹ ({pos.profit:+.2f}$) -> {msg_h}")
                             continue
                     else:
                         if pos.ticket not in self.pending_be_exit_tickets:
                             self.pending_be_exit_tickets.add(pos.ticket)
                             if abs(pos.tp - be_target_price) >= eps_eq:
                                 self._modify_position_sltp(pos, pos.sl, be_target_price)
-                                self.log(f"⌛ [{pk} - Giữ lệnh tối đa {max_hold_mins:g}p] Lệnh #{pos.ticket} giữ {dur_str} (đang âm {pos.profit:+.2f}$) -> Đã dời TP về {be_label_tag} ({be_target_price:.2f}) để tự thoát hòa vốn!")
+                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} giữ {dur_str} (đang âm {pos.profit:+.2f}$) -> Đã dời TP về {be_label_tag} ({be_target_price:.2f}) để tự thoát hòa vốn!")
                 elif "Dời SL" in max_hold_action:
                     if is_buy and (pos.sl == 0 or pos.sl < be_target_price - eps_eq * 0.5):
                         if be_target_price < pos.price_current - min_stop_d:
                             if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                                self.log(f"⌛ [{pk} - Giữ lệnh tối đa {max_hold_mins:g}p] Lệnh BUY #{pos.ticket} giữ {dur_str} -> Đã dời SL về {be_label_tag} ({be_target_price:.2f})")
+                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh BUY #{pos.ticket} giữ {dur_str} -> Đã dời SL về {be_label_tag} ({be_target_price:.2f})")
                     elif (not is_buy) and (pos.sl == 0 or pos.sl > be_target_price + eps_eq * 0.5):
                         if be_target_price > pos.price_current + min_stop_d:
                             if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                                self.log(f"⌛ [{pk} - Giữ lệnh tối đa {max_hold_mins:g}p] Lệnh SELL #{pos.ticket} giữ {dur_str} -> Đã kéo SL về {be_label_tag} ({be_target_price:.2f})")
+                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh SELL #{pos.ticket} giữ {dur_str} -> Đã kéo SL về {be_label_tag} ({be_target_price:.2f})")
                 elif "Đóng tất cả" in max_hold_action:
                     ok_h, msg_h = self._close_single_pos(pos)
                     if ok_h:
-                        self.log(f"⌛ [{pk} - Giữ lệnh tối đa {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> {msg_h}")
+                        self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> {msg_h}")
                         continue
 
             # Kiểm tra nếu lệnh đang ở chế độ "Quy tắc 3: Chờ giá hồi về Entry (+ lãi nhỏ) để thoát khi AI báo đảo chiều"
