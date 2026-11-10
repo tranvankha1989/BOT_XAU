@@ -2877,6 +2877,7 @@ class KronosDesktopApp:
         tk.Label(ctrl_frame, text="Mã:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
         self.bt_sym_combo = ttk.Combobox(ctrl_frame, textvariable=self.bt_sym_var, values=["XAUUSDm", "BTCUSDm", "XAUUSD", "BTCUSD"], width=8, state="readonly")
         self.bt_sym_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.bt_sym_combo.bind("<<ComboboxSelected>>", self._on_bt_symbol_changed)
 
         tk.Label(ctrl_frame, text="Khung:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
         self.bt_tf_combo = ttk.Combobox(ctrl_frame, textvariable=self.bt_tf_var, values=["M1", "M5", "M15", "M30", "H1"], width=4, state="readonly")
@@ -3068,18 +3069,47 @@ class KronosDesktopApp:
 
         self.show_toast(f"Đã nạp thông số Tab [{pk}] vào bộ kiểm thử Backtest!", is_error=False, duration_ms=2500)
 
-    def _apply_bt_settings_to_menu(self):
-        """Lưu ngược lại các thông số vừa kiểm thử thành công vào Menu bot chính."""
+    def _on_bt_symbol_changed(self, event=None):
+        """Khi người dùng chọn mã tiền tệ ở Backtest (BTC / XAU): Tự động chuyển Menu sang mã đó và nạp thông số hiện tại."""
         sym = self.bt_sym_var.get().strip()
         is_btc = "BTC" in sym.upper()
         target_pk = "BTCUSD" if is_btc else "XAUUSD"
 
+        # 1. Chuyển Menu bên trái sang đúng Tab mã tương ứng
+        if self.active_profile_key != target_pk:
+            self._switch_active_profile(target_pk)
+
+        # 2. Tự động đồng bộ khung thời gian và lot từ profile đang chọn vào Backtest
+        cfg = self._get_profile_cfg(target_pk)
+        tf = str(cfg.get("tf", self.tf_var.get())).strip()
+        lot = str(cfg.get("lot", self.lot_var.get())).strip()
+        if tf:
+            self.bt_tf_var.set(tf)
+        if lot:
+            self.bt_lot_var.set(lot)
+
+        self.show_toast(f"Menu đã chuyển sang [{target_pk}] ({sym}) & nạp thông số hiện tại!", is_error=False, duration_ms=2500)
+
+    def _apply_bt_settings_to_menu(self):
+        """Lưu ngược lại các thông số vừa kiểm thử thành công vào Menu bot chính của đúng mã đang test."""
+        sym = self.bt_sym_var.get().strip()
+        is_btc = "BTC" in sym.upper()
+        target_pk = "BTCUSD" if is_btc else "XAUUSD"
+
+        # 1. Đảm bảo Menu đang trỏ vào đúng profile đích
+        if self.active_profile_key != target_pk:
+            self._switch_active_profile(target_pk)
+
+        # 2. Cập nhật các biến giao diện & lưu vào profile
         self.symbol_var.set(sym)
         self.tf_var.set(self.bt_tf_var.get().strip())
         self.lot_var.set(self.bt_lot_var.get().strip())
 
+        # Đồng bộ ngược vào profile context và lưu xuống ổ cứng
+        self._sync_self_to_active_ctx(include_ai_state=False)
         self.save_user_settings()
-        self.show_toast(f"✓ Đã áp dụng thông số vào Tab [{target_pk}] & Lưu thành công!", is_error=False, duration_ms=3000)
+        self.show_toast(f"✓ Đã lưu cài đặt Backtest vào Menu [{target_pk}] thành công!", is_error=False, duration_ms=3000)
+        self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Khung {self.bt_tf_var.get()} | Lot {self.bt_lot_var.get()}.")
 
     def _clear_backtest_data(self):
         """Xóa trắng toàn bộ dữ liệu bảng lệnh, biểu đồ và chỉ số KPI để chuẩn bị chạy lượt test mới."""
@@ -5206,6 +5236,11 @@ class KronosDesktopApp:
             # Tab 4: KIỂM THỬ CHIẾN LƯỢC (BACKTEST)
             if not getattr(self, "_backtest_unlocked", False):
                 self._focus_backtest_password()
+            else:
+                bt_sym = self.bt_sym_var.get().strip()
+                target_pk = "BTCUSD" if "BTC" in bt_sym.upper() else "XAUUSD"
+                if self.active_profile_key != target_pk:
+                    self._switch_active_profile(target_pk)
 
         self.user_zoomed = False
         self.saved_xlim = None
