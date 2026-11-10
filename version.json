@@ -1,6 +1,6 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.0.3:\n- Khắc phục triệt để lỗi thiếu module giao diện Tkinter (ttk) khi chạy trên máy tính mới hoặc máy ảo (VM).\n- Chuẩn hóa phân loại lệnh Hòa vốn / Thoát khẩn cấp (BE+) và cập nhật công thức tính Win Rate độc lập theo đúng tiêu chuẩn quản trị rủi ro.\n- Bổ sung Tab 'Lịch Sử & Xuất Excel' với bộ lọc linh hoạt (Hôm nay, Hôm qua, 7 ngày, 30 ngày) kèm cửa sổ Pop-up Lịch chọn khoảng ngày.\n- Hỗ trợ xuất toàn bộ dữ liệu lịch sử lệnh giao dịch chi tiết ra tệp Excel (.xlsx) và CSV."
+  "description": "Phiên bản v1.0.4:\n- Bổ sung ghi chú thông số tương tác (Hover Note) dạng Excel/Google Sheets khi rê chuột vào dấu [?].\n- Phân loại riêng trạng thái thị trường đóng phiên (Session closed - 10017) tránh hiểu nhầm lỗi ứng dụng.\n- Cập nhật biểu tượng cá voi tròn viền trong suốt và tối ưu độ mượt giao diện."
 }

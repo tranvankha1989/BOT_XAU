@@ -88,6 +88,24 @@ class AppUpdater:
         self.is_checking = False
         self.has_update = False
 
+    def _get_github_token(self) -> str:
+        """Lấy token GitHub từ biến môi trường hoặc Windows Git Credential Manager."""
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            return token.strip()
+        try:
+            res = subprocess.run(
+                ["git", "credential", "fill"],
+                input="protocol=https\nhost=github.com\n\n",
+                text=True, capture_output=True, timeout=2.0
+            )
+            for line in res.stdout.splitlines():
+                if line.startswith("password="):
+                    return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+        return ""
+
     def check_update_sync(self, timeout: float = 6.0) -> dict:
         """
         Kiểm tra bản cập nhật mới đồng bộ từ GitHub API:
@@ -95,10 +113,13 @@ class AppUpdater:
         2. Nếu API bị giới hạn rate limit hoặc chưa có release -> fallback đọc raw version.json.
         """
         self.is_checking = True
+        token = self._get_github_token()
         headers = {
             "User-Agent": f"Trading-AI-PRO/{self.current_version}",
             "Accept": "application/vnd.github.v3+json",
         }
+        if token:
+            headers["Authorization"] = f"token {token}"
 
         remote_ver = None
         remote_notes = ""
@@ -120,7 +141,10 @@ class AppUpdater:
                     for asset in rel_data.get("assets", []):
                         aname = str(asset.get("name", "")).lower()
                         if aname.endswith(".zip") and any(k in aname for k in ("patch", "update", "release", "bot")):
-                            patch_url = asset.get("browser_download_url")
+                            if token and asset.get("url"):
+                                patch_url = asset.get("url")
+                            else:
+                                patch_url = asset.get("browser_download_url")
                             patch_name = asset.get("name")
                             break
 
@@ -196,7 +220,12 @@ class AppUpdater:
         if not patch_url:
             return False, "Không tìm thấy đường dẫn tải gói cập nhật (Patch URL trống)."
 
+        token = self._get_github_token()
         headers = {"User-Agent": f"Trading-AI-PRO/{self.current_version}"}
+        if token:
+            headers["Authorization"] = f"token {token}"
+            if "api.github.com" in patch_url:
+                headers["Accept"] = "application/octet-stream"
         req = urllib.request.Request(patch_url, headers=headers)
 
         try:

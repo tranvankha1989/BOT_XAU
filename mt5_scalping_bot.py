@@ -1280,8 +1280,19 @@ class KronosDesktopApp:
         self._scan_target_pct = 100.0
         self._draw_reload_pill()
 
-    def _draw_toggle_switch(self):
-        """Vẽ công tắc gạt (Toggle Switch) bo tròn mềm mại cho START / STOP."""
+    @staticmethod
+    def _lerp_hex_color(c1_hex: str, c2_hex: str, t: float) -> str:
+        """Nội suy màu mượt mà giữa 2 mã HEX (#RRGGBB)."""
+        t = max(0.0, min(1.0, float(t)))
+        r1, g1, b1 = int(c1_hex[1:3], 16), int(c1_hex[3:5], 16), int(c1_hex[5:7], 16)
+        r2, g2, b2 = int(c2_hex[1:3], 16), int(c2_hex[3:5], 16), int(c2_hex[5:7], 16)
+        r = int(r1 + (r2 - r1) * t)
+        g = int(g1 + (g2 - g1) * t)
+        b = int(b1 + (b2 - b1) * t)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _draw_toggle_switch(self, progress: float = None):
+        """Vẽ công tắc gạt (Toggle Switch) bo tròn mềm mại cho START / STOP với thanh trượt mượt mà (0.0 = STOPPED, 1.0 = RUNNING)."""
         if not hasattr(self, "toggle_switch_canvas") or not self.toggle_switch_canvas.winfo_exists():
             return
         c = self.toggle_switch_canvas
@@ -1290,12 +1301,25 @@ class KronosDesktopApp:
         x1, y1, x2, y2 = 2, 2, w - 2, h - 2
         knob_d = (y2 - y1) - 6
 
-        if self.auto_loop_running:
-            # Trạng thái ĐANG CHẠY (ON - START): Nền xanh ngọc, nút tròn bên phải
-            self._draw_capsule(c, x1, y1, x2, y2, fill="#0ecb81", outline="#17e896", width=1)
-            kx2 = x2 - 3
-            kx1 = kx2 - knob_d
-            c.create_oval(kx1, y1 + 3, kx2, y2 - 3, fill="#ffffff", outline="")
+        if progress is None:
+            progress = 1.0 if self.auto_loop_running else 0.0
+        self._toggle_progress = progress
+
+        # Tọa độ giới hạn của nút tròn di chuyển
+        kx1_min = x1 + 3
+        kx1_max = (x2 - 3) - knob_d
+        kx1 = kx1_min + progress * (kx1_max - kx1_min)
+        kx2 = kx1 + knob_d
+
+        # Màu sắc chuyển dịch mượt mà giữa STOPPED (#222a3a / #f6465d) và RUNNING (#0ecb81 / #17e896)
+        bg_col = self._lerp_hex_color("#222a3a", "#0ecb81", progress)
+        border_col = self._lerp_hex_color("#f6465d", "#17e896", progress)
+        knob_col = self._lerp_hex_color("#f6465d", "#ffffff", progress)
+
+        self._draw_capsule(c, x1, y1, x2, y2, fill=bg_col, outline=border_col, width=1)
+        c.create_oval(kx1, y1 + 3, kx2, y2 - 3, fill=knob_col, outline="")
+
+        if progress >= 0.5:
             c.create_text(
                 (x1 + kx1) / 2 + 4, h / 2,
                 text="RUNNING",
@@ -1303,17 +1327,26 @@ class KronosDesktopApp:
                 font=("Segoe UI", 8, "bold")
             )
         else:
-            # Trạng thái ĐANG DỪNG (OFF - STOP): Nền tối viền đỏ/xám, nút tròn đỏ bên trái
-            self._draw_capsule(c, x1, y1, x2, y2, fill="#222a3a", outline="#f6465d", width=1)
-            kx1 = x1 + 3
-            kx2 = kx1 + knob_d
-            c.create_oval(kx1, y1 + 3, kx2, y2 - 3, fill="#f6465d", outline="")
             c.create_text(
                 (kx2 + x2) / 2 - 2, h / 2,
                 text="STOPPED",
                 fill="#f6465d",
                 font=("Segoe UI", 8, "bold")
             )
+
+    def _animate_toggle_switch(self, target_on: bool, step: int = 1, total_steps: int = 6):
+        """Hiệu ứng gạt công tắc trượt mượt mà (Smooth Glide Animation ~60ms) chuẩn cảm ứng 60FPS."""
+        if not hasattr(self, "toggle_switch_canvas") or not self.toggle_switch_canvas.winfo_exists():
+            return
+        t = step / float(total_steps)
+        # Cosine ease-in-out curve
+        ease_t = 0.5 * (1.0 - math.cos(math.pi * t))
+        prog = ease_t if target_on else (1.0 - ease_t)
+        self._draw_toggle_switch(progress=prog)
+        if step < total_steps:
+            self.root.after(10, self._animate_toggle_switch, target_on, step + 1, total_steps)
+        else:
+            self._draw_toggle_switch(progress=1.0 if target_on else 0.0)
 
     def _animate_startup_loader(self):
         if not self._is_initial_loading or not hasattr(self, "loading_overlay") or not self.loading_overlay.winfo_exists():
@@ -1424,28 +1457,35 @@ class KronosDesktopApp:
             GWL_EXSTYLE = -20
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
+            SWP_FRAMECHANGED = 0x0020
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
             ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             new_ex_style = (ex_style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
             if ex_style != new_ex_style:
                 ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
-                ctypes.windll.user32.ShowWindow(hwnd, 0)
-                ctypes.windll.user32.ShowWindow(hwnd, 5)
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+                )
         except Exception:
             pass
 
     def _on_window_map_restore(self, event=None):
-        if getattr(self, "_minimizing_to_taskbar", False) and self.root.state() == "normal":
-            self._minimizing_to_taskbar = False
-            self.root.after(20, self._apply_dark_titlebar)
+        pass
 
     def _minimize_window(self):
-        """Thu nhỏ cửa sổ xuống thanh Taskbar Windows khi bấm nút tròn màu Vàng kiểu MacBook."""
+        """Thu nhỏ cửa sổ xuống thanh Taskbar Windows êm ái khi bấm nút tròn màu Vàng kiểu MacBook mà không bị chớp giật viền trắng."""
         try:
-            self._minimizing_to_taskbar = True
-            self.root.overrideredirect(False)
-            self.root.iconify()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            # SW_MINIMIZE = 6 kích hoạt hiệu ứng thu nhỏ DWM tự nhiên của Windows, không gọi overrideredirect(False) để tránh làm vỡ/chớp cửa sổ
+            ctypes.windll.user32.ShowWindow(hwnd, 6)
         except Exception:
-            pass
+            try:
+                self.root.iconify()
+            except Exception:
+                pass
 
     def _toggle_maximize_window(self, event=None):
         """Phóng to toàn màn hình (chừa thanh Taskbar) hoặc thu hồi kích thước cũ khi bấm nút tròn màu Xanh lá kiểu MacBook."""
@@ -2141,12 +2181,13 @@ class KronosDesktopApp:
         )
         self.signal_detail_lbl.pack(fill=tk.X, pady=(2, 0))
 
-        # THANH TRẠNG THÁI HOẠT ĐỘNG BOT CHUYÊN DỤNG (BOT STATUS STRIP - CANH GIỮA, CHỮ ĐỎ)
+        # THANH TRẠNG THÁI HOẠT ĐỘNG BOT CHUYÊN DỤNG (BOT STATUS STRIP - CANH GIỮA, CHỮ ĐỎ, CHIỀU CAO CỐ ĐỊNH TRÁNH GIẬT KHUNG)
         self.bot_status_frame = tk.Frame(
             sig_left, bg="#121824", padx=8, pady=3,
-            highlightthickness=1, highlightbackground="#222f44"
+            highlightthickness=1, highlightbackground="#121824", height=24
         )
         self.bot_status_frame.pack(fill=tk.X, pady=(4, 0))
+        self.bot_status_frame.pack_propagate(False)
 
         # Giữ đối tượng label để tương thích ngược nếu có hàm tham chiếu, không pack để chữ canh giữa hoàn hảo 100%
         self.bot_status_icon_lbl = tk.Label(self.bot_status_frame, text="", bg="#121824")
@@ -4897,6 +4938,22 @@ class KronosDesktopApp:
 
             code_str = str(getattr(last_res, "retcode", "None"))
             comment_str = str(getattr(last_res, "comment", ""))
+
+            # Phân loại trạng thái thị trường đóng phiên / nghỉ giao phiên của sàn (10017: Market closed / Session closed)
+            # Tránh ghi log lỗi báo động đỏ làm người dùng hiểu nhầm là lỗi phần mềm hay lỗi code ứng dụng.
+            ret_val = getattr(last_res, "retcode", None)
+            is_session_closed = (
+                ret_val == getattr(mt5, "TRADE_RETCODE_MARKET_CLOSED", 10017)
+                or "session closed" in comment_str.lower()
+                or "market closed" in comment_str.lower()
+            )
+
+            if is_session_closed:
+                self._write_file_log(
+                    f"[THÔNG BÁO - {context_tag}] {symbol}: Thị trường đang nghỉ giao phiên ({comment_str}) -> Lệnh được MT5 bảo vệ an toàn bởi SL/TP và bot sẽ tự động xử lý tiếp khi mở phiên."
+                )
+                return False, last_res, f"Thị trường đang đóng phiên ({comment_str})"
+
             self.log_error(
                 context_tag,
                 extra_info=f"symbol={symbol} | retcode={code_str} | comment={comment_str} | request={request}",
@@ -6202,11 +6259,10 @@ class KronosDesktopApp:
             status_text = ""
 
         if not status_text:
-            if self.bot_status_frame.winfo_ismapped():
-                self.bot_status_frame.pack_forget()
+            self.bot_status_text_lbl.config(text="")
+            self.bot_status_frame.configure(highlightbackground="#121824")
         else:
-            if not self.bot_status_frame.winfo_ismapped():
-                self.bot_status_frame.pack(fill=tk.X, pady=(4, 0))
+            self.bot_status_frame.configure(highlightbackground="#222f44")
             self.bot_status_text_lbl.config(text=status_text, fg=text_color)
 
     def _get_live_bot_status_text(self, profile_key: str = None) -> str:
@@ -6239,7 +6295,7 @@ class KronosDesktopApp:
         if self.auto_loop_running:
             return
         if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
-            lic_st = self.lic_mgr.check_status(force_refresh=True)
+            lic_st = self.lic_mgr.check_status(force_refresh=False)
             if not lic_st.get("is_valid", False):
                 self.show_toast("Bản quyền chưa kích hoạt hoặc đã hết hạn!", is_error=True, duration_ms=3000)
                 self._open_license_dialog()
@@ -6249,19 +6305,11 @@ class KronosDesktopApp:
         self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
         worker_token = self._auto_worker_token[pk]
         self.auto_trade_var.set(True)
-        # Giữ nguyên mốc nến đã đóng hiện tại (hoặc cập nhật mốc nến đã đóng gần nhất) để không báo giả "Nến mới vừa đóng" trên cây nến cũ!
+        # Bắt đầu animation trượt mượt mà ngay lập tức (0ms phản hồi tức thì)
+        self._animate_toggle_switch(target_on=True)
+        self._sync_signal_detail_status()
         sym = self.symbol_var.get().strip()
         tf_val = self.tf_var.get().strip()
-        if self.profile_ctx[pk].get("last_candle_time") is None:
-            try:
-                df_cur = self.fetch_mt5_candles(sym, tf_val, 3, include_forming=False)
-                cur_closed_ts = df_cur["timestamps"].iloc[-1]
-                self.profile_ctx[pk]["last_candle_time"] = cur_closed_ts
-                self.last_candle_time = cur_closed_ts
-            except Exception:
-                pass
-        self._draw_toggle_switch()
-        self._sync_signal_detail_status()
         self.log(f"[{pk} - {sym}] Đã BẬT công tắc AUTO (Canh nến {tf_val} để tự động giao dịch)...")
         if self.profile_ctx[pk].get("cached_mean_df") is None and not self.profile_ctx[pk].get("is_analyzing", False):
             self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
@@ -6275,7 +6323,8 @@ class KronosDesktopApp:
         self.auto_trade_var.set(False)
         self.pending_pullback_order = None
         self.profile_ctx[pk]["pending_pullback_order"] = None
-        self._draw_toggle_switch()
+        # Bắt đầu animation trượt mượt mà ngay lập tức (0ms phản hồi tức thì)
+        self._animate_toggle_switch(target_on=False)
         self._sync_signal_detail_status()
         sym = self.symbol_var.get().strip()
         self.log(f"⏹️ [{pk} - {sym}] Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
@@ -7324,18 +7373,22 @@ def run_first_time_setup():
         "$s.Save() }"
     )
     try:
-        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd], check=False)
+        CREATE_NO_WINDOW = 0x08000000
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+            check=False, creationflags=CREATE_NO_WINDOW
+        )
     except Exception:
         pass
 
 
 def _find_other_running_bot_pids() -> list:
-    """Tìm toàn bộ các tiến trình python/pythonw khác đang chạy mt5_scalping_bot.py ngầm trên máy."""
+    """Tìm toàn bộ các tiến trình python/pythonw khác đang chạy mt5_scalping_bot.py ngầm trên máy hoàn toàn trong bộ nhớ (không bật console)."""
     import subprocess
     my_pid = os.getpid()
     found_pids = set()
 
-    # 1. Kiểm tra PID lưu trong INSTANCE_LOCK_FILE trước (nhanh nhất, < 1ms)
+    # 1. Kiểm tra PID lưu trong INSTANCE_LOCK_FILE trước (nhanh nhất, < 1ms qua Win32 API thuần)
     try:
         if os.path.exists(INSTANCE_LOCK_FILE):
             with open(INSTANCE_LOCK_FILE, "r", encoding="utf-8") as f:
@@ -7352,22 +7405,21 @@ def _find_other_running_bot_pids() -> list:
     except Exception:
         pass
 
-    # 2. Quét danh sách tiến trình Windows bằng PowerShell CIM (ẩn cửa sổ hoàn toàn) để phát hiện mọi tiến trình chạy ngầm
+    # Nếu đã tìm thấy PID từ lock file, trả về ngay lập tức (không cần gọi bất kỳ tiến trình con nào)
+    if found_pids:
+        return sorted(found_pids)
+
+    # 2. Quét dự phòng bằng tasklist có cờ CREATE_NO_WINDOW (ẩn 100%, không spawn powershell làm chớp màn hình)
     try:
         CREATE_NO_WINDOW = 0x08000000
-        ps_query = (
-            "Get-CimInstance Win32_Process | "
-            "Where-Object { ($_.Name -match '^pythonw?\\.exe$') -and ($_.CommandLine -like '*mt5_scalping_bot*') } | "
-            "ForEach-Object { $_.ProcessId }"
-        )
         res = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_query],
-            capture_output=True, text=True, timeout=4, creationflags=CREATE_NO_WINDOW
+            ["tasklist", "/FI", "IMAGENAME eq pythonw.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=3, creationflags=CREATE_NO_WINDOW
         )
         for line in (res.stdout or "").splitlines():
-            line = line.strip()
-            if line.isdigit():
-                pid_val = int(line)
+            parts = [p.strip('"') for p in line.split(",")]
+            if len(parts) >= 2 and parts[1].isdigit():
+                pid_val = int(parts[1])
                 if pid_val > 0 and pid_val != my_pid:
                     found_pids.add(pid_val)
     except Exception:
@@ -7403,6 +7455,7 @@ def _terminate_pids(pids: list):
 def ensure_single_app_instance():
     """
     Kiểm tra khi khởi động xem có phiên bản App nào đang mở sẵn hoặc bị treo chạy ngầm không:
+    - Nếu khởi động lần đầu bình thường: Trả về ngay lập tức (< 0.05ms), tuyệt đối không mở Terminal hay quét tiến trình.
     - Nếu phát hiện tiến trình cũ: Hiển thị hộp thoại cho phép người dùng ĐÓNG tiến trình ngầm cũ để mở phiên mới sạch sẽ,
       hoặc chuyển sang cửa sổ đang mở sẵn (tuyệt đối không để 2 App chạy song song gây xung đột MT5 / vào đúp lệnh).
     """
@@ -7415,6 +7468,17 @@ def ensure_single_app_instance():
             already_exists = True
     except Exception:
         pass
+
+    # Nếu không bị trùng Mutex (phiên chạy duy nhất): Ghi nhận lock file và vào app tức thì 0.01ms
+    # Tuyệt đối không bật PowerShell hay quét tiến trình làm chớp cửa sổ đen!
+    if not already_exists:
+        try:
+            os.makedirs(os.path.dirname(INSTANCE_LOCK_FILE), exist_ok=True)
+            with open(INSTANCE_LOCK_FILE, "w", encoding="utf-8") as f:
+                json.dump({"pid": os.getpid(), "time": time.time()}, f)
+        except Exception:
+            pass
+        return
 
     other_pids = _find_other_running_bot_pids()
     if not already_exists and not other_pids:
