@@ -1652,6 +1652,12 @@ class KronosDesktopApp:
                 return
 
         if getattr(self, "_has_new_version", False) and getattr(self, "_latest_update_info", None):
+            try:
+                import importlib, sys
+                if "kronos_updater" in sys.modules:
+                    importlib.reload(sys.modules["kronos_updater"])
+            except Exception:
+                pass
             from kronos_updater import show_update_modal
             show_update_modal(self.root, self.updater, self._latest_update_info)
         else:
@@ -1662,6 +1668,12 @@ class KronosDesktopApp:
                     if res.get("has_update"):
                         self._latest_update_info = res
                         self._start_version_badge_blink(res.get("latest_version"))
+                        try:
+                            import importlib, sys
+                            if "kronos_updater" in sys.modules:
+                                importlib.reload(sys.modules["kronos_updater"])
+                        except Exception:
+                            pass
                         from kronos_updater import show_update_modal
                         show_update_modal(self.root, self.updater, res)
                     else:

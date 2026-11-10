@@ -325,8 +325,9 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
 
     dialog = tk.Toplevel(parent)
     dialog.title("Cập Nhật Ứng Dụng — Trading AI PRO")
-    dialog.geometry("560x420")
-    dialog.resizable(False, False)
+    dialog.geometry("560x460")
+    dialog.minsize(500, 380)
+    dialog.resizable(True, True)
     dialog.configure(bg="#0b0f19")
     dialog.transient(parent)
     dialog.grab_set()
@@ -338,11 +339,11 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
     px = parent.winfo_rootx()
     py = parent.winfo_rooty()
     dx = px + (pw - 560) // 2
-    dy = py + (ph - 420) // 2
+    dy = py + (ph - 460) // 2
     dialog.geometry(f"+{max(10, dx)}+{max(10, dy)}")
 
     # Header Card
-    header_frame = tk.Frame(dialog, bg="#111827", padx=20, pady=16)
+    header_frame = tk.Frame(dialog, bg="#111827", padx=20, pady=14)
     header_frame.pack(fill=tk.X)
 
     title_lbl = tk.Label(
@@ -363,8 +364,12 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
     )
     ver_compare_lbl.pack(anchor="w", pady=(4, 0))
 
+    # Footer Buttons (Pack ở đáy cửa sổ TRƯỚC để luôn luôn hiển thị đầy đủ, không bị đè)
+    footer_frame = tk.Frame(dialog, bg="#0b0f19", padx=20, pady=14)
+    footer_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
     # Thân cửa sổ: Danh sách tính năng mới (Changelog)
-    body_frame = tk.Frame(dialog, bg="#0b0f19", padx=20, pady=12)
+    body_frame = tk.Frame(dialog, bg="#0b0f19", padx=20, pady=8)
     body_frame.pack(fill=tk.BOTH, expand=True)
 
     desc_lbl = tk.Label(
@@ -387,6 +392,7 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
         wrap=tk.WORD,
         padx=10,
         pady=8,
+        height=8,
         relief="flat",
         highlightthickness=0,
     )
@@ -404,10 +410,6 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
     status_msg_lbl.pack(anchor="w", pady=(0, 2))
     progress_bar = ttk.Progressbar(progress_frame, orient="horizontal", mode="determinate", length=520)
     progress_bar.pack(fill=tk.X)
-
-    # Footer Buttons
-    footer_frame = tk.Frame(dialog, bg="#0b0f19", padx=20, pady=14)
-    footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
     def _start_update():
         if not patch_url:
@@ -481,4 +483,8 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
         command=dialog.destroy,
     )
     btn_later.pack(side=tk.RIGHT)
+
+    dialog.bind("<Return>", lambda e: _start_update())
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+    dialog.focus_set()
 
