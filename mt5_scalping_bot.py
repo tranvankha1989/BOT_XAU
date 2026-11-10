@@ -3233,6 +3233,7 @@ class KronosDesktopApp:
 
         self._bt_cancel_flag = False
         self._bt_worker_running = True
+        self._reset_backtest_view_for_run()
         self._update_bt_status("Đang khởi tạo môi trường kiểm thử...", 2)
 
         def _runner():
@@ -3462,7 +3463,9 @@ class KronosDesktopApp:
             while s1_idx < total_s1 - 1 and not self._bt_cancel_flag:
                 pct = 22 + int((s1_idx / total_s1) * 75)
                 if s1_idx % 800 == 0:
-                    self.root.after(0, lambda p=pct, i=s1_idx: self._update_bt_status(f"Đang mô phỏng giây {i:,}/{total_s1:,} ({len(trades)} lệnh)...", p))
+                    cur_pnl = sum(t["pnl"] for t in trades)
+                    pnl_tag = f" | Lãi: {cur_pnl:+,.2f} $" if trades else ""
+                    self.root.after(0, lambda p=pct, i=s1_idx, n=len(trades), pt=pnl_tag: self._update_bt_status(f"Đang mô phỏng giây {i:,}/{total_s1:,} ({n} lệnh{pt})...", p))
 
                 cur_sec = s1_bars[s1_idx][0]
                 cur_time = datetime.fromtimestamp(cur_sec, tz=VN_TZ)
@@ -3626,6 +3629,9 @@ class KronosDesktopApp:
                     }
                     trades.append(trade_record)
                     equity_curve.append((len(trades), round(equity, 2)))
+                    self._bt_trades_cache = trades
+                    self._bt_equity_points = equity_curve
+                    self.root.after(0, lambda tr=trade_record, trs=list(trades), eq=list(equity_curve), ic=init_cap: self._push_live_bt_trade(tr, trs, eq, ic))
                     s1_idx = max(s1_idx + 1, close_sec_idx)
                 else:
                     s1_idx += 1
@@ -3640,7 +3646,9 @@ class KronosDesktopApp:
             while bar_idx < total_bars - 1 and not self._bt_cancel_flag:
                 pct = 20 + int((bar_idx / total_bars) * 75)
                 if bar_idx % 40 == 0:
-                    self.root.after(0, lambda p=pct, b=bar_idx: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars} ({scalp_tf_str})...", p))
+                    cur_pnl = sum(t["pnl"] for t in trades)
+                    pnl_tag = f" | Lãi: {cur_pnl:+,.2f} $" if trades else ""
+                    self.root.after(0, lambda p=pct, b=bar_idx, n=len(trades), pt=pnl_tag: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars} ({scalp_tf_str} | {n} lệnh{pt})...", p))
 
                 window = rates[bar_idx-14:bar_idx]
                 closes = [r[4] for r in window]
@@ -3798,6 +3806,9 @@ class KronosDesktopApp:
                     }
                     trades.append(trade_record)
                     equity_curve.append((len(trades), round(equity, 2)))
+                    self._bt_trades_cache = trades
+                    self._bt_equity_points = equity_curve
+                    self.root.after(0, lambda tr=trade_record, trs=list(trades), eq=list(equity_curve), ic=init_cap: self._push_live_bt_trade(tr, trs, eq, ic))
                     bar_idx = max(bar_idx + 1, close_bar_idx)
                 else:
                     bar_idx += 1
@@ -3806,6 +3817,85 @@ class KronosDesktopApp:
         self._bt_equity_points = equity_curve
 
         self.root.after(0, lambda: self._render_backtest_results(trades, equity_curve, init_cap))
+
+    def _reset_backtest_view_for_run(self):
+        """Reset sạch bảng lệnh, đồ thị và thẻ chỉ số trước khi bắt đầu lượt kiểm thử mới."""
+        self._bt_trades_cache = []
+        self._bt_equity_points = []
+        if hasattr(self, "bt_tree") and self.bt_tree.winfo_exists():
+            for item in self.bt_tree.get_children():
+                self.bt_tree.delete(item)
+
+        if hasattr(self, "bt_kpi_total_lbl") and self.bt_kpi_total_lbl.winfo_exists():
+            self.bt_kpi_total_lbl.config(text="0 Lệnh", fg=GOLD_ACCENT)
+        if hasattr(self, "bt_kpi_winrate_lbl") and self.bt_kpi_winrate_lbl.winfo_exists():
+            self.bt_kpi_winrate_lbl.config(text="0.0%", fg=GREEN_UP)
+        if hasattr(self, "bt_kpi_pnl_lbl") and self.bt_kpi_pnl_lbl.winfo_exists():
+            self.bt_kpi_pnl_lbl.config(text="+0.00 $", fg=CYAN_LIVE)
+        if hasattr(self, "bt_kpi_pf_lbl") and self.bt_kpi_pf_lbl.winfo_exists():
+            self.bt_kpi_pf_lbl.config(text="0.00", fg=GOLD_ACCENT)
+        if hasattr(self, "bt_kpi_dd_lbl") and self.bt_kpi_dd_lbl.winfo_exists():
+            self.bt_kpi_dd_lbl.config(text="-0.00$", fg=RED_DOWN)
+        if hasattr(self, "bt_kpi_maxwin_lbl") and self.bt_kpi_maxwin_lbl.winfo_exists():
+            self.bt_kpi_maxwin_lbl.config(text="+0.00 $", fg=TEXT_MAIN)
+
+        self._draw_equity_curve([])
+
+    def _push_live_bt_trade(self, t: dict, current_trades: list, current_equity: list, init_cap: float):
+        """Cập nhật tức thì lệnh vừa khớp, chỉ số tài chính Scorecards và đồ thị vốn lên giao diện để người dùng theo dõi trực quan theo thời gian thực."""
+        # 1. Chèn lệnh vừa khớp vào hàng đầu tiên của Treeview (newest at top)
+        if hasattr(self, "bt_tree") and self.bt_tree.winfo_exists():
+            pnl_val = t["pnl"]
+            tag = "tag_win" if pnl_val > 0.05 else ("tag_loss" if pnl_val < -0.05 else "tag_be")
+            row_vals = (
+                t["ticket"], t["in_time"], t["out_time"], t["duration"],
+                t["type"], t["lot"], t["in_price"], t["out_price"],
+                f"{pnl_val:+.2f} $", t["reason"]
+            )
+            self.bt_tree.insert("", 0, values=row_vals, tags=(tag,))
+
+        # 2. Tính toán lại nhanh các chỉ số Scorecards
+        total = len(current_trades)
+        wins = sum(1 for tr in current_trades if tr["pnl"] > 0.05)
+        losses = sum(1 for tr in current_trades if tr["pnl"] < -0.05)
+        bes = total - wins - losses
+        win_rate = (wins / max(total, 1)) * 100.0 if total > 0 else 0.0
+
+        total_pnl = sum(tr["pnl"] for tr in current_trades)
+        win_sum = sum(tr["pnl"] for tr in current_trades if tr["pnl"] > 0)
+        loss_sum = abs(sum(tr["pnl"] for tr in current_trades if tr["pnl"] < 0))
+        pf = (win_sum / max(loss_sum, 0.01)) if loss_sum > 0 else (99.0 if win_sum > 0 else 0.0)
+        avg_trade = (total_pnl / max(total, 1)) if total > 0 else 0.0
+
+        # Tính Drawdown tức thời
+        peak = init_cap
+        max_dd = 0.0
+        max_dd_pct = 0.0
+        for _, eq in current_equity:
+            if eq > peak:
+                peak = eq
+            dd = peak - eq
+            if dd > max_dd:
+                max_dd = dd
+                max_dd_pct = (dd / peak) * 100.0 if peak > 0 else 0.0
+
+        # Cập nhật ngay 6 thẻ Scorecards trên giao diện
+        if hasattr(self, "bt_kpi_total_lbl") and self.bt_kpi_total_lbl.winfo_exists():
+            self.bt_kpi_total_lbl.config(text=f"{total} Lệnh ({wins}W - {losses}L - {bes}BE)")
+        if hasattr(self, "bt_kpi_winrate_lbl") and self.bt_kpi_winrate_lbl.winfo_exists():
+            self.bt_kpi_winrate_lbl.config(text=f"{win_rate:.1f}%", fg=GREEN_UP if win_rate >= 55.0 else (GOLD_ACCENT if win_rate >= 45.0 else RED_DOWN))
+        if hasattr(self, "bt_kpi_pnl_lbl") and self.bt_kpi_pnl_lbl.winfo_exists():
+            self.bt_kpi_pnl_lbl.config(text=f"{total_pnl:+,.2f} $", fg=GREEN_UP if total_pnl >= 0 else RED_DOWN)
+        if hasattr(self, "bt_kpi_pf_lbl") and self.bt_kpi_pf_lbl.winfo_exists():
+            self.bt_kpi_pf_lbl.config(text=f"{pf:.2f}", fg=GREEN_UP if pf >= 1.5 else (GOLD_ACCENT if pf >= 1.0 else RED_DOWN))
+        if hasattr(self, "bt_kpi_dd_lbl") and self.bt_kpi_dd_lbl.winfo_exists():
+            self.bt_kpi_dd_lbl.config(text=f"-{max_dd:.2f}$ ({max_dd_pct:.1f}%)")
+        if hasattr(self, "bt_kpi_maxwin_lbl") and self.bt_kpi_maxwin_lbl.winfo_exists():
+            self.bt_kpi_maxwin_lbl.config(text=f"{avg_trade:+,.2f} $/lệnh", fg=GREEN_UP if avg_trade >= 0 else RED_DOWN)
+
+        # 3. Vẽ lại đồ thị đường cong tăng trưởng vốn (Equity Curve) trực tiếp theo thời gian thực
+        if len(current_equity) >= 2:
+            self._draw_equity_curve(current_equity)
 
     def _render_backtest_results(self, trades: list, equity_curve: list, init_cap: float):
         """Xuất toàn bộ kết quả lên Treeview bảng lệnh, 6 thẻ Scorecard và biểu đồ Canvas."""
