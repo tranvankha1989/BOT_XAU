@@ -2914,6 +2914,13 @@ class KronosDesktopApp:
         ).pack(side=tk.RIGHT, padx=2)
 
         tk.Button(
+            ctrl_frame, text="🗑️ Xóa Lệnh", bg="#3a2026", fg="#ff7b88",
+            activebackground="#ff4b60", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
+            command=self._clear_backtest_data
+        ).pack(side=tk.RIGHT, padx=2)
+
+        tk.Button(
             ctrl_frame, text="💾 Áp Dụng Thông Số Này", bg="#163832", fg="#00e676",
             activebackground="#00e676", activeforeground="#000000",
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=1, cursor="hand2",
@@ -3053,6 +3060,33 @@ class KronosDesktopApp:
 
         self.save_user_settings()
         self.show_toast(f"✓ Đã áp dụng thông số vào Tab [{target_pk}] & Lưu thành công!", is_error=False, duration_ms=3000)
+
+    def _clear_backtest_data(self):
+        """Xóa trắng toàn bộ dữ liệu bảng lệnh, biểu đồ và chỉ số KPI để chuẩn bị chạy lượt test mới."""
+        self._bt_cancel_flag = True
+        self._bt_trades_cache = []
+        self._bt_equity_points = []
+
+        if hasattr(self, "bt_tree") and self.bt_tree.winfo_exists():
+            for item in self.bt_tree.get_children():
+                self.bt_tree.delete(item)
+
+        if hasattr(self, "bt_kpi_total_lbl") and self.bt_kpi_total_lbl.winfo_exists():
+            self.bt_kpi_total_lbl.config(text="0 Lệnh", fg=GOLD_ACCENT)
+        if hasattr(self, "bt_kpi_winrate_lbl") and self.bt_kpi_winrate_lbl.winfo_exists():
+            self.bt_kpi_winrate_lbl.config(text="0.0%", fg=GREEN_UP)
+        if hasattr(self, "bt_kpi_pnl_lbl") and self.bt_kpi_pnl_lbl.winfo_exists():
+            self.bt_kpi_pnl_lbl.config(text="+0.00 $", fg=CYAN_LIVE)
+        if hasattr(self, "bt_kpi_pf_lbl") and self.bt_kpi_pf_lbl.winfo_exists():
+            self.bt_kpi_pf_lbl.config(text="0.00", fg=GOLD_ACCENT)
+        if hasattr(self, "bt_kpi_dd_lbl") and self.bt_kpi_dd_lbl.winfo_exists():
+            self.bt_kpi_dd_lbl.config(text="-0.00$", fg=RED_DOWN)
+        if hasattr(self, "bt_kpi_maxwin_lbl") and self.bt_kpi_maxwin_lbl.winfo_exists():
+            self.bt_kpi_maxwin_lbl.config(text="+0.00 $", fg=TEXT_MAIN)
+
+        self._draw_equity_curve([])
+        self._update_bt_status("Đã xóa sạch dữ liệu. Sẵn sàng cho lượt kiểm thử mới.", 0)
+        self.show_toast("Đã xóa trắng dữ liệu Backtest!", is_error=False, duration_ms=2000)
 
     def _update_bt_status(self, msg: str, pct: int):
         """Cập nhật thanh tiến độ và thông điệp trạng thái."""
