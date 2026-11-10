@@ -896,6 +896,8 @@ class KronosDesktopApp:
         self.bt_capital_var = tk.StringVar(value="1000")
         self.bt_lot_var = tk.StringVar(value="0.02")
         self.bt_pass_var = tk.StringVar()
+        self.bt_data_precision_var = tk.StringVar(value="⚡ Nến Tick 1s (S1)")
+        self.bt_use_ai_var = tk.BooleanVar(value=True)
 
         self._cleanup_workspace_junk()
         self._init_file_logger()
@@ -2906,6 +2908,24 @@ class KronosDesktopApp:
         tk.Label(ctrl_frame, text="Lot:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
         tk.Entry(ctrl_frame, textvariable=self.bt_lot_var, width=5, bg="#1c2433", fg="#ffffff", font=("Consolas", 8), relief=tk.FLAT).pack(side=tk.LEFT, ipady=1, padx=(0, 6))
 
+        # Chế độ dữ liệu Tick 1s vs Nến chuẩn
+        tk.Label(ctrl_frame, text="Dữ liệu:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
+        self.bt_prec_combo = ttk.Combobox(
+            ctrl_frame, textvariable=self.bt_data_precision_var,
+            values=["⚡ Nến Tick 1s (S1)", "📊 Nến Thường (M1/M5)"],
+            width=15, state="readonly"
+        )
+        self.bt_prec_combo.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Checkbutton Bật Não AI Kronos
+        self.bt_ai_chk = tk.Checkbutton(
+            ctrl_frame, text="🧠 Não AI Kronos", variable=self.bt_use_ai_var,
+            bg="#131822", fg=GOLD_ACCENT, selectcolor="#0b0e14",
+            activebackground="#131822", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 8, "bold"), cursor="hand2"
+        )
+        self.bt_ai_chk.pack(side=tk.LEFT, padx=(0, 4))
+
         # Nhóm nút bấm tác vụ
         tk.Button(
             ctrl_frame, text="🔒 Khóa", bg="#232d3f", fg=TEXT_MUTED,
@@ -3125,12 +3145,90 @@ class KronosDesktopApp:
             self._update_bt_status("Đang hủy tiến trình kiểm thử...", 0)
             self.show_toast("Đang dừng Backtest...", is_error=False, duration_ms=2000)
 
+    def _fetch_or_load_ticks(self, sym: str, start_dt: datetime, end_dt: datetime):
+        """
+        Tải dòng tick thực tế từ MetaTrader 5 với đệm múi giờ và lưu cache nhị phân trong APPDATA/Kronos_MT5_Bot/tick_cache
+        """
+        tick_cache_dir = os.path.join(SETTINGS_DIR, "tick_cache")
+        try:
+            os.makedirs(tick_cache_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        start_ts = int(start_dt.timestamp())
+        end_ts = int(end_dt.timestamp())
+        cache_file = os.path.join(tick_cache_dir, f"ticks_{sym}_{start_ts}_{end_ts}.npz")
+
+        if os.path.exists(cache_file):
+            try:
+                data = np.load(cache_file)
+                return data["ticks"]
+            except Exception:
+                pass
+
+        if not MT5_AVAILABLE:
+            return None
+
+        with self._mt5_lock:
+            query_from = datetime.fromtimestamp(start_ts - 7200)
+            query_to = datetime.fromtimestamp(end_ts + 7200)
+            ticks = mt5.copy_ticks_range(sym, query_from, query_to, mt5.COPY_TICKS_ALL)
+
+        if ticks is not None and len(ticks) > 0:
+            try:
+                np.savez_compressed(cache_file, ticks=ticks)
+            except Exception:
+                pass
+
+        return ticks
+
+    def _resample_ticks_to_s1(self, ticks):
+        """
+        Chuyển đổi mảng tick MT5 thành các thanh nến 1 giây (S1) siêu tốc bằng NumPy:
+        Mỗi giây trả về tuple (time_sec, o_b, h_b, l_b, c_b, h_a, l_a, c_a, spread)
+        """
+        if ticks is None or len(ticks) == 0:
+            return []
+
+        times = ticks["time"]
+        bids = ticks["bid"]
+        asks = ticks["ask"]
+
+        unique_times, idx_start = np.unique(times, return_index=True)
+        idx_end = np.append(idx_start[1:], len(ticks))
+
+        opens_bid = bids[idx_start]
+        highs_bid = np.maximum.reduceat(bids, idx_start)
+        lows_bid = np.minimum.reduceat(bids, idx_start)
+        closes_bid = bids[idx_end - 1]
+
+        highs_ask = np.maximum.reduceat(asks, idx_start)
+        lows_ask = np.minimum.reduceat(asks, idx_start)
+        closes_ask = asks[idx_end - 1]
+
+        s1_bars = []
+        for i in range(len(unique_times)):
+            t_sec = int(unique_times[i])
+            o_b = float(opens_bid[i])
+            h_b = float(highs_bid[i])
+            l_b = float(lows_bid[i])
+            c_b = float(closes_bid[i])
+            h_a = float(highs_ask[i])
+            l_a = float(lows_ask[i])
+            c_a = float(closes_ask[i])
+            spread = max(c_a - c_b, 0.0)
+            s1_bars.append((t_sec, o_b, h_b, l_b, c_b, h_a, l_a, c_a, spread))
+
+        return s1_bars
+
     def _run_backtest_simulation(self):
-        """Động cơ mô phỏng giao dịch quá khứ chuẩn xác theo nến lịch sử và đệm giật giá của sàn Exness."""
+        """Động cơ mô phỏng giao dịch quá khứ chuẩn xác theo nến lịch sử hoặc nến Tick 1s và đệm giật giá Exness."""
         sym = self.bt_sym_var.get().strip()
         tf_str = self.bt_tf_var.get().strip()
         start_s = self.bt_start_var.get().strip()
         end_s = self.bt_end_var.get().strip()
+        is_s1_mode = "S1" in self.bt_data_precision_var.get()
+        use_ai = bool(self.bt_use_ai_var.get())
 
         try:
             init_cap = float(self.bt_capital_var.get() or 1000)
@@ -3154,31 +3252,6 @@ class KronosDesktopApp:
         start_dt = datetime(start_d.year, start_d.month, start_d.day, 0, 0, 0, tzinfo=VN_TZ)
         end_dt = datetime(end_d.year, end_d.month, end_d.day, 23, 59, 59, tzinfo=VN_TZ)
 
-        tf_map = {
-            "M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5, "M15": mt5.TIMEFRAME_M15,
-            "M30": mt5.TIMEFRAME_M30, "H1": mt5.TIMEFRAME_H1
-        } if MT5_AVAILABLE else {}
-
-        mt5_tf = tf_map.get(tf_str, getattr(mt5, "TIMEFRAME_M5", 5))
-
-        self.root.after(0, lambda: self._update_bt_status("Đang tải dữ liệu nến từ MetaTrader 5...", 5))
-
-        rates = None
-        if MT5_AVAILABLE:
-            with self._mt5_lock:
-                # Đệm 7200s (2 giờ) để khớp múi giờ Server MT5
-                query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - 7200)
-                query_to = datetime.fromtimestamp(int(end_dt.timestamp()) + 7200)
-                rates = mt5.copy_rates_range(sym, mt5_tf, query_from, query_to)
-
-        if rates is None or len(rates) < 30:
-            self.root.after(0, lambda: self.show_toast(f"Không lấy được nến lịch sử của {sym} trong khoảng ngày này!", is_error=True))
-            self.root.after(0, lambda: self._update_bt_status("Kiểm thử thất bại: Không đủ nến lịch sử từ MT5.", 0))
-            return
-
-        total_bars = len(rates)
-        self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến. Đang mô phỏng giao dịch theo thuật toán...", 15))
-
         is_btc = "BTC" in sym.upper()
         pk = "BTCUSD" if is_btc else "XAUUSD"
         cfg = self._get_profile_cfg(pk)
@@ -3194,169 +3267,400 @@ class KronosDesktopApp:
         auto_trail = bool(cfg.get("auto_trail", def_cfg.get("auto_trail", True)))
         trail_dist_r = float(cfg.get("trail_dist_r", def_cfg.get("trail_dist_r", "0.35")))
         max_hold_mins = int(float(cfg.get("max_hold_mins", def_cfg.get("max_hold_mins", "0"))))
+        min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", "75")))
+        min_move = float(cfg.get("min_move", def_cfg.get("min_move", "60.0" if is_btc else "1.2")))
+        model_choice = str(cfg.get("model", def_cfg.get("model", "AI-base (102.3M - Mạnh nhất)")))
+        contract_size = 1.0 if is_btc else 100.0
+
+        tf_map = {
+            "M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5, "M15": mt5.TIMEFRAME_M15,
+            "M30": mt5.TIMEFRAME_M30, "H1": mt5.TIMEFRAME_H1
+        } if MT5_AVAILABLE else {}
+        mt5_tf = tf_map.get(tf_str, getattr(mt5, "TIMEFRAME_M5", 5))
+
+        self.root.after(0, lambda: self._update_bt_status("Đang tải dữ liệu lịch sử từ MetaTrader 5...", 5))
+
+        rates = None
+        if MT5_AVAILABLE:
+            with self._mt5_lock:
+                query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - (3600 * 48))
+                query_to = datetime.fromtimestamp(int(end_dt.timestamp()) + 7200)
+                rates = mt5.copy_rates_range(sym, mt5_tf, query_from, query_to)
+
+        if rates is None or len(rates) < 30:
+            self.root.after(0, lambda: self.show_toast(f"Không lấy được nến lịch sử của {sym} trong khoảng ngày này!", is_error=True))
+            self.root.after(0, lambda: self._update_bt_status("Kiểm thử thất bại: Không đủ nến lịch sử từ MT5.", 0))
+            return
+
+        # Nạp AI Predictor nếu người dùng bật Não AI Kronos
+        predictor = None
+        if use_ai:
+            self.root.after(0, lambda: self._update_bt_status(f"Đang chuẩn bị Não AI Kronos ({model_choice})...", 10))
+            try:
+                predictor = self.get_local_predictor(model_choice)
+            except Exception as pe:
+                self.root.after(0, lambda: self.log(f"⚠️ [BACKTEST] Không nạp được model {model_choice} ({str(pe)}), chuyển sang thuật toán kỹ thuật."))
+                use_ai = False
+
+        s1_bars = []
+        if is_s1_mode:
+            self.root.after(0, lambda: self._update_bt_status(f"Đang tải dòng Tick thực tế của {sym} từ máy chủ Exness...", 12))
+            ticks = self._fetch_or_load_ticks(sym, start_dt, end_dt)
+            if ticks is not None and len(ticks) > 50:
+                self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {len(ticks):,} ticks. Đang ghép thành nến 1 giây (S1)...", 18))
+                s1_bars = self._resample_ticks_to_s1(ticks)
+            else:
+                self.root.after(0, lambda: self.log(f"ℹ️ [BACKTEST] Không lấy được đủ ticks cho {sym}, tự động fallback về nến MT5."))
+                is_s1_mode = False
 
         trades = []
         equity = init_cap
         equity_curve = [(0, equity)]
-        bar_idx = 20
-        contract_size = 1.0 if is_btc else 100.0
 
-        while bar_idx < total_bars - 1 and not self._bt_cancel_flag:
-            pct = 15 + int((bar_idx / total_bars) * 80)
-            if bar_idx % 40 == 0:
-                self.root.after(0, lambda p=pct, b=bar_idx: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars}...", p))
+        # ── KỊCH BẢN 1: MÔ PHỎNG NẾN TICK 1 GIÂY (S1 PRECISION) ───────────────
+        if is_s1_mode and len(s1_bars) > 50:
+            total_s1 = len(s1_bars)
+            self.root.after(0, lambda: self._update_bt_status(f"Đang mô phỏng {total_s1:,} nến 1 giây (giật nến thực tế)...", 22))
+            interval_sec = 60 if tf_str == "M1" else 300
+            s1_idx = 0
 
-            window = rates[bar_idx-14:bar_idx]
-            closes = [r[4] for r in window]
-            highs = [r[2] for r in window]
-            lows = [r[3] for r in window]
+            while s1_idx < total_s1 - 1 and not self._bt_cancel_flag:
+                pct = 22 + int((s1_idx / total_s1) * 75)
+                if s1_idx % 800 == 0:
+                    self.root.after(0, lambda p=pct, i=s1_idx: self._update_bt_status(f"Đang mô phỏng giây {i:,}/{total_s1:,} ({len(trades)} lệnh)...", p))
 
-            # Tính ATR 14
-            trs = []
-            for j in range(1, len(window)):
-                h = highs[j]
-                l = lows[j]
-                pc = closes[j-1]
-                tr = max(h - l, abs(h - pc), abs(l - pc))
-                trs.append(tr)
-            atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
+                cur_sec = s1_bars[s1_idx][0]
+                cur_time = datetime.fromtimestamp(cur_sec, tz=VN_TZ)
 
-            cur_bar = rates[bar_idx]
-            cur_time = datetime.fromtimestamp(int(cur_bar[0]), tz=VN_TZ)
-            cur_close = float(cur_bar[4])
+                # Kiểm tra tín hiệu vào lệnh tại các thời điểm đóng nến
+                is_candle_event = (cur_sec % interval_sec < 2)
+                signal = None
+                atr = 20.0 if is_btc else 1.5
 
-            # Logic bắt tín hiệu mô phỏng đột phá Swing & Momentum
-            ma_short = np.mean(closes[-3:])
-            ma_long = np.mean(closes[-10:])
-            swing_high = max(highs[-10:-1])
-            swing_low = min(lows[-10:-1])
+                if is_candle_event:
+                    past_rates = [r for r in rates if r[0] <= cur_sec]
+                    if len(past_rates) >= 20:
+                        trs = [max(past_rates[j][2] - past_rates[j][3], abs(past_rates[j][2] - past_rates[j-1][4]), abs(past_rates[j][3] - past_rates[j-1][4])) for j in range(max(1, len(past_rates)-14), len(past_rates))]
+                        atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
 
-            signal = None
-            if cur_close > swing_high and ma_short > ma_long:
-                signal = "BUY"
-            elif cur_close < swing_low and ma_short < ma_long:
-                signal = "SELL"
+                        if use_ai and predictor is not None and len(past_rates) >= 50:
+                            sub = past_rates[-60:]
+                            df_ai = pd.DataFrame(sub, columns=["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"])
+                            df_ai["timestamps"] = pd.to_datetime(df_ai["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
+                            x_ts = df_ai["timestamps"].copy().reset_index(drop=True)
+                            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+                            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+                            try:
+                                scenarios = self._fast_predict_scenarios(predictor, df_ai, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                                last_c = float(df_ai["close"].iloc[-1])
+                                bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
+                                bear_cnt = len(scenarios) - bull_cnt
+                                b_pct = (bull_cnt / len(scenarios)) * 100.0
+                                s_pct = (bear_cnt / len(scenarios)) * 100.0
+                                exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                                if b_pct >= min_consensus and exp_m >= min_move:
+                                    signal = "BUY"
+                                elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                                    signal = "SELL"
+                            except Exception:
+                                pass
 
-            if signal is not None:
-                raw_sl_dist = atr * sl_atr
-                total_sl_dist = raw_sl_dist + sl_buffer
-                if max_sl_price > 0.0:
-                    total_sl_dist = min(total_sl_dist, max_sl_price)
-                total_sl_dist = max(total_sl_dist, 8.0 if is_btc else 0.5)
+                        if signal is None and not use_ai:
+                            # Thuật toán kỹ thuật dự phòng
+                            recent = past_rates[-14:]
+                            closes = [r[4] for r in recent]
+                            highs = [r[2] for r in recent]
+                            lows = [r[3] for r in recent]
+                            ma_short = np.mean(closes[-3:])
+                            ma_long = np.mean(closes[-10:])
+                            swing_high = max(highs[-10:-1])
+                            swing_low = min(lows[-10:-1])
+                            c_close = closes[-1]
+                            if c_close > swing_high and ma_short > ma_long:
+                                signal = "BUY"
+                            elif c_close < swing_low and ma_short < ma_long:
+                                signal = "SELL"
 
-                entry_price = cur_close
-                if signal == "BUY":
-                    sl_price = entry_price - total_sl_dist
-                    tp_price = entry_price + (total_sl_dist * (rr if rr > 0 else 1.5))
-                else:
-                    sl_price = entry_price + total_sl_dist
-                    tp_price = entry_price - (total_sl_dist * (rr if rr > 0 else 1.5))
+                if signal is not None:
+                    raw_sl_dist = atr * sl_atr
+                    total_sl_dist = raw_sl_dist + sl_buffer
+                    if max_sl_price > 0.0:
+                        total_sl_dist = min(total_sl_dist, max_sl_price)
+                    total_sl_dist = max(total_sl_dist, 8.0 if is_btc else 0.5)
 
-                one_r_dist = total_sl_dist
-                be_moved = False
-                out_price = entry_price
-                exit_reason = "Đóng cuối phiên"
-                close_bar_idx = bar_idx + 1
-
-                # Quét từng nến tương lai để theo dõi diễn biến lệnh
-                for f_idx in range(bar_idx + 1, total_bars):
-                    close_bar_idx = f_idx
-                    f_bar = rates[f_idx]
-                    f_high = float(f_bar[2])
-                    f_low = float(f_bar[3])
-                    f_close = float(f_bar[4])
-                    f_time = datetime.fromtimestamp(int(f_bar[0]), tz=VN_TZ)
-
-                    hold_mins = (f_time - cur_time).total_seconds() / 60.0
+                    one_r_dist = total_sl_dist
+                    be_moved = False
 
                     if signal == "BUY":
-                        fav_dist = f_high - entry_price
-                        # 1. Kích hoạt dời BE
-                        if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                            sl_price = max(sl_price, entry_price + be_plus_price)
-                            be_moved = True
-
-                        # 2. Bám giá Trailing Stop
-                        if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                            trail_sl = f_high - (one_r_dist * trail_dist_r)
-                            sl_price = max(sl_price, trail_sl)
-
-                        # 3. Giữ lệnh tối đa (Time-Stop)
-                        if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                            out_price = f_close
-                            exit_reason = "Time-Stop (Hết giờ)"
-                            break
-
-                        # 4. Kiểm tra chạm SL hoặc TP
-                        if f_low <= sl_price:
-                            out_price = sl_price
-                            exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
-                            break
-                        elif f_high >= tp_price:
-                            out_price = tp_price
-                            exit_reason = "Chốt lãi (TP)"
-                            break
+                        entry_price = s1_bars[s1_idx][5] # Giá Ask
+                        sl_price = entry_price - total_sl_dist
+                        tp_price = entry_price + (total_sl_dist * (rr if rr > 0 else 1.5))
                     else:
-                        fav_dist = entry_price - f_low
-                        # 1. Kích hoạt dời BE
-                        if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                            sl_price = min(sl_price, entry_price - be_plus_price)
-                            be_moved = True
+                        entry_price = s1_bars[s1_idx][4] # Giá Bid
+                        sl_price = entry_price + total_sl_dist
+                        tp_price = entry_price - (total_sl_dist * (rr if rr > 0 else 1.5))
 
-                        # 2. Bám giá Trailing Stop
-                        if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                            trail_sl = f_low + (one_r_dist * trail_dist_r)
-                            sl_price = min(sl_price, trail_sl)
+                    out_price = entry_price
+                    exit_reason = "Đóng cuối phiên"
+                    close_sec_idx = s1_idx + 1
 
-                        # 3. Giữ lệnh tối đa (Time-Stop)
-                        if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                            out_price = f_close
-                            exit_reason = "Time-Stop (Hết giờ)"
-                            break
+                    for f_idx in range(s1_idx + 1, total_s1):
+                        close_sec_idx = f_idx
+                        fb = s1_bars[f_idx]
+                        fb_time = datetime.fromtimestamp(fb[0], tz=VN_TZ)
+                        hold_mins = (fb_time - cur_time).total_seconds() / 60.0
 
-                        # 4. Kiểm tra chạm SL hoặc TP
-                        if f_high >= sl_price:
-                            out_price = sl_price
-                            exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
-                            break
-                        elif f_low <= tp_price:
-                            out_price = tp_price
-                            exit_reason = "Chốt lãi (TP)"
-                            break
+                        if signal == "BUY":
+                            f_high_bid = fb[2]
+                            f_low_bid = fb[3]
+                            f_close_bid = fb[4]
+                            fav_dist = f_high_bid - entry_price
 
-                # Tính PnL trừ Spread sàn Exness
-                spread_pts = 6.4 if is_btc else 0.20
-                if signal == "BUY":
-                    pnl_raw = (out_price - entry_price) * lot * contract_size
+                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
+                                sl_price = max(sl_price, entry_price + be_plus_price)
+                                be_moved = True
+
+                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
+                                sl_price = max(sl_price, f_high_bid - (one_r_dist * trail_dist_r))
+
+                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
+                                out_price = f_close_bid
+                                exit_reason = "Time-Stop (Hết giờ)"
+                                break
+
+                            if f_low_bid <= sl_price:
+                                out_price = sl_price
+                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
+                                break
+                            elif f_high_bid >= tp_price:
+                                out_price = tp_price
+                                exit_reason = "Chốt lãi (TP)"
+                                break
+                        else:
+                            f_high_ask = fb[5]
+                            f_low_ask = fb[6]
+                            f_close_ask = fb[7]
+                            fav_dist = entry_price - f_low_ask
+
+                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
+                                sl_price = min(sl_price, entry_price - be_plus_price)
+                                be_moved = True
+
+                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
+                                sl_price = min(sl_price, f_low_ask + (one_r_dist * trail_dist_r))
+
+                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
+                                out_price = f_close_ask
+                                exit_reason = "Time-Stop (Hết giờ)"
+                                break
+
+                            if f_high_ask >= sl_price:
+                                out_price = sl_price
+                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
+                                break
+                            elif f_low_ask <= tp_price:
+                                out_price = tp_price
+                                exit_reason = "Chốt lãi (TP)"
+                                break
+
+                    if signal == "BUY":
+                        net_pnl = round((out_price - entry_price) * lot * contract_size, 2)
+                    else:
+                        net_pnl = round((entry_price - out_price) * lot * contract_size, 2)
+
+                    equity += net_pnl
+                    out_time = datetime.fromtimestamp(s1_bars[close_sec_idx][0], tz=VN_TZ)
+                    dur_secs = max(1, int((out_time - cur_time).total_seconds()))
+                    dur_str = self._format_duration(dur_secs)
+
+                    trade_record = {
+                        "ticket": f"#{len(trades)+1:04d}",
+                        "in_time": cur_time.strftime("%d/%m %H:%M:%S"),
+                        "out_time": out_time.strftime("%d/%m %H:%M:%S"),
+                        "duration": dur_str,
+                        "type": signal,
+                        "lot": f"{lot:.2f}",
+                        "in_price": f"{entry_price:.2f}",
+                        "out_price": f"{out_price:.2f}",
+                        "pnl": net_pnl,
+                        "reason": exit_reason
+                    }
+                    trades.append(trade_record)
+                    equity_curve.append((len(trades), round(equity, 2)))
+                    s1_idx = max(s1_idx + 1, close_sec_idx)
                 else:
-                    pnl_raw = (entry_price - out_price) * lot * contract_size
+                    s1_idx += 1
 
-                spread_cost = spread_pts * lot * contract_size
-                net_pnl = round(pnl_raw - spread_cost, 2)
-                equity += net_pnl
+        # ── KỊCH BẢN 2: MÔ PHỎNG NẾN TIÊU CHUẨN (M1 / M5) ─────────────────────
+        else:
+            total_bars = len(rates)
+            self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến. Đang mô phỏng giao dịch...", 20))
+            bar_idx = 20
 
-                out_time = datetime.fromtimestamp(int(rates[close_bar_idx][0]), tz=VN_TZ)
-                dur_secs = max(60, int((out_time - cur_time).total_seconds()))
-                dur_str = self._format_duration(dur_secs)
+            while bar_idx < total_bars - 1 and not self._bt_cancel_flag:
+                pct = 20 + int((bar_idx / total_bars) * 75)
+                if bar_idx % 40 == 0:
+                    self.root.after(0, lambda p=pct, b=bar_idx: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars}...", p))
 
-                trade_record = {
-                    "ticket": f"#{len(trades)+1:04d}",
-                    "in_time": cur_time.strftime("%d/%m %H:%M"),
-                    "out_time": out_time.strftime("%d/%m %H:%M"),
-                    "duration": dur_str,
-                    "type": signal,
-                    "lot": f"{lot:.2f}",
-                    "in_price": f"{entry_price:.2f}",
-                    "out_price": f"{out_price:.2f}",
-                    "pnl": net_pnl,
-                    "reason": exit_reason
-                }
-                trades.append(trade_record)
-                equity_curve.append((len(trades), round(equity, 2)))
+                window = rates[bar_idx-14:bar_idx]
+                closes = [r[4] for r in window]
+                highs = [r[2] for r in window]
+                lows = [r[3] for r in window]
 
-                bar_idx = max(bar_idx + 1, close_bar_idx)
-            else:
-                bar_idx += 1
+                trs = []
+                for j in range(1, len(window)):
+                    h = highs[j]
+                    l = lows[j]
+                    pc = closes[j-1]
+                    tr = max(h - l, abs(h - pc), abs(l - pc))
+                    trs.append(tr)
+                atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
+
+                cur_bar = rates[bar_idx]
+                cur_time = datetime.fromtimestamp(int(cur_bar[0]), tz=VN_TZ)
+                cur_close = float(cur_bar[4])
+
+                signal = None
+                if use_ai and predictor is not None and bar_idx >= 50:
+                    sub = rates[max(0, bar_idx-60):bar_idx]
+                    df_ai = pd.DataFrame(sub, columns=["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"])
+                    df_ai["timestamps"] = pd.to_datetime(df_ai["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
+                    x_ts = df_ai["timestamps"].copy().reset_index(drop=True)
+                    dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+                    y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+                    try:
+                        scenarios = self._fast_predict_scenarios(predictor, df_ai, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                        last_c = float(df_ai["close"].iloc[-1])
+                        bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
+                        bear_cnt = len(scenarios) - bull_cnt
+                        b_pct = (bull_cnt / len(scenarios)) * 100.0
+                        s_pct = (bear_cnt / len(scenarios)) * 100.0
+                        exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                        if b_pct >= min_consensus and exp_m >= min_move:
+                            signal = "BUY"
+                        elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                            signal = "SELL"
+                    except Exception:
+                        pass
+
+                if signal is None and not use_ai:
+                    ma_short = np.mean(closes[-3:])
+                    ma_long = np.mean(closes[-10:])
+                    swing_high = max(highs[-10:-1])
+                    swing_low = min(lows[-10:-1])
+                    if cur_close > swing_high and ma_short > ma_long:
+                        signal = "BUY"
+                    elif cur_close < swing_low and ma_short < ma_long:
+                        signal = "SELL"
+
+                if signal is not None:
+                    raw_sl_dist = atr * sl_atr
+                    total_sl_dist = raw_sl_dist + sl_buffer
+                    if max_sl_price > 0.0:
+                        total_sl_dist = min(total_sl_dist, max_sl_price)
+                    total_sl_dist = max(total_sl_dist, 8.0 if is_btc else 0.5)
+
+                    entry_price = cur_close
+                    if signal == "BUY":
+                        sl_price = entry_price - total_sl_dist
+                        tp_price = entry_price + (total_sl_dist * (rr if rr > 0 else 1.5))
+                    else:
+                        sl_price = entry_price + total_sl_dist
+                        tp_price = entry_price - (total_sl_dist * (rr if rr > 0 else 1.5))
+
+                    one_r_dist = total_sl_dist
+                    be_moved = False
+                    out_price = entry_price
+                    exit_reason = "Đóng cuối phiên"
+                    close_bar_idx = bar_idx + 1
+
+                    for f_idx in range(bar_idx + 1, total_bars):
+                        close_bar_idx = f_idx
+                        f_bar = rates[f_idx]
+                        f_high = float(f_bar[2])
+                        f_low = float(f_bar[3])
+                        f_close = float(f_bar[4])
+                        f_time = datetime.fromtimestamp(int(f_bar[0]), tz=VN_TZ)
+                        hold_mins = (f_time - cur_time).total_seconds() / 60.0
+
+                        if signal == "BUY":
+                            fav_dist = f_high - entry_price
+                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
+                                sl_price = max(sl_price, entry_price + be_plus_price)
+                                be_moved = True
+
+                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
+                                trail_sl = f_high - (one_r_dist * trail_dist_r)
+                                sl_price = max(sl_price, trail_sl)
+
+                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
+                                out_price = f_close
+                                exit_reason = "Time-Stop (Hết giờ)"
+                                break
+
+                            if f_low <= sl_price:
+                                out_price = sl_price
+                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
+                                break
+                            elif f_high >= tp_price:
+                                out_price = tp_price
+                                exit_reason = "Chốt lãi (TP)"
+                                break
+                        else:
+                            fav_dist = entry_price - f_low
+                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
+                                sl_price = min(sl_price, entry_price - be_plus_price)
+                                be_moved = True
+
+                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
+                                trail_sl = f_low + (one_r_dist * trail_dist_r)
+                                sl_price = min(sl_price, trail_sl)
+
+                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
+                                out_price = f_close
+                                exit_reason = "Time-Stop (Hết giờ)"
+                                break
+
+                            if f_high >= sl_price:
+                                out_price = sl_price
+                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
+                                break
+                            elif f_low <= tp_price:
+                                out_price = tp_price
+                                exit_reason = "Chốt lãi (TP)"
+                                break
+
+                    spread_pts = 6.4 if is_btc else 0.20
+                    if signal == "BUY":
+                        pnl_raw = (out_price - entry_price) * lot * contract_size
+                    else:
+                        pnl_raw = (entry_price - out_price) * lot * contract_size
+
+                    spread_cost = spread_pts * lot * contract_size
+                    net_pnl = round(pnl_raw - spread_cost, 2)
+                    equity += net_pnl
+
+                    out_time = datetime.fromtimestamp(int(rates[close_bar_idx][0]), tz=VN_TZ)
+                    dur_secs = max(60, int((out_time - cur_time).total_seconds()))
+                    dur_str = self._format_duration(dur_secs)
+
+                    trade_record = {
+                        "ticket": f"#{len(trades)+1:04d}",
+                        "in_time": cur_time.strftime("%d/%m %H:%M"),
+                        "out_time": out_time.strftime("%d/%m %H:%M"),
+                        "duration": dur_str,
+                        "type": signal,
+                        "lot": f"{lot:.2f}",
+                        "in_price": f"{entry_price:.2f}",
+                        "out_price": f"{out_price:.2f}",
+                        "pnl": net_pnl,
+                        "reason": exit_reason
+                    }
+                    trades.append(trade_record)
+                    equity_curve.append((len(trades), round(equity, 2)))
+                    bar_idx = max(bar_idx + 1, close_bar_idx)
+                else:
+                    bar_idx += 1
 
         self._bt_trades_cache = trades
         self._bt_equity_points = equity_curve
