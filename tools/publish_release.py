@@ -70,6 +70,17 @@ try:
             rel_id = rel_info["id"]
             upload_url = rel_info["upload_url"].split("{")[0]
             print(f"[OK] Đã tìm thấy Release {tag} (ID: {rel_id})")
+            # Cập nhật release body với mô tả mới nhất
+            patch_rel_url = f"https://api.github.com/repos/{owner}/{repo}/releases/{rel_id}"
+            patch_data = {"body": desc, "name": title}
+            req_patch = urllib.request.Request(
+                patch_rel_url,
+                data=json.dumps(patch_data).encode("utf-8"),
+                headers=headers,
+                method="PATCH"
+            )
+            with urllib.request.urlopen(req_patch) as resp_p:
+                print(f"[OK] Đã cập nhật ghi chú phiên bản mới cho Release {tag}")
 except Exception:
     pass
 
