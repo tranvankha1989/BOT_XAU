@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.1"
+            self.app_version = "1.1.2"
             self.updater = None
 
         self.local_cache = {}
@@ -881,7 +881,7 @@ class KronosDesktopApp:
         self._telegram_worker_token = 0
         self._telegram_sent_deal_tickets = set()
         self._telegram_queue = queue.Queue()
-        self._telegram_deals_seeded = False
+        self._app_session_start_ts = int(time.time())
 
         self._cleanup_workspace_junk()
         self._init_file_logger()
@@ -6005,20 +6005,23 @@ class KronosDesktopApp:
         # Kiểm tra và gửi thông báo Telegram cho các lệnh vừa đóng
         if getattr(self, "telegram_enabled_var", None) and self.telegram_enabled_var.get():
             if getattr(self, "telegram_notify_close_var", None) and self.telegram_notify_close_var.get():
-                if not getattr(self, "_telegram_deals_seeded", False):
-                    for d in closed_deals:
-                        if d.get("ticket"):
-                            self._telegram_sent_deal_tickets.add(d["ticket"])
-                    self._telegram_deals_seeded = True
-                else:
-                    for cd in closed_deals:
-                        t_id = cd.get("ticket")
-                        if t_id and t_id not in self._telegram_sent_deal_tickets:
-                            self._telegram_sent_deal_tickets.add(t_id)
-                            try:
-                                self._telegram_notify_order_closed(cd)
-                            except Exception:
-                                pass
+                app_start_ts = getattr(self, "_app_session_start_ts", int(time.time()))
+                for cd in closed_deals:
+                    t_id = cd.get("ticket")
+                    if not t_id:
+                        continue
+                    # Bỏ qua nếu lệnh này đã từng được quét/gửi trước đó
+                    if t_id in self._telegram_sent_deal_tickets:
+                        continue
+                    self._telegram_sent_deal_tickets.add(t_id)
+
+                    # CHỈ gửi thông báo nếu lệnh đóng TỪ THỜI ĐIỂM BẬT APP TRỞ ĐI
+                    close_ts = cd.get("close_ts", 0)
+                    if close_ts >= app_start_ts:
+                        try:
+                            self._telegram_notify_order_closed(cd)
+                        except Exception:
+                            pass
 
         closed_profit_sum = 0.0
         for cd in closed_deals:

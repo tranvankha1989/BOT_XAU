@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.1:\n- Nâng cấp toàn diện sang bàn phím nút bấm trực tiếp (Inline Buttons) trên Telegram: Bấm nút là gạt công tắc AUTO (RUNNING/PAUSED) trên MT5 ngay lập tức, 0 gửi tin nhắn rác vào đoạn chat.\n- Tự động hủy liên kết webhook bên thứ 3 (deleteWebhook) chống xung đột và triệt tiêu tin nhắn tiếng Nga ngoài ý muốn.\n- Tách biệt điều khiển và thống kê giữa Vàng (XAUUSD) và Bitcoin (BTCUSD): Hiển thị trạng thái riêng từng nút bấm và báo cáo chi tiết từng cặp.\n- Thông báo vào/đóng lệnh hiển thị rõ tên cặp Vàng/Bitcoin kèm bàn phím điều khiển nhanh."
+  "description": "Phiên bản v1.1.2:\n- Lọc thông báo Telegram thông minh: Chỉ gửi thông báo đối với các lệnh mở/đóng phát sinh từ thời điểm bật app trở đi, tuyệt đối không gửi lại hàng loạt lệnh cũ đã đóng trước đó.\n- Khắc phục triệt để hiện tượng cả 2 tab (XAUUSD và BTCUSD) nạp lại lịch sử lệnh cũ khi mở ứng dụng."
 }
