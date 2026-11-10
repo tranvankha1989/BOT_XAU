@@ -1,6 +1,6 @@
 {
-  "version": "1.1.2",
+  "version": "1.1.3",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.2:\n- Lọc thông báo Telegram thông minh: Chỉ gửi thông báo đối với các lệnh mở/đóng phát sinh từ thời điểm bật app trở đi, tuyệt đối không gửi lại hàng loạt lệnh cũ đã đóng trước đó.\n- Khắc phục triệt để hiện tượng cả 2 tab (XAUUSD và BTCUSD) nạp lại lịch sử lệnh cũ khi mở ứng dụng."
+  "description": "Phiên bản v1.1.3:\n- Tích hợp Module Kiểm Thử Chiến Lược Tick-Level (Tab 4: Backtest) với khóa bảo vệ quyền Quản trị viên (Admin Mode - Mật khẩu: 'admin').\n- Hỗ trợ chọn linh hoạt khoảng ngày bắt đầu và kết thúc với cửa sổ lịch pop-up chuẩn giao diện dark gold (DatePickerDialog).\n- Mô phỏng toàn diện logic dời SL về hòa vốn (BE+), bám giá Trailing Stop, cắt lệnh hết giờ (Time-Stop) và khấu trừ spread sàn Exness.\n- Biểu đồ tăng trưởng tài sản (Equity Curve Canvas) và bộ 6 thẻ tài chính (Win Rate %, Profit Factor, Max Drawdown, Lãi ròng).\n- Cho phép lấy cấu hình trực tiếp từ Menu bot và áp dụng ngược lại cấu hình tối ưu chỉ với 1 click."
 }
