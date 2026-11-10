@@ -87,24 +87,35 @@ class AppUpdater:
         self.patch_file_name = None
         self.is_checking = False
         self.has_update = False
+        self._cached_github_token = None
 
     def _get_github_token(self) -> str:
-        """Lấy token GitHub từ biến môi trường hoặc Windows Git Credential Manager."""
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        """Lấy token GitHub từ biến môi trường hoặc Windows Git Credential Manager hoàn toàn ngầm không bật console."""
+        if hasattr(self, "_cached_github_token") and self._cached_github_token is not None:
+            return self._cached_github_token
+
+        token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
         if token:
-            return token.strip()
+            self._cached_github_token = token
+            return token
+
         try:
+            CREATE_NO_WINDOW = 0x08000000
             res = subprocess.run(
                 ["git", "credential", "fill"],
                 input="protocol=https\nhost=github.com\n\n",
-                text=True, capture_output=True, timeout=2.0
+                text=True, capture_output=True, timeout=2.0,
+                creationflags=CREATE_NO_WINDOW
             )
-            for line in res.stdout.splitlines():
+            for line in (res.stdout or "").splitlines():
                 if line.startswith("password="):
-                    return line.split("=", 1)[1].strip()
+                    token = line.split("=", 1)[1].strip()
+                    break
         except Exception:
             pass
-        return ""
+
+        self._cached_github_token = token
+        return token
 
     def check_update_sync(self, timeout: float = 6.0) -> dict:
         """
@@ -297,14 +308,18 @@ class AppUpdater:
             return False, f"Lỗi trong quá trình cập nhật: {e}"
 
     def restart_application(self):
-        """Khởi động lại ứng dụng với phiên bản mới và giải phóng tiến trình cũ."""
+        """Khởi động lại ứng dụng với phiên bản mới hoàn toàn chạy ngầm không bật console."""
         try:
+            CREATE_NO_WINDOW = 0x08000000
             if getattr(sys, "frozen", False):
                 cmd = [sys.executable] + sys.argv[1:]
             else:
+                py_dir = Path(sys.executable).parent
+                pyw = py_dir / "pythonw.exe"
+                exe = str(pyw) if pyw.exists() else sys.executable
                 main_script = APP_ROOT / "mt5_scalping_bot.py"
-                cmd = [sys.executable, str(main_script)] + sys.argv[1:]
-            subprocess.Popen(cmd, cwd=str(APP_ROOT))
+                cmd = [exe, "-B", str(main_script)] + sys.argv[1:]
+            subprocess.Popen(cmd, cwd=str(APP_ROOT), creationflags=CREATE_NO_WINDOW)
             time.sleep(0.5)
             os._exit(0)
         except Exception as e:

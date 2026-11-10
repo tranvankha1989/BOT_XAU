@@ -149,7 +149,7 @@ if (Test-Path $pyMplBackends) {
 Write-Host ""
 Write-Host "[5/5] Nen toan bo thanh file Setup duy nhat bang Inno Setup (LZMA2-Ultra)..." -ForegroundColor Yellow
 $issPath = Join-Path $Root "tools\app_installer.iss"
-& "$isccPath" "$issPath"
+& "$isccPath" "/DMyAppVersion=$version" "$issPath"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler gap loi!" }
 
 # 6. Don dep thu muc staging tam

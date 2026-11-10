@@ -1,9 +1,11 @@
 ; Inno Setup Script - Trading AI PRO by Kha Tran Design
-; Phien ban: 1.0.3
+; Phien ban: 1.0.6
 ; Bo cai dat Setup thuong mai chuyen nghiep - Ma hoa nhi phan 100%
 
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.6"
+#endif
 #define MyAppName "Trading AI PRO by Kha Tran Design"
-#define MyAppVersion "1.0.3"
 #define MyAppPublisher "Kha Tran Design"
 #define MyAppExeName "Trading AI PRO.exe"
 
@@ -50,6 +52,9 @@ Source: "..\core_engine.bin"; DestDir: "{app}"; Flags: ignoreversion
 ; 3. Thong tin phien ban va Icon
 Source: "..\version.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "license-key-icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "license-key-icon.ico"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "telegram_qr.png"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "telegram_icon.png"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "run_debug.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 ; 4. Trinh cai dat Microsoft Visual C++ 2015-2022 x64 (Tu dong cai dat neu may ao chua co)
