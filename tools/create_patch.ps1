@@ -64,14 +64,27 @@ foreach ($f in $filesToInclude) {
     }
 }
 
-# Sao chep icon ca voi moi vao patch de cap nhat shortcut
+# Sao chep icon ca voi moi va tai nguyen Telegram vao patch
 $iconIco = Join-Path $Root "tools\license-key-icon.ico"
+$toolsDest = Join-Path $stagingDir "tools"
+if (-not (Test-Path $toolsDest)) { New-Item -ItemType Directory -Path $toolsDest -Force | Out-Null }
+
 if (Test-Path $iconIco) {
     Copy-Item -Path $iconIco -Destination (Join-Path $stagingDir "license-key-icon.ico") -Force
-    $toolsDest = Join-Path $stagingDir "tools"
-    if (-not (Test-Path $toolsDest)) { New-Item -ItemType Directory -Path $toolsDest -Force | Out-Null }
     Copy-Item -Path $iconIco -Destination (Join-Path $toolsDest "license-key-icon.ico") -Force
     Write-Host "  + Da them: license-key-icon.ico (Icon ca voi tron trong suot)" -ForegroundColor DarkGray
+}
+
+$tgQr = Join-Path $Root "tools\telegram_qr.png"
+if (Test-Path $tgQr) {
+    Copy-Item -Path $tgQr -Destination (Join-Path $toolsDest "telegram_qr.png") -Force
+    Write-Host "  + Da them: tools\telegram_qr.png" -ForegroundColor DarkGray
+}
+
+$tgIcon = Join-Path $Root "tools\telegram_icon.png"
+if (Test-Path $tgIcon) {
+    Copy-Item -Path $tgIcon -Destination (Join-Path $toolsDest "telegram_icon.png") -Force
+    Write-Host "  + Da them: tools\telegram_icon.png" -ForegroundColor DarkGray
 }
 
 # Bo sung them thu vien Tkinter vao _internal/tkinter de sua loi missing ttk tren may ao/may cu v1.0.2

@@ -2,5 +2,5 @@
   "version": "1.0.4",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.0.4:\n- Bổ sung ghi chú thông số tương tác (Hover Note) dạng Excel/Google Sheets khi rê chuột vào dấu [?].\n- Phân loại riêng trạng thái thị trường đóng phiên (Session closed - 10017) tránh hiểu nhầm lỗi ứng dụng.\n- Cập nhật biểu tượng cá voi tròn viền trong suốt và tối ưu độ mượt giao diện."
+  "description": "Phiên bản v1.0.4:\n- Thêm nút liên hệ Quản trị viên và mã QR Telegram (@TAPTRADEXAU) trong cửa sổ Kích hoạt bản quyền.\n- Bổ sung ghi chú thông số tương tác (Hover Note) dạng Excel/Google Sheets khi rê chuột vào dấu [?].\n- Cập nhật cửa sổ thông báo cập nhật tự động với các nút thao tác rõ ràng.\n- Phân loại trạng thái thị trường đóng phiên (Session closed - 10017) tránh hiểu nhầm lỗi ứng dụng.\n- Cập nhật biểu tượng cá voi tròn viền trong suốt và tối ưu độ mượt giao diện."
 }
