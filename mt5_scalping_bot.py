@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.0"
+            self.app_version = "1.1.1"
             self.updater = None
 
         self.local_cache = {}
@@ -3461,15 +3461,32 @@ class KronosDesktopApp:
         except Exception as e:
             return None
 
-    def _get_telegram_keyboard(self) -> dict:
-        """Tạo bàn phím điều khiển từ xa hiển thị ghim cố định ở đáy ứng dụng Telegram trên điện thoại."""
+    def _get_telegram_inline_keyboard(self) -> dict:
+        """
+        Tạo bàn phím nút bấm trực tiếp gắn dưới tin nhắn (Inline Keyboard).
+        Người dùng chạm vào nút là tác động trực tiếp lên công tắc phần mềm mà KHÔNG gửi tin nhắn rác vào hộp chat.
+        Tự động hiển thị trạng thái ĐANG CHẠY / TẠM DỪNG riêng biệt của Vàng (XAU) và Bitcoin (BTC).
+        """
+        xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
+        btc_running = bool(self.profile_ctx.get("BTCUSD", {}).get("auto_loop_running", False))
+
+        xau_text = "🟡 VÀNG: ⏸ DỪNG" if xau_running else "🟡 VÀNG: ▶️ BẬT"
+        btc_text = "🟠 BTC: ⏸ DỪNG" if btc_running else "🟠 BTC: ▶️ BẬT"
+
         return {
-            "keyboard": [
-                [{"text": "📊 Xem Thống Kê"}],
-                [{"text": "⏸️ Tạm Dừng Bot"}, {"text": "▶️ Bật Bot Chạy"}]
-            ],
-            "resize_keyboard": True,
-            "persistent": True
+            "inline_keyboard": [
+                [
+                    {"text": "📊 Xem Báo Cáo & Lệnh Đang Mở", "callback_data": "tg_stats"}
+                ],
+                [
+                    {"text": xau_text, "callback_data": "tg_toggle_xau"},
+                    {"text": btc_text, "callback_data": "tg_toggle_btc"}
+                ],
+                [
+                    {"text": "⏸️ Dừng Cả 2", "callback_data": "tg_stop_all"},
+                    {"text": "▶️ Bật Cả 2", "callback_data": "tg_start_all"}
+                ]
+            ]
         }
 
     def _telegram_dispatcher_loop(self):
@@ -3491,13 +3508,14 @@ class KronosDesktopApp:
                 payload = {
                     "chat_id": chat_id,
                     "text": msg_text,
-                    "reply_markup": reply_markup or self._get_telegram_keyboard(),
+                    "reply_markup": reply_markup or self._get_telegram_inline_keyboard(),
                 }
                 self._telegram_api_call(token, "sendMessage", payload, timeout=12)
 
     def _telegram_polling_worker(self):
         """Luồng ngầm lắng nghe lệnh điều khiển từ xa từ điện thoại người dùng qua Telegram (Long-Polling)."""
         offset = None
+        cleaned_webhook_token = None
         while not getattr(self, "_app_closing", False):
             try:
                 en_var = getattr(self, "telegram_enabled_var", None)
@@ -3511,6 +3529,15 @@ class KronosDesktopApp:
                     time.sleep(3)
                     continue
 
+                # Khi khởi động hoặc đổi token: Luôn xóa bỏ triệt để webhook cũ/bên thứ 3
+                # để giải phóng xung đột getUpdates và chặn đứng các bot lạ tự ý phản hồi
+                if cleaned_webhook_token != token:
+                    del_res = self._telegram_api_call(token, "deleteWebhook", {"drop_pending_updates": True}, timeout=15)
+                    if del_res and del_res.get("ok"):
+                        self.log("[Telegram] Đã gỡ bỏ webhook cũ và kích hoạt chế độ lắng nghe độc quyền cho Trading AI PRO.")
+                    cleaned_webhook_token = token
+                    offset = None
+
                 payload = {"timeout": 15}
                 if offset is not None:
                     payload["offset"] = offset
@@ -3523,6 +3550,18 @@ class KronosDesktopApp:
                 updates = res.get("result", [])
                 for upd in updates:
                     offset = max(offset or 0, upd.get("update_id", 0) + 1)
+
+                    # 1. Bắt tương tác từ nút bấm trực tiếp (Inline Keyboard Callback Query)
+                    cq = upd.get("callback_query")
+                    if cq and isinstance(cq, dict):
+                        cq_sender = str(cq.get("from", {}).get("id", ""))
+                        if not cq_sender and cq.get("message"):
+                            cq_sender = str(cq.get("message", {}).get("chat", {}).get("id", ""))
+                        if cq_sender == chat_id:
+                            self._handle_telegram_callback(cq, chat_id, token)
+                        continue
+
+                    # 2. Bắt tin nhắn văn bản (Lệnh gõ tay /start, /stats, /menu...)
                     msg = upd.get("message") or upd.get("channel_post")
                     if not msg or not isinstance(msg, dict):
                         continue
@@ -3539,23 +3578,123 @@ class KronosDesktopApp:
             except Exception:
                 time.sleep(3)
 
+    def _handle_telegram_callback(self, cq: dict, chat_id: str, token: str):
+        """Xử lý sự kiện khi người dùng bấm trực tiếp vào nút Inline Keyboard trên điện thoại."""
+        cq_id = str(cq.get("id", ""))
+        data = str(cq.get("data", "")).strip()
+        msg_obj = cq.get("message") or {}
+        msg_id = msg_obj.get("message_id")
+
+        if data == "tg_stats":
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id,
+                "text": "📊 Đang cập nhật báo cáo...",
+                "show_alert": False
+            })
+            report = self._generate_telegram_stats_report()
+            self._telegram_api_call(token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": report,
+                "reply_markup": self._get_telegram_inline_keyboard()
+            })
+
+        elif data == "tg_toggle_xau":
+            xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
+            if xau_running:
+                self.root.after(0, lambda: self.stop_auto_scan("XAUUSD"))
+                toast = "⏸️ Đã DỪNG Tự Động Trade Vàng (XAUUSD)!"
+            else:
+                self.root.after(0, lambda: self.start_auto_scan("XAUUSD"))
+                toast = "🟢 Đã BẬT Tự Động Trade Vàng (XAUUSD)!"
+
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id,
+                "text": toast,
+                "show_alert": False
+            })
+            if msg_id:
+                time.sleep(0.2)
+                self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "reply_markup": self._get_telegram_inline_keyboard()
+                })
+
+        elif data == "tg_toggle_btc":
+            btc_running = bool(self.profile_ctx.get("BTCUSD", {}).get("auto_loop_running", False))
+            if btc_running:
+                self.root.after(0, lambda: self.stop_auto_scan("BTCUSD"))
+                toast = "⏸️ Đã DỪNG Tự Động Trade Bitcoin (BTCUSD)!"
+            else:
+                self.root.after(0, lambda: self.start_auto_scan("BTCUSD"))
+                toast = "🟢 Đã BẬT Tự Động Trade Bitcoin (BTCUSD)!"
+
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id,
+                "text": toast,
+                "show_alert": False
+            })
+            if msg_id:
+                time.sleep(0.2)
+                self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "reply_markup": self._get_telegram_inline_keyboard()
+                })
+
+        elif data == "tg_stop_all":
+            self.root.after(0, lambda: self.stop_auto_scan("XAUUSD"))
+            self.root.after(0, lambda: self.stop_auto_scan("BTCUSD"))
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id,
+                "text": "⏸️ ĐÃ DỪNG TẤT CẢ (Vàng & Bitcoin)!",
+                "show_alert": False
+            })
+            if msg_id:
+                time.sleep(0.2)
+                self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "reply_markup": self._get_telegram_inline_keyboard()
+                })
+
+        elif data == "tg_start_all":
+            self.root.after(0, lambda: self.start_auto_scan("XAUUSD"))
+            self.root.after(0, lambda: self.start_auto_scan("BTCUSD"))
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id,
+                "text": "🟢 ĐÃ BẬT TẤT CẢ (Vàng & Bitcoin)!",
+                "show_alert": False
+            })
+            if msg_id:
+                time.sleep(0.2)
+                self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "reply_markup": self._get_telegram_inline_keyboard()
+                })
+
     def _handle_telegram_command(self, text: str, chat_id: str, token: str):
-        """Xử lý lệnh từ điện thoại gửi về: Xem thống kê, Tạm dừng, Bật chạy."""
+        """Xử lý lệnh từ điện thoại gửi về qua tin nhắn văn bản."""
         norm_txt = text.lower().strip()
         now_str = datetime.now(tz=VN_TZ).strftime("%H:%M:%S")
 
         if norm_txt in ("/start", "/help", "/menu"):
             welcome = (
-                "[TRADING AI PRO] BẢNG ĐIỀU KHIỂN TỪ XA\n"
-                "Bot MT5 đang kết nối trực tuyến. Bạn có thể điều khiển trực tiếp qua các nút bấm bên dưới:\n"
-                "• 📊 Xem Thống Kê: Báo cáo số dư, trạng thái và các lệnh đang mở.\n"
-                "• ⏸️ Tạm Dừng Bot: Dừng vào lệnh mới.\n"
-                "• ▶️ Bật Bot Chạy: Kích hoạt quét AI và vào lệnh tự động."
+                "🎛️ [TRADING AI PRO] BẢNG ĐIỀU KHIỂN TỪ XA\n"
+                "────────────────────────\n"
+                "Hệ thống đang kết nối trực tuyến. Bạn có thể điều khiển trực tiếp trạng thái chạy của bot hoặc xem thống kê qua các nút bấm bên dưới:"
             )
+            # Gỡ bỏ phím Reply Keyboard cũ ở đáy màn hình
+            self._telegram_api_call(token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": "🔄 Đã kích hoạt chế độ phím bấm trực tiếp (Inline Buttons).",
+                "reply_markup": {"remove_keyboard": True}
+            })
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": welcome,
-                "reply_markup": self._get_telegram_keyboard()
+                "reply_markup": self._get_telegram_inline_keyboard()
             })
 
         elif "thống kê" in norm_txt or norm_txt in ("/stats", "/status"):
@@ -3563,43 +3702,44 @@ class KronosDesktopApp:
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": report,
-                "reply_markup": self._get_telegram_keyboard()
+                "reply_markup": self._get_telegram_inline_keyboard()
             })
 
         elif "tạm dừng" in norm_txt or norm_txt in ("/pause", "/stop"):
-            self.root.after(0, self.stop_auto_scan)
+            self.root.after(0, lambda: self.stop_auto_scan("XAUUSD"))
+            self.root.after(0, lambda: self.stop_auto_scan("BTCUSD"))
             resp = (
-                "[TRADING AI PRO] ĐÃ TẠM DỪNG BOT\n"
-                f"Thời gian: {now_str}\n"
-                "Trạng thái: ĐÃ TẮT TỰ ĐỘNG VÀO LỆNH (PAUSED).\n"
+                "⏸️ [TRADING AI PRO] ĐÃ TẠM DỪNG TẤT CẢ BOT\n"
+                f"⏰ Thời gian: {now_str}\n"
+                "Trạng thái: ĐÃ TẮT TỰ ĐỘNG VÀO LỆNH (Vàng & Bitcoin).\n"
                 "Các lệnh đang mở vẫn được bảo vệ SL/TP và Trailing Stop bình thường."
             )
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": resp,
-                "reply_markup": self._get_telegram_keyboard()
+                "reply_markup": self._get_telegram_inline_keyboard()
             })
 
         elif "bật bot" in norm_txt or "chạy" in norm_txt or norm_txt in ("/resume", "/run", "/start_bot"):
-            self.root.after(0, self.start_auto_scan)
+            self.root.after(0, lambda: self.start_auto_scan("XAUUSD"))
+            self.root.after(0, lambda: self.start_auto_scan("BTCUSD"))
             resp = (
-                "[TRADING AI PRO] ĐÃ BẬT BOT HOẠT ĐỘNG\n"
-                f"Thời gian: {now_str}\n"
-                "Trạng thái: ĐANG CHẠY (RUNNING).\n"
+                "🟢 [TRADING AI PRO] ĐÃ BẬT TẤT CẢ BOT HOẠT ĐỘNG\n"
+                f"⏰ Thời gian: {now_str}\n"
+                "Trạng thái: ĐANG CHẠY (RUNNING - Vàng & Bitcoin).\n"
                 "Bot đã sẵn sàng quét tín hiệu AI và vào lệnh tự động."
             )
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": resp,
-                "reply_markup": self._get_telegram_keyboard()
+                "reply_markup": self._get_telegram_inline_keyboard()
             })
 
     def _generate_telegram_stats_report(self) -> str:
-        """Tạo chuỗi báo cáo nhanh tình trạng tài khoản và các vị thế đang mở gửi về điện thoại."""
+        """Tạo chuỗi báo cáo chi tiết tài khoản và tách biệt thống kê cho từng cặp Vàng (XAU) và Bitcoin (BTC)."""
         now_dt = datetime.now(tz=VN_TZ)
         time_str = now_dt.strftime("%H:%M:%S")
         date_str = now_dt.strftime("%d/%m/%Y")
-        pk = self.active_profile_key
 
         acc_id = "Chưa kết nối"
         balance = 0.0
@@ -3617,40 +3757,59 @@ class KronosDesktopApp:
             except Exception:
                 pass
 
-        run_status = "ĐANG CHẠY (RUNNING)" if self.auto_loop_running else "TẠM DỪNG (PAUSED)"
+        xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
+        btc_running = bool(self.profile_ctx.get("BTCUSD", {}).get("auto_loop_running", False))
+        xau_st = "🟢 ĐANG CHẠY" if xau_running else "⏸️ TẠM DỪNG"
+        btc_st = "🟢 ĐANG CHẠY" if btc_running else "⏸️ TẠM DỪNG"
 
-        cfg = self._get_profile_cfg(pk)
-        sym = str(cfg.get("symbol", "")).strip()
-        realized_pnl, _, _ = self._get_today_deals_stats(symbol=sym)
+        cfg_xau = self._get_profile_cfg("XAUUSD")
+        sym_xau = str(cfg_xau.get("symbol", "XAUUSD")).strip()
+        pnl_xau, _, _ = self._get_today_deals_stats(symbol=sym_xau)
+        deals_xau = self._get_today_closed_deals(symbol=sym_xau)
+        w_xau = sum(1 for d in deals_xau if d.get("category") == "WIN")
+        l_xau = sum(1 for d in deals_xau if d.get("category") == "LOSS")
+        be_xau = sum(1 for d in deals_xau if d.get("category") == "BE")
+        tot_xau = len(deals_xau)
+        wr_xau = (w_xau / max(tot_xau, 1)) * 100.0 if tot_xau > 0 else 0.0
+
+        cfg_btc = self._get_profile_cfg("BTCUSD")
+        sym_btc = str(cfg_btc.get("symbol", "BTCUSD")).strip()
+        pnl_btc, _, _ = self._get_today_deals_stats(symbol=sym_btc)
+        deals_btc = self._get_today_closed_deals(symbol=sym_btc)
+        w_btc = sum(1 for d in deals_btc if d.get("category") == "WIN")
+        l_btc = sum(1 for d in deals_btc if d.get("category") == "LOSS")
+        be_btc = sum(1 for d in deals_btc if d.get("category") == "BE")
+        tot_btc = len(deals_btc)
+        wr_btc = (w_btc / max(tot_btc, 1)) * 100.0 if tot_btc > 0 else 0.0
+
         floating_profit = sum(float(p.profit) for p in open_positions) if open_positions else 0.0
-        total_daily = realized_pnl + floating_profit
-
-        closed_deals = self._get_today_closed_deals(symbol=sym)
-        win_cnt = sum(1 for d in closed_deals if d.get("category") == "WIN")
-        loss_cnt = sum(1 for d in closed_deals if d.get("category") == "LOSS")
-        be_cnt = sum(1 for d in closed_deals if d.get("category") == "BE")
-        total_closed = len(closed_deals)
-        win_rate = (win_cnt / max(total_closed, 1)) * 100.0 if total_closed > 0 else 0.0
+        total_pnl = pnl_xau + pnl_btc + floating_profit
 
         lines = [
-            "[TRADING AI PRO] BÁO CÁO NHANH",
-            f"Thời gian: {time_str} ({date_str})",
-            "----------------------------------------",
-            f"Tài khoản MT5: {acc_id}",
-            f"Trạng thái Bot: {run_status}",
-            f"Số dư (Balance): {balance:.2f} USD",
-            f"Vốn (Equity): {equity:.2f} USD",
+            "📊 [TRADING AI PRO] BÁO CÁO TOÀN DIỆN",
+            f"⏰ Thời gian: {time_str} ({date_str})",
+            "────────────────────────",
+            f"💳 Tài khoản MT5: {acc_id}",
+            f"💰 Số dư (Balance): {balance:,.2f} USD",
+            f"📈 Vốn (Equity): {equity:,.2f} USD",
+            f"💵 Tổng Lãi/Lỗ hôm nay: {total_pnl:+,.2f} USD",
+            "────────────────────────",
+            f"🟡 VÀNG ({sym_xau}): {xau_st}",
+            f"   • Lãi ngày: {pnl_xau:+,.2f} USD",
+            f"   • Win Rate: {wr_xau:.1f}% ({w_xau}W - {l_xau}L - {be_xau}BE)",
             "",
-            f"Lãi/Lỗ hôm nay: {total_daily:+.2f} USD",
-            f"Win Rate: {win_rate:.1f}% ({win_cnt} Win - {loss_cnt} Loss - {be_cnt} BE)",
-            f"Lệnh đang mở: {len(open_positions)} lệnh ({floating_profit:+.2f} USD)",
+            f"🟠 BITCOIN ({sym_btc}): {btc_st}",
+            f"   • Lãi ngày: {pnl_btc:+,.2f} USD",
+            f"   • Win Rate: {wr_btc:.1f}% ({w_btc}W - {l_btc}L - {be_btc}BE)",
+            "────────────────────────",
+            f"⚡ Lệnh đang mở: {len(open_positions)} vị thế (Lãi thả nổi: {floating_profit:+,.2f}$)",
         ]
         if open_positions:
-            for p in open_positions[:5]:
+            for p in open_positions[:6]:
                 t_str = "BUY" if p.type == mt5.POSITION_TYPE_BUY else "SELL"
-                lines.append(f"  • #{p.ticket}: {t_str} {p.symbol} {p.volume:.2f} (Lãi: {p.profit:+.2f}$)")
-            if len(open_positions) > 5:
-                lines.append(f"  ... và còn {len(open_positions) - 5} lệnh khác.")
+                lines.append(f"   • #{p.ticket}: {t_str} {p.symbol} {p.volume:.2f}L (P/L: {p.profit:+,.2f}$)")
+            if len(open_positions) > 6:
+                lines.append(f"   ... và còn {len(open_positions) - 6} lệnh khác.")
 
         return "\n".join(lines)
 
@@ -3670,20 +3829,23 @@ class KronosDesktopApp:
         ai_consensus = ctx.get("cached_consensus", self.consensus_var.get())
         ai_conf = ctx.get("cached_confidence", "")
         conf_str = f" (Tin cậy: {ai_conf}%)" if ai_conf else ""
-        tf_str = self.tf_var.get().strip()
+        cfg = self._get_profile_cfg(profile_key)
+        tf_str = str(cfg.get("tf", "M5")).strip()
+
+        sym_tag = "🟡 VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else f"🟠 {symbol}"
 
         msg = (
-            "[TRADING AI PRO] VÀO LỆNH MỚI\n"
-            f"Lệnh: #{ticket} ({action})\n"
-            f"Cặp tiền: {symbol}\n"
-            f"Khối lượng: {lot:.2f} Lot\n"
-            f"Giá vào (Entry): {price:.2f}\n"
-            f"Cắt lỗ (SL): {sl:.2f} (-{sl_dist:.2f} giá)\n"
-            f"Chốt lời (TP): {tp:.2f} (+{tp_dist:.2f} giá | {rr_val}R)\n"
-            f"Tín hiệu AI: {tf_str} Đồng thuận {ai_consensus}%{conf_str}\n"
-            f"Thời gian: {now_str}"
+            f"🚀 [TRADING AI PRO - {sym_tag}] VÀO LỆNH MỚI\n"
+            "────────────────────────\n"
+            f"• Lệnh: #{ticket} ({action})\n"
+            f"• Cặp: {symbol} | Khối lượng: {lot:.2f} Lot\n"
+            f"• Giá vào (Entry): {price:.2f}\n"
+            f"• Cắt lỗ (SL): {sl:.2f} (-{sl_dist:.2f} giá)\n"
+            f"• Chốt lời (TP): {tp:.2f} (+{tp_dist:.2f} giá | {rr_val}R)\n"
+            f"• Tín hiệu AI: {tf_str} Đồng thuận {ai_consensus}%{conf_str}\n"
+            f"• Thời gian: {now_str}"
         )
-        self._telegram_queue.put((msg, self._get_telegram_keyboard()))
+        self._telegram_queue.put((msg, self._get_telegram_inline_keyboard()))
 
     def _telegram_notify_order_closed(self, cd: dict):
         """Gửi thông báo đóng lệnh (chốt lời / cắt lỗ / hòa vốn) lên Telegram."""
@@ -3696,10 +3858,13 @@ class KronosDesktopApp:
         category = cd.get("category", "")
         if category == "WIN":
             cat_tag = "CHỐT LÃI"
+            icon = "🎯"
         elif category == "BE":
             cat_tag = "HÒA VỐN"
+            icon = "🛡️"
         else:
             cat_tag = "CẮT LỖ"
+            icon = "🛑"
 
         net_pnl = float(cd.get("net_pnl", 0.0))
         r_str = cd.get("r_ratio_str", "")
@@ -3708,23 +3873,27 @@ class KronosDesktopApp:
         status_str = cd.get("status", "Đã đóng")
         open_p = cd.get("open_price", 0.0)
         close_p = cd.get("close_price", 0.0)
+        symbol = str(cd.get("symbol", "")).strip()
 
         cfg = self._get_profile_cfg(self.active_profile_key)
         sym = str(cfg.get("symbol", "")).strip()
         realized_pnl, _, _ = self._get_today_deals_stats(symbol=sym)
 
+        sym_tag = "🟡 VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else f"🟠 {symbol}"
+
         msg = (
-            f"[TRADING AI PRO] ĐÃ ĐÓNG LỆNH ({cat_tag})\n"
-            f"Lệnh: #{cd.get('ticket')} ({cd.get('type')})\n"
-            f"Cặp tiền: {cd.get('symbol')} ({cd.get('volume', 0.0):.2f} Lot)\n"
-            f"Giá vào: {open_p:.2f} -> Giá đóng: {close_p:.2f}\n"
-            f"Thời gian giữ: {dur_str}\n"
-            f"Kết quả: {net_pnl:+.2f} USD{r_suffix}\n"
-            f"Lý do: {status_str}\n"
-            f"Tổng lãi ngày: {realized_pnl:+.2f} USD\n"
-            f"Thời gian: {now_str}"
+            f"{icon} [TRADING AI PRO - {sym_tag}] ĐÃ ĐÓNG LỆNH ({cat_tag})\n"
+            "────────────────────────\n"
+            f"• Lệnh: #{cd.get('ticket')} ({cd.get('type')})\n"
+            f"• Cặp: {symbol} | {cd.get('volume', 0.0):.2f} Lot\n"
+            f"• Giá: {open_p:.2f} ➜ {close_p:.2f}\n"
+            f"• Thời gian giữ: {dur_str}\n"
+            f"• Kết quả: {net_pnl:+.2f} USD{r_suffix}\n"
+            f"• Lý do: {status_str}\n"
+            f"• Lãi ngày ({sym_tag}): {realized_pnl:+.2f} USD\n"
+            f"• Thời gian: {now_str}"
         )
-        self._telegram_queue.put((msg, self._get_telegram_keyboard()))
+        self._telegram_queue.put((msg, self._get_telegram_inline_keyboard()))
 
     def test_telegram_connection(self):
         """Gửi tin nhắn thử nghiệm kiểm tra tính hợp lệ của Bot Token & Chat ID."""
@@ -3735,17 +3904,30 @@ class KronosDesktopApp:
             return
 
         def _worker():
+            # 1. Tự động dọn sạch webhook bên thứ 3 (nếu có)
+            self._telegram_api_call(token, "deleteWebhook", {"drop_pending_updates": True}, timeout=15)
+
+            # 2. Xóa bỏ phím reply keyboard cũ ở đáy màn hình
+            self._telegram_api_call(token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": "🔄 Đang dọn sạch bàn phím cũ và khởi tạo nút bấm trực tiếp...",
+                "reply_markup": {"remove_keyboard": True}
+            }, timeout=10)
+
+            # 3. Gửi thông báo kết nối thành công kèm nút bấm Inline Keyboard
             now_str = datetime.now(tz=VN_TZ).strftime("%H:%M:%S (%d/%m/%Y)")
             msg = (
-                "[TRADING AI PRO] KẾT NỐI THÀNH CÔNG\n"
-                f"Thời gian: {now_str}\n"
-                "Hệ thống: Bot MT5 đã liên kết thành công với Telegram của bạn.\n"
-                "Trạng thái: Sẵn sàng nhận thông báo lệnh & điều khiển từ xa."
+                "✅ [TRADING AI PRO] KẾT NỐI THÀNH CÔNG\n"
+                f"⏰ Thời gian: {now_str}\n"
+                "────────────────────────\n"
+                "• Hệ thống MT5 đã liên kết thành công với Telegram của bạn.\n"
+                "• Chế độ nút bấm trực tiếp (Inline Buttons) đã được kích hoạt.\n"
+                "• Bấm nút bên dưới để điều khiển bật/tắt bot hoặc xem thống kê:"
             )
             payload = {
                 "chat_id": chat_id,
                 "text": msg,
-                "reply_markup": self._get_telegram_keyboard()
+                "reply_markup": self._get_telegram_inline_keyboard()
             }
             res = self._telegram_api_call(token, "sendMessage", payload, timeout=10)
             if res and res.get("ok"):
@@ -6795,9 +6977,9 @@ class KronosDesktopApp:
         else:
             self.start_auto_scan()
 
-    def start_auto_scan(self):
-        pk = self.active_profile_key
-        if self.auto_loop_running:
+    def start_auto_scan(self, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
+        if self.profile_ctx[pk].get("auto_loop_running", False):
             return
         if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
             lic_st = self.lic_mgr.check_status(force_refresh=False)
@@ -6805,33 +6987,42 @@ class KronosDesktopApp:
                 self.show_toast("Bản quyền chưa kích hoạt hoặc đã hết hạn!", is_error=True, duration_ms=3000)
                 self._open_license_dialog()
                 return
-        self.auto_loop_running = True
+
         self.profile_ctx[pk]["auto_loop_running"] = True
         self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
         worker_token = self._auto_worker_token[pk]
-        self.auto_trade_var.set(True)
-        # Bắt đầu animation trượt mượt mà ngay lập tức (0ms phản hồi tức thì)
-        self._animate_toggle_switch(target_on=True)
-        self._sync_signal_detail_status()
-        sym = self.symbol_var.get().strip()
-        tf_val = self.tf_var.get().strip()
+
+        if pk == self.active_profile_key:
+            self.auto_loop_running = True
+            self.auto_trade_var.set(True)
+            # Bắt đầu animation trượt mượt mà ngay lập tức (0ms phản hồi tức thì)
+            self._animate_toggle_switch(target_on=True)
+            self._sync_signal_detail_status()
+
+        cfg = self._get_profile_cfg(pk)
+        sym = str(cfg.get("symbol", pk)).strip()
+        tf_val = str(cfg.get("tf", "M5")).strip()
         self.log(f"[{pk} - {sym}] Đã BẬT công tắc AUTO (Canh nến {tf_val} để tự động giao dịch)...")
         if self.profile_ctx[pk].get("cached_mean_df") is None and not self.profile_ctx[pk].get("is_analyzing", False):
             self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
         threading.Thread(target=self._auto_loop_worker, args=(pk, worker_token), daemon=True).start()
 
-    def stop_auto_scan(self):
-        pk = self.active_profile_key
-        self.auto_loop_running = False
+    def stop_auto_scan(self, profile_key: str = None):
+        pk = profile_key or self.active_profile_key
         self.profile_ctx[pk]["auto_loop_running"] = False
         self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
-        self.auto_trade_var.set(False)
         self.pending_pullback_order = None
         self.profile_ctx[pk]["pending_pullback_order"] = None
-        # Bắt đầu animation trượt mượt mà ngay lập tức (0ms phản hồi tức thì)
-        self._animate_toggle_switch(target_on=False)
-        self._sync_signal_detail_status()
-        sym = self.symbol_var.get().strip()
+
+        if pk == self.active_profile_key:
+            self.auto_loop_running = False
+            self.auto_trade_var.set(False)
+            # Bắt đầu animation trượt mượt mà ngay lập tức (0ms phản hồi tức thì)
+            self._animate_toggle_switch(target_on=False)
+            self._sync_signal_detail_status()
+
+        cfg = self._get_profile_cfg(pk)
+        sym = str(cfg.get("symbol", pk)).strip()
         self.log(f"⏹️ [{pk} - {sym}] Đã TẮT công tắc AUTO (Ngừng canh nến & tắt tự động vào lệnh).")
 
     def _auto_loop_worker(self, profile_key: str = None, worker_token: int = None):
