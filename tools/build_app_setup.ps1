@@ -73,9 +73,16 @@ python -m PyInstaller --noconsole `
     --hidden-import="gradio_client" `
     --hidden-import="einops" `
     --hidden-import="safetensors" `
+    --hidden-import="tkinter" `
+    --hidden-import="tkinter.ttk" `
+    --hidden-import="tkinter.messagebox" `
+    --hidden-import="tkinter.filedialog" `
+    --hidden-import="openpyxl" `
+    --collect-all="tkinter" `
     --collect-all="cryptography" `
     --collect-all="einops" `
     --collect-all="safetensors" `
+    --collect-all="openpyxl" `
     launcher.py
 
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller gap loi trong qua trinh build bootloader!" }

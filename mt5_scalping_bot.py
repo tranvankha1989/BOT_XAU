@@ -18,7 +18,8 @@ import shutil
 import ctypes
 import traceback
 import threading
-from datetime import datetime, timedelta, timezone
+import calendar
+from datetime import datetime, timedelta, timezone, date
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -210,6 +211,7 @@ PROFILE_STATE_ATTRS = (
     "cached_win_rate",
     "cached_win_count",
     "cached_loss_count",
+    "cached_be_count",
     "cached_closed_count",
     "consec_loss_count",
     "cooldown_until",
@@ -312,6 +314,154 @@ class CollapsibleSection(tk.Frame):
             self.content.pack_forget()
 
 
+
+class DatePickerDialog:
+    """Cửa sổ Pop-up Lịch chọn ngày độc lập, thuần Tkinter không phụ thuộc bên ngoài."""
+    def __init__(self, parent, initial_date=None, on_date_selected=None):
+        self.parent = parent
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Chọn Ngày")
+        self.dialog.configure(bg="#19202c")
+        self.dialog.resizable(False, False)
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+
+        self.on_date_selected = on_date_selected
+        if isinstance(initial_date, str):
+            try:
+                self.curr_dt = datetime.strptime(initial_date.strip(), "%Y-%m-%d").date()
+            except Exception:
+                self.curr_dt = date.today()
+        elif isinstance(initial_date, (datetime, date)):
+            self.curr_dt = initial_date if isinstance(initial_date, date) else initial_date.date()
+        else:
+            self.curr_dt = date.today()
+
+        self.sel_year = self.curr_dt.year
+        self.sel_month = self.curr_dt.month
+        self.selected_date = self.curr_dt
+
+        # Thanh tiêu đề Tháng/Năm kèm nút chuyển tháng
+        hdr = tk.Frame(self.dialog, bg="#10141d", padx=8, pady=6)
+        hdr.pack(fill=tk.X)
+
+        tk.Button(
+            hdr, text="◀", bg="#232d3f", fg="#eaecef", relief=tk.FLAT, font=("Segoe UI", 9, "bold"),
+            padx=6, pady=2, cursor="hand2", command=self._prev_month
+        ).pack(side=tk.LEFT)
+
+        self.lbl_month_year = tk.Label(
+            hdr, text=f"Tháng {self.sel_month:02d} / {self.sel_year}",
+            bg="#10141d", fg=GOLD_ACCENT, font=("Segoe UI", 10, "bold")
+        )
+        self.lbl_month_year.pack(side=tk.LEFT, expand=True)
+
+        tk.Button(
+            hdr, text="▶", bg="#232d3f", fg="#eaecef", relief=tk.FLAT, font=("Segoe UI", 9, "bold"),
+            padx=6, pady=2, cursor="hand2", command=self._next_month
+        ).pack(side=tk.RIGHT)
+
+        # Hàng tiêu đề thứ trong tuần (T2 -> CN)
+        days_frame = tk.Frame(self.dialog, bg="#19202c", padx=6, pady=4)
+        days_frame.pack(fill=tk.X)
+
+        day_names = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+        for idx, d_name in enumerate(day_names):
+            fg_c = RED_DOWN if idx == 6 else (GOLD_ACCENT if idx == 5 else TEXT_MUTED)
+            tk.Label(
+                days_frame, text=d_name, width=4, bg="#19202c", fg=fg_c, font=("Segoe UI", 8, "bold")
+            ).grid(row=0, column=idx, padx=2, pady=2)
+
+        # Lưới các ngày trong tháng
+        self.cal_grid_frame = tk.Frame(self.dialog, bg="#19202c", padx=6, pady=4)
+        self.cal_grid_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Thanh nút dưới cùng (Hôm nay / Đóng)
+        btn_bar = tk.Frame(self.dialog, bg="#10141d", padx=8, pady=6)
+        btn_bar.pack(fill=tk.X)
+
+        tk.Button(
+            btn_bar, text="Hôm Nay", bg="#235c46", fg="#ffffff", font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=8, pady=2, cursor="hand2", command=self._select_today
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_bar, text="Đóng", bg="#232d3f", fg="#eaecef", font=("Segoe UI", 8),
+            relief=tk.FLAT, padx=8, pady=2, cursor="hand2", command=self.dialog.destroy
+        ).pack(side=tk.RIGHT)
+
+        self._render_calendar()
+
+        # Căn giữa cửa sổ con so với cửa sổ cha
+        try:
+            self.dialog.update_idletasks()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            w = self.dialog.winfo_width()
+            h = self.dialog.winfo_height()
+            x = px + max(0, (pw - w) // 2)
+            y = py + max(0, (ph - h) // 2)
+            self.dialog.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+    def _prev_month(self):
+        if self.sel_month == 1:
+            self.sel_month = 12
+            self.sel_year -= 1
+        else:
+            self.sel_month -= 1
+        self._render_calendar()
+
+    def _next_month(self):
+        if self.sel_month == 12:
+            self.sel_month = 1
+            self.sel_year += 1
+        else:
+            self.sel_month += 1
+        self._render_calendar()
+
+    def _select_today(self):
+        t = date.today()
+        self._on_day_click(t.year, t.month, t.day)
+
+    def _render_calendar(self):
+        self.lbl_month_year.config(text=f"Tháng {self.sel_month:02d} / {self.sel_year}")
+        for w in self.cal_grid_frame.winfo_children():
+            w.destroy()
+
+        cal = calendar.monthcalendar(self.sel_year, self.sel_month)
+        today = date.today()
+
+        for r_idx, week in enumerate(cal):
+            for c_idx, day_num in enumerate(week):
+                if day_num == 0:
+                    lbl = tk.Label(self.cal_grid_frame, text="", width=4, bg="#19202c")
+                    lbl.grid(row=r_idx, column=c_idx, padx=2, pady=2)
+                else:
+                    is_today = (self.sel_year == today.year and self.sel_month == today.month and day_num == today.day)
+                    is_sel = (self.sel_year == self.selected_date.year and self.sel_month == self.selected_date.month and day_num == self.selected_date.day)
+
+                    bg_c = GOLD_ACCENT if is_sel else ("#1b4d3e" if is_today else "#232d3f")
+                    fg_c = "#000000" if is_sel else (GREEN_UP if is_today else "#eaecef")
+
+                    btn = tk.Button(
+                        self.cal_grid_frame, text=str(day_num), width=4, bg=bg_c, fg=fg_c,
+                        font=("Segoe UI", 8, "bold" if (is_today or is_sel) else "normal"),
+                        relief=tk.FLAT, cursor="hand2",
+                        command=lambda y=self.sel_year, m=self.sel_month, d=day_num: self._on_day_click(y, m, d)
+                    )
+                    btn.grid(row=r_idx, column=c_idx, padx=2, pady=2)
+
+    def _on_day_click(self, year, month, day):
+        chosen_date = date(year, month, day)
+        date_str = chosen_date.strftime("%Y-%m-%d")
+        if self.on_date_selected:
+            self.on_date_selected(date_str)
+        self.dialog.destroy()
+
+
 class KronosDesktopApp:
     def __init__(self, root: tk.Tk, lic_mgr=None):
         self.root = root
@@ -347,6 +497,7 @@ class KronosDesktopApp:
         self.cached_win_rate = 0.0
         self.cached_win_count = 0
         self.cached_loss_count = 0
+        self.cached_be_count = 0
         self.cached_closed_count = 0
         self.consec_loss_count = 0  # Chuỗi lệnh thua liên tiếp hiện tại trong ngày
         self.cooldown_until = None  # Thời điểm hết hạn tạm ngừng sau chuỗi thua
@@ -501,6 +652,7 @@ class KronosDesktopApp:
             "cached_win_rate": 0.0,
             "cached_win_count": 0,
             "cached_loss_count": 0,
+            "cached_be_count": 0,
             "cached_closed_count": 0,
             "consec_loss_count": 0,
             "cooldown_until": None,
@@ -1925,6 +2077,11 @@ class KronosDesktopApp:
         self.log_text = tk.Text(log_right, bg="#131822", fg="#b7bdc6", font=("Consolas", 8), relief=tk.FLAT)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
+        # TAB 3: LỊCH SỬ GIAO DỊCH & XUẤT BÁO CÁO EXCEL
+        history_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+        self.bottom_notebook.add(history_tab, text="📜 LỊCH SỬ & XUẤT EXCEL")
+        self._build_history_tab_ui(history_tab)
+
         self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _build_positions_tab_ui(self, pos_tab: tk.Frame, profile_key: str):
@@ -2068,6 +2225,292 @@ class KronosDesktopApp:
         sym = self.symbol_var.get().strip() or (SYMBOL_BTC if pk == "BTCUSD" else SYMBOL_XAU)
         tf = self.tf_var.get().strip() or "M1"
         self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
+
+    def _build_history_tab_ui(self, hist_tab: tk.Frame):
+        """Dựng giao diện Lịch Sử Giao Dịch: Lọc theo Hôm nay / Khoảng ngày qua Lịch Pop-up & Xuất Excel."""
+        today_iso = datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
+        self.hist_start_var = tk.StringVar(value=today_iso)
+        self.hist_end_var = tk.StringVar(value=today_iso)
+        self.hist_symbol_var = tk.StringVar(value="Tất cả")
+        self._cached_hist_deals = []
+
+        hist_top_bar = tk.Frame(hist_tab, bg=PANEL_BG, pady=4, padx=6)
+        hist_top_bar.pack(fill=tk.X)
+
+        # Cụm bên trái: Lọc ngày bắt đầu, ngày kết thúc và xem lịch sử
+        left_ctrl = tk.Frame(hist_top_bar, bg=PANEL_BG)
+        left_ctrl.pack(side=tk.LEFT, fill=tk.Y)
+
+        tk.Label(left_ctrl, text="Từ ngày:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+        ent_start = tk.Entry(left_ctrl, textvariable=self.hist_start_var, width=11, bg="#131822", fg=TEXT_MAIN,
+                             insertbackground=TEXT_MAIN, font=("Consolas", 9, "bold"), relief=tk.FLAT)
+        ent_start.pack(side=tk.LEFT, padx=(0, 2))
+        tk.Button(
+            left_ctrl, text="📅", bg="#232d3f", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=4, pady=1, cursor="hand2",
+            command=lambda: self._open_calendar_popup(self.hist_start_var)
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        tk.Label(left_ctrl, text="Đến ngày:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+        ent_end = tk.Entry(left_ctrl, textvariable=self.hist_end_var, width=11, bg="#131822", fg=TEXT_MAIN,
+                           insertbackground=TEXT_MAIN, font=("Consolas", 9, "bold"), relief=tk.FLAT)
+        ent_end.pack(side=tk.LEFT, padx=(0, 2))
+        tk.Button(
+            left_ctrl, text="📅", bg="#232d3f", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=4, pady=1, cursor="hand2",
+            command=lambda: self._open_calendar_popup(self.hist_end_var)
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        tk.Label(left_ctrl, text="Mã:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+        sym_cb = ttk.Combobox(left_ctrl, textvariable=self.hist_symbol_var, values=["Tất cả", "XAUUSD", "BTCUSD"], width=8, state="readonly")
+        sym_cb.pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Button(
+            left_ctrl, text="🔍 XEM LỊCH SỬ", bg=CYAN_LIVE, fg="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2, cursor="hand2",
+            command=self._refresh_history_tab
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        # Cụm bên phải: Nút chọn nhanh (Hôm Nay, Hôm Qua, 7 Ngày, 30 Ngày) & Nút Xuất Excel
+        right_ctrl = tk.Frame(hist_top_bar, bg=PANEL_BG)
+        right_ctrl.pack(side=tk.RIGHT, fill=tk.Y)
+
+        tk.Button(
+            right_ctrl, text="📊 XUẤT EXCEL", bg="#107c41", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=2, cursor="hand2",
+            command=self.export_history_to_excel
+        ).pack(side=tk.RIGHT, padx=(6, 0))
+
+        tk.Button(
+            right_ctrl, text="30 Ngày", bg="#232d3f", fg=TEXT_MAIN,
+            font=("Segoe UI", 8), relief=tk.FLAT, padx=5, pady=2, cursor="hand2",
+            command=self._set_history_30days
+        ).pack(side=tk.RIGHT, padx=2)
+
+        tk.Button(
+            right_ctrl, text="7 Ngày", bg="#232d3f", fg=TEXT_MAIN,
+            font=("Segoe UI", 8), relief=tk.FLAT, padx=5, pady=2, cursor="hand2",
+            command=self._set_history_7days
+        ).pack(side=tk.RIGHT, padx=2)
+
+        tk.Button(
+            right_ctrl, text="Hôm Qua", bg="#232d3f", fg=TEXT_MAIN,
+            font=("Segoe UI", 8), relief=tk.FLAT, padx=5, pady=2, cursor="hand2",
+            command=self._set_history_yesterday
+        ).pack(side=tk.RIGHT, padx=2)
+
+        tk.Button(
+            right_ctrl, text="Hôm Nay", bg="#235c46", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2, cursor="hand2",
+            command=self._set_history_today
+        ).pack(side=tk.RIGHT, padx=2)
+
+        # Thanh tổng kết số liệu
+        summary_bar = tk.Frame(hist_tab, bg="#131822", padx=8, pady=3)
+        summary_bar.pack(fill=tk.X, padx=6, pady=(0, 3))
+        self.hist_summary_lbl = tk.Label(
+            summary_bar, text="Đang tải lịch sử giao dịch...",
+            bg="#131822", fg=GOLD_ACCENT, font=("Consolas", 9, "bold"), anchor="w"
+        )
+        self.hist_summary_lbl.pack(side=tk.LEFT)
+
+        # Bảng Treeview lịch sử
+        hist_container = tk.Frame(hist_tab, bg=PANEL_BG)
+        hist_container.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+
+        hist_cols = ("ticket", "time", "duration", "symbol", "type", "volume", "open_price", "close_price", "sl", "tp", "profit", "r_ratio", "category", "status")
+        hist_headers = {
+            "ticket": "Mã Lệnh",
+            "time": "Giờ Vào → Ra",
+            "duration": "Thời Gian",
+            "symbol": "Mã",
+            "type": "Loại",
+            "volume": "Lot",
+            "open_price": "Giá Vào",
+            "close_price": "Giá Đóng",
+            "sl": "SL",
+            "tp": "TP",
+            "profit": "Lãi Ròng ($)",
+            "r_ratio": "Tỷ Lệ R",
+            "category": "Phân Loại",
+            "status": "Trạng Thái / Kết Quả"
+        }
+        hist_widths = {
+            "ticket": 85, "time": 105, "duration": 80, "symbol": 70, "type": 50, "volume": 45,
+            "open_price": 85, "close_price": 85, "sl": 75, "tp": 75, "profit": 90,
+            "r_ratio": 70, "category": 85, "status": 170
+        }
+
+        self.hist_tree = ttk.Treeview(hist_container, columns=hist_cols, show="headings", height=5)
+        hist_sb = ttk.Scrollbar(hist_container, orient="vertical", command=self.hist_tree.yview)
+        self.hist_tree.configure(yscrollcommand=hist_sb.set)
+        hist_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.hist_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for c in hist_cols:
+            self.hist_tree.heading(c, text=hist_headers[c])
+            self.hist_tree.column(c, width=hist_widths[c], anchor=tk.CENTER)
+
+        self.hist_tree.tag_configure("tag_win", foreground=GREEN_UP)
+        self.hist_tree.tag_configure("tag_loss", foreground=RED_DOWN)
+        self.hist_tree.tag_configure("tag_be", foreground=GOLD_ACCENT)
+
+        self.hist_tree.bind("<Button-1>", lambda e: "break" if self.hist_tree.identify_region(e.x, e.y) == "heading" else None)
+
+    def _open_calendar_popup(self, target_var: tk.StringVar):
+        """Mở cửa sổ Pop-up Lịch chọn ngày và cập nhật vào biến StringVar đích."""
+        DatePickerDialog(self.root, initial_date=target_var.get(), on_date_selected=target_var.set)
+
+    def _set_history_today(self):
+        t_str = datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
+        self.hist_start_var.set(t_str)
+        self.hist_end_var.set(t_str)
+        self._refresh_history_tab()
+
+    def _set_history_yesterday(self):
+        y_str = (datetime.now(tz=VN_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        self.hist_start_var.set(y_str)
+        self.hist_end_var.set(y_str)
+        self._refresh_history_tab()
+
+    def _set_history_7days(self):
+        now_dt = datetime.now(tz=VN_TZ)
+        self.hist_start_var.set((now_dt - timedelta(days=7)).strftime("%Y-%m-%d"))
+        self.hist_end_var.set(now_dt.strftime("%Y-%m-%d"))
+        self._refresh_history_tab()
+
+    def _set_history_30days(self):
+        now_dt = datetime.now(tz=VN_TZ)
+        self.hist_start_var.set((now_dt - timedelta(days=30)).strftime("%Y-%m-%d"))
+        self.hist_end_var.set(now_dt.strftime("%Y-%m-%d"))
+        self._refresh_history_tab()
+
+    def _refresh_history_tab(self):
+        """Truy vấn MT5 và nạp danh sách lệnh đóng theo khung thời gian đã chọn vào bảng Lịch Sử."""
+        if not hasattr(self, "hist_tree") or not self.hist_tree.winfo_exists():
+            return
+        start_s = self.hist_start_var.get().strip()
+        end_s = self.hist_end_var.get().strip()
+        sym_choice = self.hist_symbol_var.get().strip()
+
+        sym_filter = None
+        if sym_choice == "XAUUSD":
+            sym_filter = getattr(self, "symbol_xau", "XAUUSDm")
+        elif sym_choice == "BTCUSD":
+            sym_filter = getattr(self, "symbol_btc", "BTCUSDm")
+
+        deals = self._get_closed_deals_by_range(symbol=sym_filter, start_date_str=start_s, end_date_str=end_s, use_cache=False)
+        self._cached_hist_deals = deals
+
+        for item in self.hist_tree.get_children():
+            self.hist_tree.delete(item)
+
+        total_deals = len(deals)
+        wins = sum(1 for d in deals if d.get("category") == "WIN")
+        losses = sum(1 for d in deals if d.get("category") == "LOSS")
+        bes = sum(1 for d in deals if d.get("category") == "BE+")
+        net_sum = sum(d.get("net_pnl", 0.0) for d in deals)
+        gross_profit = sum(d.get("net_pnl", 0.0) for d in deals if d.get("net_pnl", 0.0) > 0)
+        gross_loss = abs(sum(d.get("net_pnl", 0.0) for d in deals if d.get("net_pnl", 0.0) < 0))
+        pf = (gross_profit / gross_loss) if gross_loss > 0 else (99.9 if gross_profit > 0 else 0.0)
+
+        valid_trades = wins + losses
+        win_rate = (wins / valid_trades * 100.0) if valid_trades > 0 else 0.0
+        wr_str = f"{win_rate:.1f}%" if valid_trades > 0 else "---"
+
+        sum_txt = (
+            f"Tổng: {total_deals} lệnh  |  Thắng (≥1R): {wins}  |  Hòa/BE+: {bes}  |  Thua: {losses}  |  "
+            f"Win Rate: {wr_str}  |  Tổng Lãi/Lỗ: {net_sum:+.2f}$  |  PF: {pf:.2f}"
+        )
+        pnl_col = GREEN_UP if net_sum >= 0 else RED_DOWN
+        self.hist_summary_lbl.config(text=sum_txt, fg=pnl_col if total_deals > 0 else GOLD_ACCENT)
+
+        for d in deals:
+            cat = d.get("category", "BE+")
+            tag = "tag_win" if cat == "WIN" else ("tag_loss" if cat == "LOSS" else "tag_be")
+            self.hist_tree.insert(
+                "", tk.END,
+                values=(
+                    str(d["ticket"]),
+                    d["time_display"],
+                    d.get("duration", "---"),
+                    d["symbol"],
+                    d["type"],
+                    f"{d['volume']:.2f}",
+                    f"{d['open_price']:.2f}" if d["open_price"] > 0 else "---",
+                    f"{d['close_price']:.2f}",
+                    f"{d.get('sl', 0.0):.2f}" if d.get('sl', 0.0) > 0 else "---",
+                    f"{d.get('tp', 0.0):.2f}" if d.get('tp', 0.0) > 0 else "---",
+                    f"{d['net_pnl']:+.2f} $",
+                    d.get("r_ratio_str", "---"),
+                    cat,
+                    d["status"]
+                ),
+                tags=(tag,)
+            )
+
+    def export_history_to_excel(self):
+        """Xuất danh sách lệnh trong khung thời gian đang chọn ra file Excel (.xlsx / .csv)."""
+        deals = getattr(self, "_cached_hist_deals", [])
+        if not deals:
+            messagebox.showwarning("Thông Báo", "Không có dữ liệu lệnh nào trong khung thời gian đã chọn để xuất file!")
+            return
+
+        start_s = self.hist_start_var.get().strip().replace("-", "")
+        end_s = self.hist_end_var.get().strip().replace("-", "")
+        default_fn = f"Lich_Su_Trading_AI_PRO_{start_s}_{end_s}.xlsx"
+
+        file_path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Lưu File Báo Cáo Lịch Sử Giao Dịch",
+            initialfile=default_fn,
+            filetypes=[("Excel Workbook (*.xlsx)", "*.xlsx"), ("CSV UTF-8 (*.csv)", "*.csv"), ("Tất cả tập tin", "*.*")]
+        )
+        if not file_path:
+            return
+
+        rows = []
+        for idx, d in enumerate(deals, start=1):
+            rows.append({
+                "STT": idx,
+                "Mã Lệnh (Ticket)": d["ticket"],
+                "Ngày": d.get("date", "---"),
+                "Giờ Vào": d.get("open_time", "---"),
+                "Giờ Đóng": d.get("close_time", "---"),
+                "Thời Gian Giữ": d.get("duration", "---"),
+                "Cặp Giao Dịch": d["symbol"],
+                "Loại Lệnh": d["type"],
+                "Khối Lượng (Lot)": d["volume"],
+                "Giá Vào (Entry)": d["open_price"],
+                "Giá Đóng (Close)": d["close_price"],
+                "Cắt Lỗ (SL)": d.get("sl", 0.0),
+                "Chốt Lời (TP)": d.get("tp", 0.0),
+                "Lãi Ròng Net ($)": round(d["net_pnl"], 2),
+                "Tỷ Lệ R": d.get("r_ratio_str", "---"),
+                "Phân Loại": d.get("category", "---"),
+                "Trạng Thái / Kết Quả": d.get("status", "---"),
+            })
+
+        try:
+            df_exp = pd.DataFrame(rows)
+            if file_path.lower().endswith(".csv"):
+                df_exp.to_csv(file_path, index=False, encoding="utf-8-sig")
+            else:
+                try:
+                    df_exp.to_excel(file_path, index=False, engine="openpyxl")
+                except Exception:
+                    if not file_path.lower().endswith(".csv"):
+                        file_path = file_path.rsplit(".", 1)[0] + ".csv"
+                    df_exp.to_csv(file_path, index=False, encoding="utf-8-sig")
+
+            self.log(f"📊 Đã xuất file báo cáo lịch sử thành công ({len(deals)} lệnh): {file_path}")
+            messagebox.showinfo(
+                "Xuất File Thành Công",
+                f"Đã xuất thành công {len(deals)} lệnh vào file:\n{file_path}\n\nBạn có thể mở trực tiếp bằng Microsoft Excel!"
+            )
+        except Exception as e:
+            self.log_error("EXPORT_EXCEL", e)
+            messagebox.showerror("Lỗi Xuất File", f"Không thể lưu file báo cáo:\n{e}")
 
     # =========================================================================
     # TỰ ĐỘNG LƯU & KHÔI PHỤC CÀI ĐẶT NGƯỜI DÙNG THEO TỪNG TAB (XAUUSD / BTCUSD)
@@ -2703,11 +3146,14 @@ class KronosDesktopApp:
         elif selected_idx == 1:
             self.chart_mode = "LIVE_POSITIONS"
             self._switch_active_profile("BTCUSD")
-        else:
+        elif selected_idx == 2:
             self.chart_mode = "AI_FORECAST"
             self._update_forecast_tab_header()
             if self.cached_mean_df is None and not self.is_analyzing:
                 self.trigger_single_scan(profile_key=self.active_profile_key)
+        else:
+            # Tab 3: LỊCH SỬ GIAO DỊCH & XUẤT EXCEL
+            self._refresh_history_tab()
 
         self.user_zoomed = False
         self.saved_xlim = None
@@ -3494,32 +3940,51 @@ class KronosDesktopApp:
             self.log_error("GET_TODAY_DEALS_STATS", e, show_in_ui=False)
             return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
-    def _get_today_closed_deals(self, symbol: str = None) -> list:
-        """Lấy danh sách các lệnh đã đóng hôm nay (theo giờ VN GMT+7) kèm giờ vào/ra, giá vào/ra, lãi/lỗ và trạng thái."""
+    def _get_closed_deals_by_range(self, symbol: str = None, start_date_str: str = None, end_date_str: str = None, use_cache: bool = True) -> list:
+        """Lấy danh sách các lệnh đã đóng theo khoảng ngày (theo giờ VN GMT+7) kèm phân loại WIN / LOSS / BE+."""
         if not MT5_AVAILABLE:
             return []
         sym_key = symbol or "__ALL__"
         now_mono = time.monotonic()
-        if not hasattr(self, "_cached_closed_deals_map"):
-            self._cached_closed_deals_map = {}
-        cached = self._cached_closed_deals_map.get(sym_key)
-        if cached is not None and (now_mono - cached[0]) < 2.0:
-            return cached[1]
+        vn_now = datetime.now(tz=VN_TZ)
+
+        if not start_date_str:
+            start_date_str = vn_now.strftime("%Y-%m-%d")
+        if not end_date_str:
+            end_date_str = start_date_str
 
         try:
-            vn_now = datetime.now(tz=VN_TZ)
-            vn_today_str = vn_now.strftime("%Y-%m-%d")
-            vn_today_start = vn_now.replace(hour=0, minute=0, second=0, microsecond=0)
-            vn_today_start_ts = int(vn_today_start.timestamp())
+            start_d = datetime.strptime(start_date_str.strip(), "%Y-%m-%d").date()
+        except Exception:
+            start_d = vn_now.date()
+        try:
+            end_d = datetime.strptime(end_date_str.strip(), "%Y-%m-%d").date()
+        except Exception:
+            end_d = start_d
 
-            query_from = datetime.fromtimestamp(vn_today_start_ts - 7200)
-            query_to = datetime.fromtimestamp(int(time.time()) + 7200)
+        if start_d > end_d:
+            start_d, end_d = end_d, start_d
+
+        range_key = f"{sym_key}_{start_d}_{end_d}"
+        if not hasattr(self, "_cached_closed_deals_map"):
+            self._cached_closed_deals_map = {}
+        if use_cache:
+            cached = self._cached_closed_deals_map.get(range_key)
+            if cached is not None and (now_mono - cached[0]) < 2.0:
+                return cached[1]
+
+        try:
+            start_dt = datetime(start_d.year, start_d.month, start_d.day, 0, 0, 0, tzinfo=VN_TZ)
+            end_dt = datetime(end_d.year, end_d.month, end_d.day, 23, 59, 59, tzinfo=VN_TZ)
+
+            query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - 7200)
+            query_to = datetime.fromtimestamp(int(end_dt.timestamp()) + 7200)
 
             with self._mt5_lock:
                 deals = mt5.history_deals_get(query_from, query_to)
 
             if not deals:
-                self._cached_closed_deals_map[sym_key] = (now_mono, [])
+                self._cached_closed_deals_map[range_key] = (now_mono, [])
                 return []
 
             entry_by_pos = {}
@@ -3535,10 +4000,11 @@ class KronosDesktopApp:
             closed_deals.sort(key=lambda x: x.time, reverse=True)
 
             for d in closed_deals:
-                if symbol and d.symbol and d.symbol != symbol:
+                if symbol and symbol != "Tất cả" and d.symbol and d.symbol != symbol:
                     continue
                 d_vn_dt = datetime.fromtimestamp(int(d.time), tz=VN_TZ)
-                if d_vn_dt.strftime("%Y-%m-%d") != vn_today_str:
+                deal_date = d_vn_dt.date()
+                if not (start_d <= deal_date <= end_d):
                     continue
 
                 ed = entry_by_pos.get(d.position_id)
@@ -3547,27 +4013,53 @@ class KronosDesktopApp:
                 close_p = d.price
                 open_t = datetime.fromtimestamp(ed.time, tz=VN_TZ).strftime("%H:%M:%S") if ed else "---"
                 close_t = d_vn_dt.strftime("%H:%M:%S")
+                date_close_str = d_vn_dt.strftime("%Y-%m-%d")
                 dur_sec = max(0, int(d.time) - int(ed.time)) if ed else -1
                 dur_str = self._format_duration(dur_sec) if ed else "---"
                 net_pnl = float(d.profit + d.swap + d.commission + getattr(d, "fee", 0.0))
                 cmt = str(d.comment or "").lower()
                 is_sl_loss = ("[sl" in cmt or "sl" in cmt) and (net_pnl < -0.05)
 
-                if "[tp" in cmt:
-                    status = f"ĐÃ CHỐT TP ({close_t})"
-                elif "[sl" in cmt and net_pnl > 0.05:
-                    status = f"DỜI SL CHỐT LÃI ({close_t})"
-                elif "[sl" in cmt and net_pnl < -0.05:
-                    status = f"ĐÃ CẮT LỖ SL ({close_t})"
-                elif abs(net_pnl) <= 0.05:
-                    status = f"HÒA VỐN ({close_t})"
-                elif net_pnl > 0.05:
-                    status = f"ĐÃ CHỐT LÃI ({close_t})"
+                # Tính 1R và phân loại WIN (>= 1R) / BE+ (< 1R) / LOSS (< 0)
+                contract_size = 100.0 if (d.symbol and "XAU" in d.symbol) else 1.0
+                orders = None
+                with self._mt5_lock:
+                    try:
+                        orders = mt5.history_orders_get(position=d.position_id)
+                    except Exception:
+                        pass
+                sl_price = orders[0].sl if (orders and len(orders) > 0) else 0.0
+                tp_price = orders[0].tp if (orders and len(orders) > 0) else 0.0
+                sl_dist = abs(open_p - sl_price) if (open_p > 0 and sl_price > 0) else 0.0
+                one_r = (sl_dist * d.volume * contract_size) if sl_dist > 0 else (8.0 if (d.symbol and "XAU" in d.symbol) else 4.0)
+
+                r_ratio = (net_pnl / one_r) if one_r > 0.001 else 0.0
+                r_ratio_str = f"{r_ratio:+.2f}R" if abs(r_ratio) > 0.001 else "0.00R"
+
+                if net_pnl < -0.05:
+                    category = "LOSS"
+                    if "[sl" in cmt:
+                        status = f"ĐÃ CẮT LỖ SL ({close_t})"
+                    else:
+                        status = f"ĐÃ ĐÓNG LỖ ({close_t})"
+                elif ("[tp" in cmt) or (r_ratio >= 1.0) or (net_pnl >= one_r):
+                    category = "WIN"
+                    if "[tp" in cmt:
+                        status = f"ĐÃ CHỐT TP ({close_t})"
+                    else:
+                        status = f"ĐÃ CHỐT LÃI ({close_t})"
                 else:
-                    status = f"ĐÃ ĐÓNG LỖ ({close_t})"
+                    category = "BE+"
+                    if "[sl" in cmt:
+                        status = f"DỜI SL HÒA VỐN ({close_t})"
+                    elif abs(net_pnl) <= 0.05:
+                        status = f"HÒA VỐN ({close_t})"
+                    else:
+                        status = f"THOÁT BẢO TOÀN VỐN ({close_t})"
 
                 closed_items.append({
                     "ticket": d.position_id,
+                    "date": date_close_str,
                     "open_time": open_t,
                     "close_time": close_t,
                     "close_ts": int(d.time),
@@ -3580,15 +4072,26 @@ class KronosDesktopApp:
                     "volume": d.volume,
                     "open_price": open_p,
                     "close_price": close_p,
+                    "sl": sl_price,
+                    "tp": tp_price,
                     "net_pnl": net_pnl,
+                    "one_r": one_r,
+                    "r_ratio": r_ratio,
+                    "r_ratio_str": r_ratio_str,
+                    "category": category,
                     "status": status,
                 })
 
-            self._cached_closed_deals_map[sym_key] = (now_mono, closed_items)
+            self._cached_closed_deals_map[range_key] = (now_mono, closed_items)
             return closed_items
         except Exception as e:
             self.log_error("GET_CLOSED_DEALS", e, show_in_ui=False)
             return []
+
+    def _get_today_closed_deals(self, symbol: str = None) -> list:
+        """Lấy danh sách các lệnh đã đóng hôm nay (theo giờ VN GMT+7)."""
+        today_s = datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
+        return self._get_closed_deals_by_range(symbol=symbol, start_date_str=today_s, end_date_str=today_s, use_cache=True)
 
     def _check_daily_profit_loss_limits(self, floating_profit: float, tick=None, profile_key: str = None):
         """Kiểm tra mục tiêu Lãi ngày / Cắt lỗ ngày (USD) & Tạm ngừng sau chuỗi thua liên tiếp cho từng Tab (XAUUSD / BTCUSD) theo Giờ Việt Nam (GMT+7)."""
@@ -4058,7 +4561,9 @@ class KronosDesktopApp:
 
         pred_n = self.pred_len_var.get().strip() or "6"
         magic_num = self._get_profile_magic_number(self.active_profile_key)
-        wr_display = f"{self.cached_win_rate:.1f}% ({self.cached_win_count}W - {self.cached_loss_count}L)" if self.cached_closed_count > 0 else "---"
+        be_cnt = getattr(self, "cached_be_count", 0)
+        be_display_tag = f" - {be_cnt}BE+" if be_cnt > 0 else ""
+        wr_display = f"{self.cached_win_rate:.1f}% ({self.cached_win_count}W - {self.cached_loss_count}L{be_display_tag})" if self.cached_closed_count > 0 else "---"
         lic_txt = "---"
         if hasattr(self, "lic_mgr") and self.lic_mgr is not None:
             st = self.lic_mgr.check_status()
@@ -4305,7 +4810,9 @@ class KronosDesktopApp:
         closed_profit_sum = 0.0
         for cd in closed_deals:
             closed_profit_sum += cd["net_pnl"]
-            tag = "closed_pos" if cd["net_pnl"] > 0.05 else ("closed_neg" if cd["net_pnl"] < -0.05 else "closed_be")
+            tag = "closed_pos" if cd.get("category") == "WIN" else ("closed_neg" if cd.get("category") == "LOSS" else "closed_be")
+            r_ratio_str = f" ({cd.get('r_ratio_str', '')})" if cd.get("r_ratio_str") else ""
+            cat_tag = f" [{cd.get('category', '')}]" if cd.get("category") else ""
             item_id = tree_widget.insert(
                 "", tk.END,
                 values=(
@@ -4317,10 +4824,10 @@ class KronosDesktopApp:
                     f"{cd['volume']:.2f}",
                     f"{cd['open_price']:.2f}" if cd["open_price"] > 0 else "---",
                     f"{cd['close_price']:.2f} [Đóng]",
-                    "---",
-                    "---",
+                    f"{cd.get('sl', 0.0):.2f}" if cd.get('sl', 0.0) > 0 else "---",
+                    f"{cd.get('tp', 0.0):.2f}" if cd.get('tp', 0.0) > 0 else "---",
                     f"{cd['net_pnl']:+.2f} $",
-                    cd["status"]
+                    f"{cd['status']}{r_ratio_str}{cat_tag}"
                 ),
                 tags=(tag,)
             )
@@ -4348,24 +4855,29 @@ class KronosDesktopApp:
         is_locked = self._is_daily_limit_locked(pk)
         daily_lock_tag = f"  |  ĐÃ DỪNG HÔM NAY ({daily_reason_val})" if is_locked else ""
         closed_count = len(closed_deals)
-        win_count = sum(1 for cd in closed_deals if cd.get("net_pnl", 0.0) > 0.05)
-        loss_count = sum(1 for cd in closed_deals if cd.get("net_pnl", 0.0) < -0.05)
-        be_count = max(0, closed_count - win_count - loss_count)
-        if closed_count > 0:
-            win_rate = (win_count / closed_count) * 100.0
-            win_detail = f"{win_count}W - {loss_count}L" if be_count == 0 else f"{win_count}W - {loss_count}L - {be_count}BE"
+        win_count = sum(1 for cd in closed_deals if cd.get("category") == "WIN")
+        loss_count = sum(1 for cd in closed_deals if cd.get("category") == "LOSS")
+        be_count = sum(1 for cd in closed_deals if cd.get("category") == "BE+")
+        valid_trades = win_count + loss_count
+        if valid_trades > 0:
+            win_rate = (win_count / valid_trades) * 100.0
+            win_detail = f"{win_count}W - {loss_count}L" if be_count == 0 else f"{win_count}W - {loss_count}L - {be_count}BE+"
             win_rate_tag = f"  |  Win Rate: {win_rate:.1f}% ({win_detail})"
+        elif be_count > 0:
+            win_rate_tag = f"  |  Win Rate: --- (0W - 0L - {be_count}BE+)"
         else:
             win_rate_tag = "  |  Win Rate: ---"
 
-        ctx["cached_win_rate"] = (win_count / closed_count * 100.0) if closed_count > 0 else 0.0
+        ctx["cached_win_rate"] = (win_count / valid_trades * 100.0) if valid_trades > 0 else 0.0
         ctx["cached_win_count"] = win_count
         ctx["cached_loss_count"] = loss_count
+        ctx["cached_be_count"] = be_count
         ctx["cached_closed_count"] = closed_count
         if pk == self.active_profile_key:
             self.cached_win_rate = ctx["cached_win_rate"]
             self.cached_win_count = win_count
             self.cached_loss_count = loss_count
+            self.cached_be_count = be_count
             self.cached_closed_count = closed_count
 
         summary_widget.config(

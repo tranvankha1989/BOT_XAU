@@ -64,6 +64,15 @@ foreach ($f in $filesToInclude) {
     }
 }
 
+# Bo sung them thu vien Tkinter vao _internal/tkinter de sua loi missing ttk tren may ao/may cu v1.0.2
+$pyTkDir = "C:\Users\tranv\AppData\Local\Programs\Python\Python311\Lib\tkinter"
+if (Test-Path $pyTkDir) {
+    $targetTkDir = Join-Path $stagingDir "_internal\tkinter"
+    New-Item -ItemType Directory -Path $targetTkDir -Force | Out-Null
+    Copy-Item -Path "$pyTkDir\*.py" -Destination $targetTkDir -Force
+    Write-Host "  + Da them: _internal\tkinter (*.py de cuu may ao VM)" -ForegroundColor DarkGray
+}
+
 # Don sach __pycache__ va cac file rac
 Get-ChildItem -Path $stagingDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem -Path $stagingDir -Recurse -File -Include @('*.pyc', '*.tmp') | Remove-Item -Force -ErrorAction SilentlyContinue

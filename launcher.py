@@ -22,6 +22,8 @@ import types
 import marshal
 import hashlib
 import traceback
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
 
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w", encoding="utf-8")
