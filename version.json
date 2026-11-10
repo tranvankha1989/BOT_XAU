@@ -1,6 +1,6 @@
 {
-  "version": "1.0.8",
+  "version": "1.0.9",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.0.8:\n- Loại bỏ triệt để hiện tượng chớp tắt cửa sổ đen Terminal/Console khi khởi động và cập nhật ứng dụng.\n- Tối ưu hóa đọc mã phần cứng HWID trực tiếp qua bộ nhớ RAM (Windows COM WMI) siêu tốc 0.05 giây không qua tiến trình trung gian.\n- Cơ chế tự động khởi động lại sau cập nhật hoàn toàn ẩn ngầm mang lại trải nghiệm mượt mà, chuyên nghiệp nhất."
+  "description": "Phiên bản v1.0.9:\n- Đột phá cơ chế Giữ lệnh tối đa (Time-Stop): Tự động miễn trừ giới hạn thời gian cho các lệnh đã dời Hòa vốn (BE) hoặc đang Trailing Stop để tối đa hóa lợi nhuận theo xu hướng dài.\n- Tự động thanh trừng các lệnh ngâm vốn/ì ạch/đang âm sau số phút người dùng cài đặt, bảo vệ tài khoản an toàn tuyệt đối.\n- Trang bị khiên bảo vệ Dual-HWID Shield tự động bảo lưu và kế thừa bản quyền 100% khi khách cập nhật phần mềm.\n- Tối ưu hóa đọc phần cứng WMI COM trực tiếp qua RAM 0.05 giây, loại bỏ triệt để hiện tượng chớp tắt cửa sổ console."
 }

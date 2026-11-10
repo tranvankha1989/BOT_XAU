@@ -1,9 +1,9 @@
 ; Inno Setup Script - Trading AI PRO by Kha Tran Design
-; Phien ban: 1.0.6
+; Phien ban: 1.0.9
 ; Bo cai dat Setup thuong mai chuyen nghiep - Ma hoa nhi phan 100%
 
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.6"
+#define MyAppVersion "1.0.9"
 #endif
 #define MyAppName "Trading AI PRO by Kha Tran Design"
 #define MyAppPublisher "Kha Tran Design"
