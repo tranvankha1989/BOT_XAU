@@ -883,6 +883,20 @@ class KronosDesktopApp:
         self._telegram_queue = queue.Queue()
         self._app_session_start_ts = int(time.time())
 
+        # Trạng thái Module Kiểm thử Chiến Lược (Backtest Tick-Level Engine)
+        self._backtest_unlocked = False
+        self._bt_cancel_flag = False
+        self._bt_worker_thread = None
+        self._bt_trades_cache = []
+        self._bt_equity_points = []
+        self.bt_sym_var = tk.StringVar(value="XAUUSDm")
+        self.bt_tf_var = tk.StringVar(value="M5")
+        self.bt_start_var = tk.StringVar(value=(datetime.now(tz=VN_TZ) - timedelta(days=7)).strftime("%Y-%m-%d"))
+        self.bt_end_var = tk.StringVar(value=datetime.now(tz=VN_TZ).strftime("%Y-%m-%d"))
+        self.bt_capital_var = tk.StringVar(value="1000")
+        self.bt_lot_var = tk.StringVar(value="0.02")
+        self.bt_pass_var = tk.StringVar()
+
         self._cleanup_workspace_junk()
         self._init_file_logger()
         self._setup_styles()
@@ -2460,6 +2474,11 @@ class KronosDesktopApp:
         self.bottom_notebook.add(history_tab, text="📜 LỊCH SỬ & XUẤT EXCEL")
         self._build_history_tab_ui(history_tab)
 
+        # TAB 4: KIỂM THỬ CHIẾN LƯỢC (BACKTEST TICK-LEVEL ENGINE) - KHÓA QUẢN TRỊ VIÊN
+        self.backtest_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
+        self.bottom_notebook.add(self.backtest_tab, text="🔒 BACKTEST (ADMIN)")
+        self._build_backtest_tab_ui(self.backtest_tab)
+
         self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Đưa Khung Biểu Đồ và Bảng Lệnh Đa Tab vào PanedWindow kéo giãn linh hoạt
@@ -2760,6 +2779,683 @@ class KronosDesktopApp:
     def _open_calendar_popup(self, target_var: tk.StringVar):
         """Mở cửa sổ Pop-up Lịch chọn ngày và cập nhật vào biến StringVar đích."""
         DatePickerDialog(self.root, initial_date=target_var.get(), on_date_selected=target_var.set)
+
+    # =========================================================================
+    # ── TAB 4: MODULE KIỂM THỬ CHIẾN LƯỢC TICK-LEVEL (BACKTEST ADMIN) ────────
+    # =========================================================================
+    def _build_backtest_tab_ui(self, parent: tk.Frame):
+        """Dựng giao diện Tab Kiểm thử chiến lược Backtest Tick-Level với khóa bảo vệ Quản trị viên (Admin)."""
+        parent.configure(bg=PANEL_BG)
+
+        # 1. Khung làm việc chính (Mặc định ẩn khi chưa mở khóa)
+        self.bt_main_frame = tk.Frame(parent, bg=PANEL_BG)
+
+        # 2. Khung màn hình khóa Admin (Mặc định che phủ ban đầu)
+        self.bt_lock_frame = tk.Frame(parent, bg="#0b0e14")
+        self.bt_lock_frame.pack(fill=tk.BOTH, expand=True)
+
+        self._build_backtest_lock_screen()
+        self._build_backtest_workspace()
+
+    def _build_backtest_lock_screen(self):
+        """Màn hình khóa Admin sang trọng với biểu tượng ổ khóa, làm mờ tính năng khi chưa nhập 'admin'."""
+        card = tk.Frame(self.bt_lock_frame, bg="#131822", padx=30, pady=24, highlightthickness=1, highlightbackground=GOLD_ACCENT)
+        card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+
+        tk.Label(card, text="🔒", bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 32)).pack(pady=(0, 4))
+        tk.Label(
+            card, text="TÍNH NĂNG KIỂM THỬ CHIẾN LƯỢC (BACKTEST)",
+            bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 12, "bold")
+        ).pack(pady=(0, 4))
+        tk.Label(
+            card, text="Chức năng chạy mô phỏng nến & Tick-Level chuyên sâu chỉ dành riêng cho Quản trị viên (Admin).\nVui lòng nhập mật khẩu Quản trị để mở khóa:",
+            bg="#131822", fg="#9aa4b2", font=("Segoe UI", 8), justify=tk.CENTER
+        ).pack(pady=(0, 14))
+
+        input_box = tk.Frame(card, bg="#131822")
+        input_box.pack(pady=4)
+
+        tk.Label(input_box, text="Mật khẩu Admin:", bg="#131822", fg=TEXT_MAIN, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+        self.bt_pwd_entry = tk.Entry(
+            input_box, textvariable=self.bt_pass_var, show="•", width=18,
+            bg="#1c2433", fg="#ffffff", font=("Segoe UI", 10, "bold"), insertbackground=GOLD_ACCENT, relief=tk.FLAT
+        )
+        self.bt_pwd_entry.pack(side=tk.LEFT, ipady=3)
+        self.bt_pwd_entry.bind("<Return>", lambda e: self._unlock_backtest_admin())
+
+        btn_unlock = tk.Button(
+            card, text="🔑 MỞ KHÓA ADMIN", bg=GOLD_ACCENT, fg="#000000",
+            activebackground="#ffd700", activeforeground="#000000",
+            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=18, pady=5, cursor="hand2",
+            command=self._unlock_backtest_admin
+        )
+        btn_unlock.pack(pady=(12, 4))
+
+        self.bt_pwd_err_lbl = tk.Label(
+            card, text="", bg="#131822", fg=RED_DOWN, font=("Segoe UI", 8, "bold")
+        )
+        self.bt_pwd_err_lbl.pack()
+
+    def _focus_backtest_password(self):
+        if hasattr(self, "bt_pwd_entry") and self.bt_pwd_entry.winfo_exists():
+            self.bt_pwd_entry.focus_set()
+
+    def _unlock_backtest_admin(self):
+        entered = str(self.bt_pass_var.get()).strip()
+        if entered == "admin":
+            self._backtest_unlocked = True
+            self.bt_pass_var.set("")
+            self.bt_pwd_err_lbl.config(text="")
+            self.bt_lock_frame.pack_forget()
+            self.bt_main_frame.pack(fill=tk.BOTH, expand=True)
+            if hasattr(self, "bottom_notebook") and hasattr(self, "backtest_tab"):
+                self.bottom_notebook.tab(self.backtest_tab, text="🧪 KIỂM THỬ CHIẾN LƯỢC (BACKTEST)")
+            self.show_toast("Đã mở khóa Quản trị viên (Admin Mode)!", is_error=False, duration_ms=2500)
+            self.log("[BACKTEST] Đã xác thực thành công quyền Quản trị viên (Admin).")
+        else:
+            self.bt_pwd_err_lbl.config(text="❌ Sai mật khẩu quản trị viên! Vui lòng thử lại.")
+            self.bt_pwd_entry.config(bg="#3d1f24")
+            self.root.after(800, lambda: self.bt_pwd_entry.config(bg="#1c2433") if hasattr(self, "bt_pwd_entry") and self.bt_pwd_entry.winfo_exists() else None)
+
+    def _lock_backtest_admin(self):
+        self._backtest_unlocked = False
+        self._bt_cancel_flag = True
+        self.bt_main_frame.pack_forget()
+        self.bt_lock_frame.pack(fill=tk.BOTH, expand=True)
+        if hasattr(self, "bottom_notebook") and hasattr(self, "backtest_tab"):
+            self.bottom_notebook.tab(self.backtest_tab, text="🔒 BACKTEST (ADMIN)")
+        self.show_toast("Đã khóa lại tính năng Backtest!", is_error=False, duration_ms=2000)
+
+    def _build_backtest_workspace(self):
+        """Dựng toàn bộ không gian làm việc kiểm thử chiến lược Backtest."""
+        # 1. THANH ĐIỀU KHIỂN & CHỌN NGÀY BẮT ĐẦU / KẾT THÚC
+        ctrl_frame = tk.Frame(self.bt_main_frame, bg="#131822", padx=6, pady=4)
+        ctrl_frame.pack(fill=tk.X, padx=6, pady=(4, 2))
+
+        tk.Label(ctrl_frame, text="Mã:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
+        self.bt_sym_combo = ttk.Combobox(ctrl_frame, textvariable=self.bt_sym_var, values=["XAUUSDm", "BTCUSDm", "XAUUSD", "BTCUSD"], width=8, state="readonly")
+        self.bt_sym_combo.pack(side=tk.LEFT, padx=(0, 6))
+
+        tk.Label(ctrl_frame, text="Khung:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
+        self.bt_tf_combo = ttk.Combobox(ctrl_frame, textvariable=self.bt_tf_var, values=["M1", "M5", "M15", "M30", "H1"], width=4, state="readonly")
+        self.bt_tf_combo.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Chọn ngày bắt đầu kèm nút mở Lịch Pop-up (DatePickerDialog)
+        tk.Label(ctrl_frame, text="Từ ngày:", bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(2, 2))
+        start_entry = tk.Entry(ctrl_frame, textvariable=self.bt_start_var, width=10, bg="#1c2433", fg="#ffffff", font=("Consolas", 8, "bold"), relief=tk.FLAT)
+        start_entry.pack(side=tk.LEFT, ipady=1)
+        start_entry.bind("<Double-Button-1>", lambda e: self._open_calendar_popup(self.bt_start_var))
+        tk.Button(
+            ctrl_frame, text="📅", bg="#232d3f", fg=GOLD_ACCENT, relief=tk.FLAT, font=("Segoe UI", 8),
+            padx=4, pady=0, cursor="hand2", command=lambda: self._open_calendar_popup(self.bt_start_var)
+        ).pack(side=tk.LEFT, padx=(2, 6))
+
+        # Chọn ngày kết thúc kèm nút mở Lịch Pop-up
+        tk.Label(ctrl_frame, text="Đến ngày:", bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(2, 2))
+        end_entry = tk.Entry(ctrl_frame, textvariable=self.bt_end_var, width=10, bg="#1c2433", fg="#ffffff", font=("Consolas", 8, "bold"), relief=tk.FLAT)
+        end_entry.pack(side=tk.LEFT, ipady=1)
+        end_entry.bind("<Double-Button-1>", lambda e: self._open_calendar_popup(self.bt_end_var))
+        tk.Button(
+            ctrl_frame, text="📅", bg="#232d3f", fg=GOLD_ACCENT, relief=tk.FLAT, font=("Segoe UI", 8),
+            padx=4, pady=0, cursor="hand2", command=lambda: self._open_calendar_popup(self.bt_end_var)
+        ).pack(side=tk.LEFT, padx=(2, 6))
+
+        tk.Label(ctrl_frame, text="Vốn ($):", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
+        tk.Entry(ctrl_frame, textvariable=self.bt_capital_var, width=6, bg="#1c2433", fg="#ffffff", font=("Consolas", 8), relief=tk.FLAT).pack(side=tk.LEFT, ipady=1, padx=(0, 4))
+
+        tk.Label(ctrl_frame, text="Lot:", bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(2, 2))
+        tk.Entry(ctrl_frame, textvariable=self.bt_lot_var, width=5, bg="#1c2433", fg="#ffffff", font=("Consolas", 8), relief=tk.FLAT).pack(side=tk.LEFT, ipady=1, padx=(0, 6))
+
+        # Nhóm nút bấm tác vụ
+        tk.Button(
+            ctrl_frame, text="🔒 Khóa", bg="#232d3f", fg=TEXT_MUTED,
+            font=("Segoe UI", 8), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
+            command=self._lock_backtest_admin
+        ).pack(side=tk.RIGHT, padx=2)
+
+        tk.Button(
+            ctrl_frame, text="💾 Áp Dụng Thông Số Này", bg="#163832", fg="#00e676",
+            activebackground="#00e676", activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=1, cursor="hand2",
+            command=self._apply_bt_settings_to_menu
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            ctrl_frame, text="⏹ Dừng", bg="#4a1e24", fg="#ff4b60",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=1, cursor="hand2",
+            command=self._stop_backtest_worker
+        ).pack(side=tk.RIGHT, padx=2)
+
+        tk.Button(
+            ctrl_frame, text="▶ BẮT ĐẦU TEST", bg=GREEN_UP, fg="#000000",
+            activebackground="#00ff88", activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=9, pady=1, cursor="hand2",
+            command=self._start_backtest_worker
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            ctrl_frame, text="🔄 Lấy từ Menu", bg="#1e2c44", fg=CYAN_LIVE,
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=1, cursor="hand2",
+            command=self._copy_menu_settings_to_bt
+        ).pack(side=tk.RIGHT, padx=2)
+
+        # 2. THANH TRẠNG THÁI & TIẾN ĐỘ KIỂM THỬ (PROGRESS BAR)
+        status_box = tk.Frame(self.bt_main_frame, bg="#0e131b", padx=8, pady=2)
+        status_box.pack(fill=tk.X, padx=6, pady=(0, 2))
+
+        self.bt_status_lbl = tk.Label(
+            status_box, text="Sẵn sàng kiểm thử. Chọn khoảng ngày và nhấn '▶ BẮT ĐẦU TEST'.",
+            bg="#0e131b", fg=TEXT_MUTED, font=("Consolas", 8), anchor="w"
+        )
+        self.bt_status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.bt_progress_canvas = tk.Canvas(status_box, width=160, height=8, bg="#1c2433", highlightthickness=0)
+        self.bt_progress_canvas.pack(side=tk.RIGHT, padx=(4, 0))
+        self.bt_progress_bar = self.bt_progress_canvas.create_rectangle(0, 0, 0, 8, fill=GREEN_UP, outline="")
+
+        # 3. DÃY 6 THẺ KPI SCORECARDS CHỈ SỐ TÀI CHÍNH
+        kpi_frame = tk.Frame(self.bt_main_frame, bg=PANEL_BG)
+        kpi_frame.pack(fill=tk.X, padx=6, pady=(1, 3))
+        for col_idx in range(6):
+            kpi_frame.columnconfigure(col_idx, weight=1, uniform="kpi")
+
+        self.bt_kpi_total_lbl = self._create_kpi_card(kpi_frame, 0, "TỔNG LỆNH", "0 Lệnh", GOLD_ACCENT)
+        self.bt_kpi_winrate_lbl = self._create_kpi_card(kpi_frame, 1, "WIN RATE (%)", "0.0%", GREEN_UP)
+        self.bt_kpi_pnl_lbl = self._create_kpi_card(kpi_frame, 2, "LÃI RÒNG ($)", "+0.00 $", CYAN_LIVE)
+        self.bt_kpi_pf_lbl = self._create_kpi_card(kpi_frame, 3, "PROFIT FACTOR", "0.00", GOLD_ACCENT)
+        self.bt_kpi_dd_lbl = self._create_kpi_card(kpi_frame, 4, "MAX DRAWDOWN", "-0.00$", RED_DOWN)
+        self.bt_kpi_maxwin_lbl = self._create_kpi_card(kpi_frame, 5, "LÃI TB / LỆNH", "+0.00 $", TEXT_MAIN)
+
+        # 4. CHIA 2 NỬA: BẢNG LỆNH BÊN TRÁI (60%) & ĐỒ THỊ EQUITY CURVE BÊN PHẢI (40%)
+        paned = tk.PanedWindow(self.bt_main_frame, orient=tk.HORIZONTAL, bg="#1a2230", sashwidth=4)
+        paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+
+        # Nửa Trái: Bảng chi tiết toàn bộ các lệnh mô phỏng
+        left_tbl_frame = tk.Frame(paned, bg=PANEL_BG)
+        paned.add(left_tbl_frame, minsize=350, stretch="always")
+
+        cols = ("ticket", "in_time", "out_time", "duration", "type", "lot", "in_price", "out_price", "pnl", "reason")
+        headers = {
+            "ticket": "Mã Lệnh", "in_time": "Giờ Vào", "out_time": "Giờ Đóng", "duration": "Thời Gian",
+            "type": "Loại", "lot": "Lot", "in_price": "Giá Vào", "out_price": "Giá Ra",
+            "pnl": "Lãi Ròng ($)", "reason": "Lý Do Đóng"
+        }
+        widths = {
+            "ticket": 65, "in_time": 95, "out_time": 95, "duration": 70,
+            "type": 45, "lot": 45, "in_price": 75, "out_price": 75,
+            "pnl": 85, "reason": 130
+        }
+
+        self.bt_tree = ttk.Treeview(left_tbl_frame, columns=cols, show="headings", height=5)
+        sb_y = ttk.Scrollbar(left_tbl_frame, orient="vertical", command=self.bt_tree.yview)
+        self.bt_tree.configure(yscrollcommand=sb_y.set)
+        sb_y.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bt_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for c in cols:
+            self.bt_tree.heading(c, text=headers[c])
+            self.bt_tree.column(c, width=widths[c], anchor=tk.CENTER)
+
+        self.bt_tree.tag_configure("tag_win", foreground=GREEN_UP)
+        self.bt_tree.tag_configure("tag_loss", foreground=RED_DOWN)
+        self.bt_tree.tag_configure("tag_be", foreground=GOLD_ACCENT)
+
+        # Nửa Phải: Đồ thị đường cong vốn tài khoản (Equity Curve)
+        right_chart_frame = tk.Frame(paned, bg="#0b0e14", highlightthickness=1, highlightbackground="#1b2435")
+        paned.add(right_chart_frame, minsize=260, stretch="always")
+
+        chart_hdr = tk.Frame(right_chart_frame, bg="#131822", padx=6, pady=2)
+        chart_hdr.pack(fill=tk.X)
+        tk.Label(
+            chart_hdr, text="📈 ĐỒ THỊ TĂNG TRƯỞNG VỐN (EQUITY CURVE)",
+            bg="#131822", fg=CYAN_LIVE, font=("Segoe UI", 8, "bold")
+        ).pack(side=tk.LEFT)
+
+        self.bt_chart_canvas = tk.Canvas(right_chart_frame, bg="#0b0e14", highlightthickness=0)
+        self.bt_chart_canvas.pack(fill=tk.BOTH, expand=True)
+        self.bt_chart_canvas.bind("<Configure>", lambda e: self._draw_equity_curve(self._bt_equity_points))
+
+    def _create_kpi_card(self, parent: tk.Frame, col_idx: int, title: str, init_val: str, val_color: str) -> tk.Label:
+        """Tạo thẻ hiển thị chỉ số tài chính dạng hộp nhỏ."""
+        box = tk.Frame(parent, bg="#131822", padx=4, pady=2, highlightthickness=1, highlightbackground="#1c2433")
+        box.grid(row=0, column=col_idx, sticky="nsew", padx=2)
+        tk.Label(box, text=title, bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 7, "bold")).pack()
+        lbl = tk.Label(box, text=init_val, bg="#131822", fg=val_color, font=("Segoe UI", 9, "bold"))
+        lbl.pack()
+        return lbl
+
+    def _copy_menu_settings_to_bt(self):
+        """Sao chép toàn bộ thông số đang chọn ở Menu bên trái vào cấu hình Backtest."""
+        pk = self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        sym = str(cfg.get("symbol", self.symbol_var.get())).strip()
+        tf = str(cfg.get("tf", self.tf_var.get())).strip()
+        lot = str(cfg.get("lot", self.lot_var.get())).strip()
+
+        if sym:
+            self.bt_sym_var.set(sym)
+        if tf:
+            self.bt_tf_var.set(tf)
+        if lot:
+            self.bt_lot_var.set(lot)
+
+        self.show_toast(f"Đã nạp thông số Tab [{pk}] vào bộ kiểm thử Backtest!", is_error=False, duration_ms=2500)
+
+    def _apply_bt_settings_to_menu(self):
+        """Lưu ngược lại các thông số vừa kiểm thử thành công vào Menu bot chính."""
+        sym = self.bt_sym_var.get().strip()
+        is_btc = "BTC" in sym.upper()
+        target_pk = "BTCUSD" if is_btc else "XAUUSD"
+
+        self.symbol_var.set(sym)
+        self.tf_var.set(self.bt_tf_var.get().strip())
+        self.lot_var.set(self.bt_lot_var.get().strip())
+
+        self.save_user_settings()
+        self.show_toast(f"✓ Đã áp dụng thông số vào Tab [{target_pk}] & Lưu thành công!", is_error=False, duration_ms=3000)
+
+    def _update_bt_status(self, msg: str, pct: int):
+        """Cập nhật thanh tiến độ và thông điệp trạng thái."""
+        if hasattr(self, "bt_status_lbl") and self.bt_status_lbl.winfo_exists():
+            self.bt_status_lbl.config(text=msg)
+        if hasattr(self, "bt_progress_canvas") and self.bt_progress_canvas.winfo_exists():
+            w = max(int(160 * (min(max(pct, 0), 100) / 100.0)), 0)
+            self.bt_progress_canvas.coords(self.bt_progress_bar, 0, 0, w, 8)
+
+    def _start_backtest_worker(self):
+        """Khởi động luồng ngầm chạy mô phỏng Backtest không đơ giật UI."""
+        if getattr(self, "_bt_worker_running", False):
+            self.show_toast("Kiểm thử đang chạy, vui lòng đợi!", is_error=True)
+            return
+
+        self._bt_cancel_flag = False
+        self._bt_worker_running = True
+        self._update_bt_status("Đang khởi tạo môi trường kiểm thử...", 2)
+
+        def _runner():
+            try:
+                self._run_backtest_simulation()
+            except Exception as e:
+                self.root.after(0, lambda: self._update_bt_status(f"Lỗi kiểm thử: {str(e)}", 0))
+                self.root.after(0, lambda: self.show_toast(f"Lỗi Backtest: {str(e)}", is_error=True, duration_ms=4000))
+            finally:
+                self._bt_worker_running = False
+
+        self._bt_worker_thread = threading.Thread(target=_runner, daemon=True)
+        self._bt_worker_thread.start()
+
+    def _stop_backtest_worker(self):
+        """Dừng tiến trình kiểm thử."""
+        if getattr(self, "_bt_worker_running", False):
+            self._bt_cancel_flag = True
+            self._update_bt_status("Đang hủy tiến trình kiểm thử...", 0)
+            self.show_toast("Đang dừng Backtest...", is_error=False, duration_ms=2000)
+
+    def _run_backtest_simulation(self):
+        """Động cơ mô phỏng giao dịch quá khứ chuẩn xác theo nến lịch sử và đệm giật giá của sàn Exness."""
+        sym = self.bt_sym_var.get().strip()
+        tf_str = self.bt_tf_var.get().strip()
+        start_s = self.bt_start_var.get().strip()
+        end_s = self.bt_end_var.get().strip()
+
+        try:
+            init_cap = float(self.bt_capital_var.get() or 1000)
+        except Exception:
+            init_cap = 1000.0
+        try:
+            lot = float(self.bt_lot_var.get() or 0.02)
+        except Exception:
+            lot = 0.02
+
+        try:
+            start_d = datetime.strptime(start_s, "%Y-%m-%d").date()
+            end_d = datetime.strptime(end_s, "%Y-%m-%d").date()
+        except Exception:
+            self.root.after(0, lambda: self.show_toast("Định dạng ngày không hợp lệ (YYYY-MM-DD)!", is_error=True))
+            return
+
+        if start_d > end_d:
+            start_d, end_d = end_d, start_d
+
+        start_dt = datetime(start_d.year, start_d.month, start_d.day, 0, 0, 0, tzinfo=VN_TZ)
+        end_dt = datetime(end_d.year, end_d.month, end_d.day, 23, 59, 59, tzinfo=VN_TZ)
+
+        tf_map = {
+            "M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5, "M15": mt5.TIMEFRAME_M15,
+            "M30": mt5.TIMEFRAME_M30, "H1": mt5.TIMEFRAME_H1
+        } if MT5_AVAILABLE else {}
+
+        mt5_tf = tf_map.get(tf_str, getattr(mt5, "TIMEFRAME_M5", 5))
+
+        self.root.after(0, lambda: self._update_bt_status("Đang tải dữ liệu nến từ MetaTrader 5...", 5))
+
+        rates = None
+        if MT5_AVAILABLE:
+            with self._mt5_lock:
+                # Đệm 7200s (2 giờ) để khớp múi giờ Server MT5
+                query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - 7200)
+                query_to = datetime.fromtimestamp(int(end_dt.timestamp()) + 7200)
+                rates = mt5.copy_rates_range(sym, mt5_tf, query_from, query_to)
+
+        if rates is None or len(rates) < 30:
+            self.root.after(0, lambda: self.show_toast(f"Không lấy được nến lịch sử của {sym} trong khoảng ngày này!", is_error=True))
+            self.root.after(0, lambda: self._update_bt_status("Kiểm thử thất bại: Không đủ nến lịch sử từ MT5.", 0))
+            return
+
+        total_bars = len(rates)
+        self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến. Đang mô phỏng giao dịch theo thuật toán...", 15))
+
+        is_btc = "BTC" in sym.upper()
+        pk = "BTCUSD" if is_btc else "XAUUSD"
+        cfg = self._get_profile_cfg(pk)
+        def_cfg = DEFAULT_PROFILE_SETTINGS.get(pk, {})
+
+        sl_atr = float(cfg.get("sl_atr", def_cfg.get("sl_atr", "1.5")))
+        sl_buffer = float(cfg.get("sl_buffer", def_cfg.get("sl_buffer", "20.0" if is_btc else "0.5")))
+        max_sl_price = float(cfg.get("max_sl_price", def_cfg.get("max_sl_price", "350.0" if is_btc else "5.0")))
+        rr = float(cfg.get("rr", def_cfg.get("rr", "2.0")))
+        auto_be = bool(cfg.get("auto_be", def_cfg.get("auto_be", True)))
+        be_trigger_r = float(cfg.get("be_trigger_r", def_cfg.get("be_trigger_r", "1.0")))
+        be_plus_price = float(cfg.get("be_plus_price", def_cfg.get("be_plus_price", "5.0" if is_btc else "0.2")))
+        auto_trail = bool(cfg.get("auto_trail", def_cfg.get("auto_trail", True)))
+        trail_dist_r = float(cfg.get("trail_dist_r", def_cfg.get("trail_dist_r", "0.35")))
+        max_hold_mins = int(float(cfg.get("max_hold_mins", def_cfg.get("max_hold_mins", "0"))))
+
+        trades = []
+        equity = init_cap
+        equity_curve = [(0, equity)]
+        bar_idx = 20
+        contract_size = 1.0 if is_btc else 100.0
+
+        while bar_idx < total_bars - 1 and not self._bt_cancel_flag:
+            pct = 15 + int((bar_idx / total_bars) * 80)
+            if bar_idx % 40 == 0:
+                self.root.after(0, lambda p=pct, b=bar_idx: self._update_bt_status(f"Đang mô phỏng nến {b}/{total_bars}...", p))
+
+            window = rates[bar_idx-14:bar_idx]
+            closes = [r[4] for r in window]
+            highs = [r[2] for r in window]
+            lows = [r[3] for r in window]
+
+            # Tính ATR 14
+            trs = []
+            for j in range(1, len(window)):
+                h = highs[j]
+                l = lows[j]
+                pc = closes[j-1]
+                tr = max(h - l, abs(h - pc), abs(l - pc))
+                trs.append(tr)
+            atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
+
+            cur_bar = rates[bar_idx]
+            cur_time = datetime.fromtimestamp(int(cur_bar[0]), tz=VN_TZ)
+            cur_close = float(cur_bar[4])
+
+            # Logic bắt tín hiệu mô phỏng đột phá Swing & Momentum
+            ma_short = np.mean(closes[-3:])
+            ma_long = np.mean(closes[-10:])
+            swing_high = max(highs[-10:-1])
+            swing_low = min(lows[-10:-1])
+
+            signal = None
+            if cur_close > swing_high and ma_short > ma_long:
+                signal = "BUY"
+            elif cur_close < swing_low and ma_short < ma_long:
+                signal = "SELL"
+
+            if signal is not None:
+                raw_sl_dist = atr * sl_atr
+                total_sl_dist = raw_sl_dist + sl_buffer
+                if max_sl_price > 0.0:
+                    total_sl_dist = min(total_sl_dist, max_sl_price)
+                total_sl_dist = max(total_sl_dist, 8.0 if is_btc else 0.5)
+
+                entry_price = cur_close
+                if signal == "BUY":
+                    sl_price = entry_price - total_sl_dist
+                    tp_price = entry_price + (total_sl_dist * (rr if rr > 0 else 1.5))
+                else:
+                    sl_price = entry_price + total_sl_dist
+                    tp_price = entry_price - (total_sl_dist * (rr if rr > 0 else 1.5))
+
+                one_r_dist = total_sl_dist
+                be_moved = False
+                out_price = entry_price
+                exit_reason = "Đóng cuối phiên"
+                close_bar_idx = bar_idx + 1
+
+                # Quét từng nến tương lai để theo dõi diễn biến lệnh
+                for f_idx in range(bar_idx + 1, total_bars):
+                    close_bar_idx = f_idx
+                    f_bar = rates[f_idx]
+                    f_high = float(f_bar[2])
+                    f_low = float(f_bar[3])
+                    f_close = float(f_bar[4])
+                    f_time = datetime.fromtimestamp(int(f_bar[0]), tz=VN_TZ)
+
+                    hold_mins = (f_time - cur_time).total_seconds() / 60.0
+
+                    if signal == "BUY":
+                        fav_dist = f_high - entry_price
+                        # 1. Kích hoạt dời BE
+                        if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
+                            sl_price = max(sl_price, entry_price + be_plus_price)
+                            be_moved = True
+
+                        # 2. Bám giá Trailing Stop
+                        if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
+                            trail_sl = f_high - (one_r_dist * trail_dist_r)
+                            sl_price = max(sl_price, trail_sl)
+
+                        # 3. Giữ lệnh tối đa (Time-Stop)
+                        if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
+                            out_price = f_close
+                            exit_reason = "Time-Stop (Hết giờ)"
+                            break
+
+                        # 4. Kiểm tra chạm SL hoặc TP
+                        if f_low <= sl_price:
+                            out_price = sl_price
+                            exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
+                            break
+                        elif f_high >= tp_price:
+                            out_price = tp_price
+                            exit_reason = "Chốt lãi (TP)"
+                            break
+                    else:
+                        fav_dist = entry_price - f_low
+                        # 1. Kích hoạt dời BE
+                        if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
+                            sl_price = min(sl_price, entry_price - be_plus_price)
+                            be_moved = True
+
+                        # 2. Bám giá Trailing Stop
+                        if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
+                            trail_sl = f_low + (one_r_dist * trail_dist_r)
+                            sl_price = min(sl_price, trail_sl)
+
+                        # 3. Giữ lệnh tối đa (Time-Stop)
+                        if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
+                            out_price = f_close
+                            exit_reason = "Time-Stop (Hết giờ)"
+                            break
+
+                        # 4. Kiểm tra chạm SL hoặc TP
+                        if f_high >= sl_price:
+                            out_price = sl_price
+                            exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
+                            break
+                        elif f_low <= tp_price:
+                            out_price = tp_price
+                            exit_reason = "Chốt lãi (TP)"
+                            break
+
+                # Tính PnL trừ Spread sàn Exness
+                spread_pts = 6.4 if is_btc else 0.20
+                if signal == "BUY":
+                    pnl_raw = (out_price - entry_price) * lot * contract_size
+                else:
+                    pnl_raw = (entry_price - out_price) * lot * contract_size
+
+                spread_cost = spread_pts * lot * contract_size
+                net_pnl = round(pnl_raw - spread_cost, 2)
+                equity += net_pnl
+
+                out_time = datetime.fromtimestamp(int(rates[close_bar_idx][0]), tz=VN_TZ)
+                dur_secs = max(60, int((out_time - cur_time).total_seconds()))
+                dur_str = self._format_duration(dur_secs)
+
+                trade_record = {
+                    "ticket": f"#{len(trades)+1:04d}",
+                    "in_time": cur_time.strftime("%d/%m %H:%M"),
+                    "out_time": out_time.strftime("%d/%m %H:%M"),
+                    "duration": dur_str,
+                    "type": signal,
+                    "lot": f"{lot:.2f}",
+                    "in_price": f"{entry_price:.2f}",
+                    "out_price": f"{out_price:.2f}",
+                    "pnl": net_pnl,
+                    "reason": exit_reason
+                }
+                trades.append(trade_record)
+                equity_curve.append((len(trades), round(equity, 2)))
+
+                bar_idx = max(bar_idx + 1, close_bar_idx)
+            else:
+                bar_idx += 1
+
+        self._bt_trades_cache = trades
+        self._bt_equity_points = equity_curve
+
+        self.root.after(0, lambda: self._render_backtest_results(trades, equity_curve, init_cap))
+
+    def _render_backtest_results(self, trades: list, equity_curve: list, init_cap: float):
+        """Xuất toàn bộ kết quả lên Treeview bảng lệnh, 6 thẻ Scorecard và biểu đồ Canvas."""
+        # 1. Đổ dữ liệu vào Treeview
+        if hasattr(self, "bt_tree") and self.bt_tree.winfo_exists():
+            for item in self.bt_tree.get_children():
+                self.bt_tree.delete(item)
+
+            for t in reversed(trades):
+                pnl_val = t["pnl"]
+                tag = "tag_win" if pnl_val > 0.05 else ("tag_loss" if pnl_val < -0.05 else "tag_be")
+                row_vals = (
+                    t["ticket"], t["in_time"], t["out_time"], t["duration"],
+                    t["type"], t["lot"], t["in_price"], t["out_price"],
+                    f"{pnl_val:+.2f} $", t["reason"]
+                )
+                self.bt_tree.insert("", tk.END, values=row_vals, tags=(tag,))
+
+        # 2. Tính toán chỉ số tài chính Scorecards
+        total = len(trades)
+        wins = sum(1 for t in trades if t["pnl"] > 0.05)
+        losses = sum(1 for t in trades if t["pnl"] < -0.05)
+        bes = total - wins - losses
+        win_rate = (wins / max(total, 1)) * 100.0 if total > 0 else 0.0
+
+        total_pnl = sum(t["pnl"] for t in trades)
+        win_sum = sum(t["pnl"] for t in trades if t["pnl"] > 0)
+        loss_sum = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
+        pf = (win_sum / max(loss_sum, 0.01)) if loss_sum > 0 else (99.0 if win_sum > 0 else 0.0)
+        avg_trade = (total_pnl / max(total, 1)) if total > 0 else 0.0
+
+        # Tính Max Drawdown
+        peak = init_cap
+        max_dd = 0.0
+        max_dd_pct = 0.0
+        for _, eq in equity_curve:
+            if eq > peak:
+                peak = eq
+            dd = peak - eq
+            if dd > max_dd:
+                max_dd = dd
+                max_dd_pct = (dd / peak) * 100.0 if peak > 0 else 0.0
+
+        # 3. Cập nhật nhãn Scorecards
+        if hasattr(self, "bt_kpi_total_lbl"):
+            self.bt_kpi_total_lbl.config(text=f"{total} Lệnh ({wins}W - {losses}L - {bes}BE)")
+        if hasattr(self, "bt_kpi_winrate_lbl"):
+            self.bt_kpi_winrate_lbl.config(text=f"{win_rate:.1f}%", fg=GREEN_UP if win_rate >= 55.0 else (GOLD_ACCENT if win_rate >= 45.0 else RED_DOWN))
+        if hasattr(self, "bt_kpi_pnl_lbl"):
+            self.bt_kpi_pnl_lbl.config(text=f"{total_pnl:+,.2f} $", fg=GREEN_UP if total_pnl >= 0 else RED_DOWN)
+        if hasattr(self, "bt_kpi_pf_lbl"):
+            self.bt_kpi_pf_lbl.config(text=f"{pf:.2f}", fg=GREEN_UP if pf >= 1.5 else (GOLD_ACCENT if pf >= 1.0 else RED_DOWN))
+        if hasattr(self, "bt_kpi_dd_lbl"):
+            self.bt_kpi_dd_lbl.config(text=f"-{max_dd:.2f}$ ({max_dd_pct:.1f}%)")
+        if hasattr(self, "bt_kpi_maxwin_lbl"):
+            self.bt_kpi_maxwin_lbl.config(text=f"{avg_trade:+,.2f} $/lệnh", fg=GREEN_UP if avg_trade >= 0 else RED_DOWN)
+
+        # 4. Cập nhật thanh tiến độ và vẽ biểu đồ Equity Curve
+        self._update_bt_status(f"✓ Kiểm thử hoàn tất: {total} lệnh | Win Rate: {win_rate:.1f}% | Lãi ròng: {total_pnl:+,.2f} USD.", 100)
+        self._draw_equity_curve(equity_curve)
+
+    def _draw_equity_curve(self, points: list):
+        """Vẽ biểu đồ đường cong tăng trưởng vốn (Equity Curve) trực quan trên Tkinter Canvas."""
+        if not hasattr(self, "bt_chart_canvas") or not self.bt_chart_canvas.winfo_exists():
+            return
+        c = self.bt_chart_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w < 60 or h < 60:
+            return
+
+        if not points or len(points) < 2:
+            c.create_text(w / 2, h / 2, text="Chưa có dữ liệu đồ thị Backtest", fill=TEXT_MUTED, font=("Segoe UI", 9))
+            return
+
+        pad_left = 65
+        pad_right = 25
+        pad_top = 25
+        pad_bottom = 25
+
+        plot_w = w - pad_left - pad_right
+        plot_h = h - pad_top - pad_bottom
+
+        vals = [p[1] for p in points]
+        min_v = min(vals)
+        max_v = max(vals)
+        if max_v == min_v:
+            max_v += 10.0
+            min_v -= 10.0
+
+        v_range = max_v - min_v
+        n_pts = len(points)
+
+        # Khung nền đồ thị
+        c.create_rectangle(pad_left, pad_top, pad_left + plot_w, pad_top + plot_h, outline="#1f293d", fill="#0e121a")
+
+        # Lưới ngang & nhãn giá trị
+        for g_idx in range(5):
+            gy = pad_top + plot_h * (g_idx / 4.0)
+            gv = max_v - v_range * (g_idx / 4.0)
+            c.create_line(pad_left, gy, pad_left + plot_w, gy, fill="#182030", dash=(2, 2))
+            c.create_text(pad_left - 8, gy, text=f"${gv:,.0f}", fill=TEXT_MUTED, font=("Consolas", 7), anchor="e")
+
+        # Tọa độ các điểm trên Canvas
+        coords = []
+        for i, (tr_idx, val) in enumerate(points):
+            x = pad_left + plot_w * (i / max(n_pts - 1, 1))
+            y = pad_top + plot_h * (1.0 - (val - min_v) / v_range)
+            coords.append((x, y))
+
+        # Đổ bóng đa giác bên dưới đường cong
+        poly_coords = [coords[0][0], pad_top + plot_h]
+        for x, y in coords:
+            poly_coords.extend([x, y])
+        poly_coords.extend([coords[-1][0], pad_top + plot_h])
+        fill_color = "#102a24" if vals[-1] >= vals[0] else "#2a1518"
+        c.create_polygon(poly_coords, fill=fill_color, outline="")
+
+        # Vẽ đường cong tăng trưởng vốn Neon
+        line_color = "#00e676" if vals[-1] >= vals[0] else "#ff4b60"
+        for i in range(len(coords) - 1):
+            c.create_line(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1], fill=line_color, width=2, smooth=True)
+
+        # Chấm tròn điểm đầu và điểm cuối
+        c.create_oval(coords[0][0] - 3, coords[0][1] - 3, coords[0][0] + 3, coords[0][1] + 3, fill=GOLD_ACCENT, outline="")
+        c.create_oval(coords[-1][0] - 4, coords[-1][1] - 4, coords[-1][0] + 4, coords[-1][1] + 4, fill=line_color, outline="#ffffff")
+        c.create_text(coords[-1][0], coords[-1][1] - 12, text=f"${vals[-1]:,.2f}", fill=line_color, font=("Consolas", 8, "bold"))
 
     def _init_right_paned_sash(self):
         """Đặt vị trí ban đầu cho thanh kéo giãn giữa Biểu đồ và Bảng lệnh."""
@@ -4165,9 +4861,13 @@ class KronosDesktopApp:
             self._update_forecast_tab_header()
             if self.cached_mean_df is None and not self.is_analyzing:
                 self.trigger_single_scan(profile_key=self.active_profile_key)
-        else:
+        elif selected_idx == 3:
             # Tab 3: LỊCH SỬ GIAO DỊCH & XUẤT EXCEL
             self._refresh_history_tab()
+        elif selected_idx == 4:
+            # Tab 4: KIỂM THỬ CHIẾN LƯỢC (BACKTEST)
+            if not getattr(self, "_backtest_unlocked", False):
+                self._focus_backtest_password()
 
         self.user_zoomed = False
         self.saved_xlim = None
