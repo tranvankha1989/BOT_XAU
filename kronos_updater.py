@@ -297,8 +297,14 @@ class AppUpdater:
 
                     target_file = APP_ROOT / rel_path
                     target_file.parent.mkdir(parents=True, exist_ok=True)
-                    with z.open(member) as source, open(target_file, "wb") as target:
-                        target.write(source.read())
+                    try:
+                        with z.open(member) as source, open(target_file, "wb") as target:
+                            target.write(source.read())
+                    except PermissionError:
+                        # Nếu tệp DLL/PYD đang được Windows nạp vào RAM, an toàn bỏ qua vì thư viện gốc không đổi
+                        if norm_rel.lower().endswith((".pyd", ".dll", ".exe")):
+                            continue
+                        raise
 
             if progress_cb:
                 progress_cb(100, "Cập nhật hoàn tất! Đang khởi động lại ứng dụng...")

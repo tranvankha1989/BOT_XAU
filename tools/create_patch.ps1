@@ -96,18 +96,16 @@ if (Test-Path $pyTkDir) {
     Write-Host "  + Da them: _internal\tkinter (*.py de cuu may ao VM)" -ForegroundColor DarkGray
 }
 
-# Bo sung backend_tkagg va _backend_tk vao _internal/matplotlib/backends de cuu may ao
+# Bo sung backend_tkagg va _backend_tk vao _internal/matplotlib/backends de cuu may ao (chi chep file .py, khong chep .pyd vi bi Windows khoa khi app dang chay)
 $pyMplBackends = "C:\Users\tranv\AppData\Local\Programs\Python\Python311\Lib\site-packages\matplotlib\backends"
 if (Test-Path $pyMplBackends) {
     $targetMplDir = Join-Path $stagingDir "_internal\matplotlib\backends"
     New-Item -ItemType Directory -Path $targetMplDir -Force | Out-Null
     Copy-Item -Path "$pyMplBackends\backend_tkagg.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
     Copy-Item -Path "$pyMplBackends\_backend_tk.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
-    Copy-Item -Path "$pyMplBackends\_tkagg*.pyd" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
     Copy-Item -Path "$pyMplBackends\backend_agg.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
-    Copy-Item -Path "$pyMplBackends\_backend_agg*.pyd" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
     Copy-Item -Path "$pyMplBackends\__init__.py" -Destination $targetMplDir -Force -ErrorAction SilentlyContinue
-    Write-Host "  + Da them: _internal\matplotlib\backends (de cuu may ao VM)" -ForegroundColor DarkGray
+    Write-Host "  + Da them: _internal\matplotlib\backends (.py runtime)" -ForegroundColor DarkGray
 }
 
 # Don sach __pycache__ va cac file rac
