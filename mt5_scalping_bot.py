@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.3"
+            self.app_version = "1.1.4"
             self.updater = None
 
         self._has_new_version = False

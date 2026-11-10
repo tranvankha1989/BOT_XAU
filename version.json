@@ -1,6 +1,6 @@
 {
-  "version": "1.1.3",
+  "version": "1.1.4",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.3:\n- Tích hợp Module Kiểm Thử Chiến Lược Tick-Level (Tab 4: Backtest) với khóa bảo vệ quyền Quản trị viên (Admin Mode - Mật khẩu: 'admin').\n- Hỗ trợ chọn linh hoạt khoảng ngày bắt đầu và kết thúc với cửa sổ lịch pop-up chuẩn giao diện dark gold (DatePickerDialog).\n- Mô phỏng toàn diện logic dời SL về hòa vốn (BE+), bám giá Trailing Stop, cắt lệnh hết giờ (Time-Stop) và khấu trừ spread sàn Exness.\n- Biểu đồ tăng trưởng tài sản (Equity Curve Canvas) và bộ 6 thẻ tài chính (Win Rate %, Profit Factor, Max Drawdown, Lãi ròng).\n- Cho phép lấy cấu hình trực tiếp từ Menu bot và áp dụng ngược lại cấu hình tối ưu chỉ với 1 click."
+  "description": "Phiên bản v1.1.4:\n- Đột phá cơ chế Cập Nhật Trực Tiếp Không Cần Restart App (In-Place Hot-Patch): Tải và áp dụng tính năng mới ngay trong phiên làm việc hiện tại, tuyệt đối không ngắt kết nối MetaTrader 5, không đóng cửa sổ và không làm gián đoạn các lệnh đang giao dịch.\n- Tối ưu hóa Module Kiểm Thử Chiến Lược (Tab 4: Backtest): Chạy trực tiếp theo Khung Phân Tích (Analysis TF) và Khung Vào Lệnh (Execution TF) được cài đặt trên Menu bên trái.\n- Cơ chế nạp nến kép chuẩn thực tế 100%: Tải song song 60 nến Khung Phân Tích để Não AI Kronos dự báo kịch bản xu hướng, kết hợp nến Khung Vào Lệnh để tính toán ATR động và kích hoạt lệnh.\n- Tự động hoán đổi cấu hình cài đặt theo mã chọn giao dịch (XAUUSD / BTCUSD) và nút 'Áp dụng thông số' tự động lưu chuẩn xác vào hồ sơ cặp tương ứng.\n- Khắc phục triệt để lỗi shape mismatch nến lịch sử khi Não AI phân tích trong môi trường kiểm thử Backtest."
 }
