@@ -1,6 +1,6 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.5",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.4:\n- Đột phá cơ chế Cập Nhật Trực Tiếp Không Cần Restart App (In-Place Hot-Patch): Tải và áp dụng tính năng mới ngay trong phiên làm việc hiện tại, tuyệt đối không ngắt kết nối MetaTrader 5, không đóng cửa sổ và không làm gián đoạn các lệnh đang giao dịch.\n- Tối ưu hóa Module Kiểm Thử Chiến Lược (Tab 4: Backtest): Chạy trực tiếp theo Khung Phân Tích (Analysis TF) và Khung Vào Lệnh (Execution TF) được cài đặt trên Menu bên trái.\n- Cơ chế nạp nến kép chuẩn thực tế 100%: Tải song song 60 nến Khung Phân Tích để Não AI Kronos dự báo kịch bản xu hướng, kết hợp nến Khung Vào Lệnh để tính toán ATR động và kích hoạt lệnh.\n- Tự động hoán đổi cấu hình cài đặt theo mã chọn giao dịch (XAUUSD / BTCUSD) và nút 'Áp dụng thông số' tự động lưu chuẩn xác vào hồ sơ cặp tương ứng.\n- Khắc phục triệt để lỗi shape mismatch nến lịch sử khi Não AI phân tích trong môi trường kiểm thử Backtest."
+  "description": "Phiên bản v1.1.5:\n- Khắc phục triệt để lỗi biểu đồ bị giá đâm xuyên qua trục Y: Tự động kéo theo giá (Dynamic Pull & Auto Rescale) ngay trong luồng vẽ nhanh Real-Time, giữ trọn vẹn râu nến và giá Live luôn hiển thị trong tầm mắt 100% khi thị trường biến động mạnh.\n- Hoàn thiện tính năng Cập Nhật Trực Tiếp Không Cần Restart App (In-Place Hot-Patch): Áp dụng các tính năng mới ngay trong phiên làm việc hiện tại mà không đóng cửa sổ, không ngắt kết nối MetaTrader 5 và không làm gián đoạn lệnh đang chạy.\n- Tối ưu hóa tính toán vùng nhìn trục Y bao trọn cả đường Chờ giá hồi (Pullback), dải kịch bản AI và các mốc SL/TP an toàn với khoảng đệm 10% đỉnh đáy."
 }
