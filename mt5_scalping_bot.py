@@ -3322,6 +3322,14 @@ class KronosDesktopApp:
             self.root.after(0, lambda: self._update_bt_status("Kiểm thử thất bại: Không đủ nến lịch sử từ MT5.", 0))
             return
 
+        # Chuẩn hóa bảng nến lịch sử thành DataFrame chuẩn với đầy đủ các cột phục vụ Não AI và phân tích kỹ thuật
+        df_rates_all = pd.DataFrame(rates)
+        if "timestamps" not in df_rates_all.columns:
+            df_rates_all["timestamps"] = pd.to_datetime(df_rates_all["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
+        if "volume" not in df_rates_all.columns:
+            df_rates_all["volume"] = df_rates_all["tick_volume"].astype(float) if "tick_volume" in df_rates_all.columns else 1.0
+        rate_times = df_rates_all["time"].values
+
         # Nạp AI Predictor nếu người dùng bật Não AI Kronos
         predictor = None
         if use_ai:
@@ -3368,21 +3376,23 @@ class KronosDesktopApp:
                 atr = 20.0 if is_btc else 1.5
 
                 if is_candle_event:
-                    past_rates = [r for r in rates if r[0] <= cur_sec]
-                    if len(past_rates) >= 20:
-                        trs = [max(past_rates[j][2] - past_rates[j][3], abs(past_rates[j][2] - past_rates[j-1][4]), abs(past_rates[j][3] - past_rates[j-1][4])) for j in range(max(1, len(past_rates)-14), len(past_rates))]
+                    idx_cut = int(np.searchsorted(rate_times, cur_sec, side="right"))
+                    if idx_cut >= 20:
+                        sub_recent = df_rates_all.iloc[max(0, idx_cut - 14):idx_cut]
+                        highs = sub_recent["high"].values
+                        lows = sub_recent["low"].values
+                        closes = sub_recent["close"].values
+                        trs = [max(highs[j] - lows[j], abs(highs[j] - closes[j-1]), abs(lows[j] - closes[j-1])) for j in range(1, len(highs))]
                         atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
 
-                        if use_ai and predictor is not None and len(past_rates) >= 50:
-                            sub = past_rates[-60:]
-                            df_ai = pd.DataFrame(sub, columns=["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"])
-                            df_ai["timestamps"] = pd.to_datetime(df_ai["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
-                            x_ts = df_ai["timestamps"].copy().reset_index(drop=True)
+                        if use_ai and predictor is not None and idx_cut >= 50:
+                            sub_df = df_rates_all.iloc[max(0, idx_cut - 60):idx_cut].copy().reset_index(drop=True)
+                            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
                             dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
                             y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
                             try:
-                                scenarios = self._fast_predict_scenarios(predictor, df_ai, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                                last_c = float(df_ai["close"].iloc[-1])
+                                scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                                last_c = float(sub_df["close"].iloc[-1])
                                 bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
                                 bear_cnt = len(scenarios) - bull_cnt
                                 b_pct = (bull_cnt / len(scenarios)) * 100.0
@@ -3397,10 +3407,10 @@ class KronosDesktopApp:
 
                         if signal is None and not use_ai:
                             # Thuật toán kỹ thuật dự phòng
-                            recent = past_rates[-14:]
-                            closes = [r[4] for r in recent]
-                            highs = [r[2] for r in recent]
-                            lows = [r[3] for r in recent]
+                            recent = df_rates_all.iloc[max(0, idx_cut - 14):idx_cut]
+                            closes = recent["close"].values
+                            highs = recent["high"].values
+                            lows = recent["low"].values
                             ma_short = np.mean(closes[-3:])
                             ma_long = np.mean(closes[-10:])
                             swing_high = max(highs[-10:-1])
@@ -3499,7 +3509,7 @@ class KronosDesktopApp:
                         net_pnl = round((entry_price - out_price) * lot * contract_size, 2)
 
                     equity += net_pnl
-                    out_time = datetime.fromtimestamp(s1_bars[close_sec_idx][0], tz=VN_TZ)
+                    out_time = datetime.fromtimestamp(s1_bars[min(close_sec_idx, total_s1 - 1)][0], tz=VN_TZ)
                     dur_secs = max(1, int((out_time - cur_time).total_seconds()))
                     dur_str = self._format_duration(dur_secs)
 
@@ -3552,15 +3562,13 @@ class KronosDesktopApp:
 
                 signal = None
                 if use_ai and predictor is not None and bar_idx >= 50:
-                    sub = rates[max(0, bar_idx-60):bar_idx]
-                    df_ai = pd.DataFrame(sub, columns=["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"])
-                    df_ai["timestamps"] = pd.to_datetime(df_ai["time"], unit="s", utc=True).dt.tz_convert(VN_TZ)
-                    x_ts = df_ai["timestamps"].copy().reset_index(drop=True)
+                    sub_df = df_rates_all.iloc[max(0, bar_idx-60):bar_idx].copy().reset_index(drop=True)
+                    x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
                     dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
                     y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
                     try:
-                        scenarios = self._fast_predict_scenarios(predictor, df_ai, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                        last_c = float(df_ai["close"].iloc[-1])
+                        scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                        last_c = float(sub_df["close"].iloc[-1])
                         bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
                         bear_cnt = len(scenarios) - bull_cnt
                         b_pct = (bull_cnt / len(scenarios)) * 100.0
@@ -3670,7 +3678,7 @@ class KronosDesktopApp:
                     net_pnl = round(pnl_raw - spread_cost, 2)
                     equity += net_pnl
 
-                    out_time = datetime.fromtimestamp(int(rates[close_bar_idx][0]), tz=VN_TZ)
+                    out_time = datetime.fromtimestamp(int(rates[min(close_bar_idx, total_bars - 1)][0]), tz=VN_TZ)
                     dur_secs = max(60, int((out_time - cur_time).total_seconds()))
                     dur_str = self._format_duration(dur_secs)
 
