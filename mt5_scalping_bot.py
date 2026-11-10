@@ -2179,7 +2179,7 @@ class KronosDesktopApp:
             sashpad=1,
             sashrelief=tk.RAISED,
             sashcursor="size_ns",
-            opaqueresize=True
+            opaqueresize=False
         )
         self.right_paned.pack(fill=tk.BOTH, expand=True)
 
@@ -3892,6 +3892,11 @@ class KronosDesktopApp:
         self._request_canvas_redraw(full=False)
 
     def _on_mouse_motion(self, event):
+        now_mono = time.monotonic()
+        if (now_mono - getattr(self, "_last_mouse_motion_ts", 0.0)) < 0.020:
+            return
+        self._last_mouse_motion_ts = now_mono
+
         if self._drag_start_px is None:
             if self._is_on_price_axis(event):
                 self.canvas_widget.config(cursor="sb_v_double_arrow")
@@ -4282,7 +4287,7 @@ class KronosDesktopApp:
             return
         try:
             with self._mt5_lock:
-                mt5_ok = bool(MT5_AVAILABLE and mt5.initialize())
+                mt5_ok = bool(MT5_AVAILABLE and (mt5.terminal_info() is not None or mt5.initialize()))
             if mt5_ok:
                 active_pk = self.active_profile_key
                 symbol = self.symbol_var.get().strip()
@@ -5114,8 +5119,7 @@ class KronosDesktopApp:
             positions = []
 
         selected_tickets = [tree_widget.item(item, "values")[0] for item in tree_widget.selection()]
-        for row in tree_widget.get_children():
-            tree_widget.delete(row)
+        target_rows = []
 
         total_profit = 0.0
         auto_be = bool(cfg.get("auto_be", True))
@@ -5250,19 +5254,14 @@ class KronosDesktopApp:
                             status_str = f"Trailing ({current_r:+.2f}R)"
 
             tag = "profit_pos" if pos.profit >= 0 else "profit_neg"
-            item_id = tree_widget.insert(
-                "", tk.END,
-                values=(
-                    str(pos.ticket), open_time, dur_str, pos.symbol, type_str, f"{pos.volume:.2f}",
-                    f"{pos.price_open:.2f}", f"{pos.price_current:.2f}",
-                    f"{pos.sl:.2f}" if pos.sl > 0 else "---",
-                    f"{pos.tp:.2f}" if pos.tp > 0 else "---",
-                    f"{pos.profit:+.2f} $", status_str
-                ),
-                tags=(tag,)
+            pos_vals = (
+                str(pos.ticket), open_time, dur_str, pos.symbol, type_str, f"{pos.volume:.2f}",
+                f"{pos.price_open:.2f}", f"{pos.price_current:.2f}",
+                f"{pos.sl:.2f}" if pos.sl > 0 else "---",
+                f"{pos.tp:.2f}" if pos.tp > 0 else "---",
+                f"{pos.profit:+.2f} $", status_str
             )
-            if str(pos.ticket) in selected_tickets:
-                tree_widget.selection_add(item_id)
+            target_rows.append((str(pos.ticket), pos_vals, tag))
 
         # Thêm toàn bộ các lệnh đã chốt hôm nay (hiển thị chung trong cùng bảng, xếp mới nhất lên đầu)
         closed_deals = self._get_today_closed_deals(symbol=symbol)
@@ -5272,26 +5271,42 @@ class KronosDesktopApp:
             tag = "closed_pos" if cd.get("category") == "WIN" else ("closed_neg" if cd.get("category") == "LOSS" else "closed_be")
             r_ratio_str = f" ({cd.get('r_ratio_str', '')})" if cd.get("r_ratio_str") else ""
             cat_tag = f" [{cd.get('category', '')}]" if cd.get("category") else ""
-            item_id = tree_widget.insert(
-                "", tk.END,
-                values=(
-                    str(cd["ticket"]),
-                    cd["time_display"],
-                    cd.get("duration", "---"),
-                    cd["symbol"],
-                    cd["type"],
-                    f"{cd['volume']:.2f}",
-                    f"{cd['open_price']:.2f}" if cd["open_price"] > 0 else "---",
-                    f"{cd['close_price']:.2f} [Đóng]",
-                    f"{cd.get('sl', 0.0):.2f}" if cd.get('sl', 0.0) > 0 else "---",
-                    f"{cd.get('tp', 0.0):.2f}" if cd.get('tp', 0.0) > 0 else "---",
-                    f"{cd['net_pnl']:+.2f} $",
-                    f"{cd['status']}{r_ratio_str}{cat_tag}"
-                ),
-                tags=(tag,)
+            cd_vals = (
+                str(cd["ticket"]),
+                cd["time_display"],
+                cd.get("duration", "---"),
+                cd["symbol"],
+                cd["type"],
+                f"{cd['volume']:.2f}",
+                f"{cd['open_price']:.2f}" if cd["open_price"] > 0 else "---",
+                f"{cd['close_price']:.2f} [Đóng]",
+                f"{cd.get('sl', 0.0):.2f}" if cd.get('sl', 0.0) > 0 else "---",
+                f"{cd.get('tp', 0.0):.2f}" if cd.get('tp', 0.0) > 0 else "---",
+                f"{cd['net_pnl']:+.2f} $",
+                f"{cd['status']}{r_ratio_str}{cat_tag}"
             )
-            if str(cd["ticket"]) in selected_tickets:
-                tree_widget.selection_add(item_id)
+            target_rows.append((str(cd["ticket"]), cd_vals, tag))
+
+        # Cập nhật thông minh (Diff-update) tránh xóa-dựng lại bảng mỗi giây gây giật chuột
+        existing_items = tree_widget.get_children()
+        same_structure = (len(existing_items) == len(target_rows))
+        if same_structure:
+            for item_id, (t_str, vals, tag) in zip(existing_items, target_rows):
+                cur_vals = tree_widget.item(item_id, "values")
+                if cur_vals and str(cur_vals[0]) == t_str:
+                    if cur_vals != vals:
+                        tree_widget.item(item_id, values=vals, tags=(tag,))
+                else:
+                    same_structure = False
+                    break
+
+        if not same_structure:
+            for row in existing_items:
+                tree_widget.delete(row)
+            for t_str, vals, tag in target_rows:
+                new_id = tree_widget.insert("", tk.END, values=vals, tags=(tag,))
+                if t_str in selected_tickets:
+                    tree_widget.selection_add(new_id)
 
         # Chốt lời chùm lệnh (Basket Take Profit): Nếu tổng lãi các lệnh đang chạy đạt mức cài đặt (basket_tp_usd > 0)
         try:
