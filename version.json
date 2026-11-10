@@ -1,6 +1,6 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.6:\n- Đột phá giao diện Kiểm Thử Chiến Lược (Tab 4: Backtest) với luồng trực quan hóa Real-Time (Live Streaming): Bảng danh sách lệnh tự động chèn ngay lập tức từng lệnh vừa khớp (Chốt lãi TP, Cắt lỗ SL, Hòa vốn BE+) kèm màu sắc trực quan thay vì chờ đến khi hết mô phỏng.\n- Bộ 6 thẻ chỉ số tài chính (Scorecards) nhảy số liên tục theo diễn biến khớp lệnh: Tổng lệnh (W-L-BE), Win Rate %, Lãi ròng ($), Profit Factor và Max Drawdown.\n- Đồ thị đường cong tăng trưởng vốn (Equity Curve) tự động vẽ sóng uốn lượn thời gian thực theo từng lệnh đóng.\n- Thanh trạng thái tiến độ tích hợp hiển thị số lệnh đã khớp kèm số tiền lãi/lỗ thời gian thực."
+  "description": "Phiên bản v1.1.7:\n- Cô lập hoàn toàn bộ thông số Backtest với Bot Live: Chuyển đổi mã kiểm thử hoặc mở Tab Backtest không còn tự động hoán đổi cấu hình của Menu Bot Live.\n- Đổi tên nút thành '[💾 Áp Dụng Vào Bot Live]' kèm hộp thoại cảnh báo xác nhận (Popup) bảo vệ người dùng, ngăn chặn việc vô tình ghi đè cấu hình Live của Tab Vàng.\n- Tối ưu hóa tính năng nạp thông số từ Menu sang Backtest và đồng bộ hiển thị khung thời gian kiểm thử trực quan."
 }

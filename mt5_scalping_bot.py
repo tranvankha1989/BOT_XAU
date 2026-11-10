@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.6"
+            self.app_version = "1.1.7"
             self.updater = None
 
         self._has_new_version = False
@@ -3013,7 +3013,7 @@ class KronosDesktopApp:
         ).pack(side=tk.RIGHT, padx=2)
 
         tk.Button(
-            ctrl_frame, text="💾 Áp Dụng Thông Số Này", bg="#163832", fg="#00e676",
+            ctrl_frame, text="💾 Áp Dụng Vào Bot Live", bg="#163832", fg="#00e676",
             activebackground="#00e676", activeforeground="#000000",
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=1, cursor="hand2",
             command=self._apply_bt_settings_to_menu
@@ -3125,55 +3125,70 @@ class KronosDesktopApp:
         return lbl
 
     def _update_bt_tf_display(self):
-        """Cập nhật nhãn hiển thị khung thời gian theo Menu bên trái trên thanh Backtest."""
+        """Cập nhật nhãn hiển thị khung thời gian theo cấu hình chiến lược trên thanh Backtest."""
         if hasattr(self, "bt_tf_info_lbl") and self.bt_tf_info_lbl.winfo_exists():
             sym = self.bt_sym_var.get().strip()
             pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
             cfg = self._get_profile_cfg(pk)
-            ana_tf = str(cfg.get("analysis_tf", self.analysis_tf_var.get() if hasattr(self, "analysis_tf_var") else "M15")).strip()
-            scalp_tf = str(cfg.get("tf", self.tf_var.get() if hasattr(self, "tf_var") else "M5")).strip()
+            ana_tf = str(cfg.get("analysis_tf", "M15")).strip()
+            scalp_tf = str(cfg.get("tf", "M5")).strip()
             desc = f"{ana_tf}" if ana_tf == scalp_tf else f"{ana_tf} ➔ {scalp_tf}"
-            self.bt_tf_info_lbl.config(text=f"⚡ Khung: {desc} (Menu)")
+            self.bt_tf_info_lbl.config(text=f"⚡ Khung: {desc} (Menu {pk})")
 
     def _copy_menu_settings_to_bt(self):
-        """Sao chép toàn bộ thông số đang chọn ở Menu bên trái vào cấu hình Backtest."""
-        pk = self.active_profile_key
-        cfg = self._get_profile_cfg(pk)
-        sym = str(cfg.get("symbol", self.symbol_var.get())).strip()
-        lot = str(cfg.get("lot", self.lot_var.get())).strip()
+        """Sao chép thông số từ Menu cấu hình sang thanh Backtest của mã đang chọn mà không làm đổi cấu hình Live."""
+        sym = self.bt_sym_var.get().strip()
+        is_btc = "BTC" in sym.upper()
+        target_pk = "BTCUSD" if is_btc else "XAUUSD"
+        cfg = self._get_profile_cfg(target_pk)
+        cfg_sym = str(cfg.get("symbol", sym)).strip()
+        cfg_lot = str(cfg.get("lot", "0.01" if is_btc else "0.02")).strip()
 
-        if sym:
-            self.bt_sym_var.set(sym)
-        if lot:
-            self.bt_lot_var.set(lot)
+        if cfg_sym:
+            self.bt_sym_var.set(cfg_sym)
+        if cfg_lot:
+            self.bt_lot_var.set(cfg_lot)
 
         self._update_bt_tf_display()
-        self.show_toast(f"Đã nạp thông số Tab [{pk}] vào bộ kiểm thử Backtest!", is_error=False, duration_ms=2500)
+        self.show_toast(f"Đã nạp thông số từ Menu [{target_pk}] vào Backtest!", is_error=False, duration_ms=2500)
 
     def _on_bt_symbol_changed(self, event=None):
-        """Khi người dùng chọn mã tiền tệ ở Backtest (BTC / XAU): Tự động chuyển Menu sang mã đó và nạp thông số hiện tại."""
+        """Khi người dùng chọn mã tiền tệ ở Backtest (BTC / XAU): Cập nhật thông số Backtest tương ứng mà KHÔNG hoán đổi Menu Bot Live."""
         sym = self.bt_sym_var.get().strip()
         is_btc = "BTC" in sym.upper()
         target_pk = "BTCUSD" if is_btc else "XAUUSD"
 
-        # 1. Chuyển Menu bên trái sang đúng Tab mã tương ứng
-        if self.active_profile_key != target_pk:
-            self._switch_active_profile(target_pk)
-
-        # 2. Tự động đồng bộ lot từ profile đang chọn vào Backtest
+        # Tự động nạp thông số lot tham khảo từ profile mà không chuyển đổi Profile Live
         cfg = self._get_profile_cfg(target_pk)
-        lot = str(cfg.get("lot", self.lot_var.get())).strip()
+        lot = str(cfg.get("lot", "0.01" if is_btc else "0.02")).strip()
         if lot:
             self.bt_lot_var.set(lot)
 
         self._update_bt_tf_display()
-        self.show_toast(f"Menu đã chuyển sang [{target_pk}] ({sym}) & nạp thông số hiện tại!", is_error=False, duration_ms=2500)
+        self.show_toast(f"Backtest đã chọn [{sym}] (Lot tham khảo: {lot})", is_error=False, duration_ms=2500)
 
     def _apply_bt_settings_to_menu(self):
-        """Lưu ngược lại các thông số vừa kiểm thử thành công vào Menu bot chính của đúng mã đang test."""
+        """Lưu ngược lại các thông số vừa kiểm thử thành công vào Menu Bot Live của đúng mã đang test (kèm popup xác nhận an toàn)."""
         sym = self.bt_sym_var.get().strip()
         is_btc = "BTC" in sym.upper()
         target_pk = "BTCUSD" if is_btc else "XAUUSD"
+        test_lot = self.bt_lot_var.get().strip()
+
+        # Hiển thị popup xác nhận an toàn để người dùng không bao giờ bấm nhầm làm thay đổi cấu hình Live
+        confirm = messagebox.askyesno(
+            "Xác Nhận Áp Dụng Sang Bot Live",
+            f"⚠️ CẢNH BÁO GHI ĐÈ BOT LIVE:\n\n"
+            f"Bạn có chắc chắn muốn lưu thông số từ Backtest:\n"
+            f"  • Mã giao dịch: {sym}\n"
+            f"  • Khối lượng Lot: {test_lot}\n\n"
+            f"vào cấu hình giao dịch THỰC TẾ của Tab [{target_pk}] không?\n\n"
+            f"Thao tác này sẽ ghi đè cấu hình Live của Tab [{target_pk}] ngay lập tức!\n"
+            f"(Chọn YES để lưu vào Live, chọn NO để hủy bỏ).",
+            parent=self.root
+        )
+        if not confirm:
+            self.show_toast("Đã hủy bỏ thao tác áp dụng vào Bot Live.", is_error=False, duration_ms=2000)
+            return
 
         # 1. Đảm bảo Menu đang trỏ vào đúng profile đích
         if self.active_profile_key != target_pk:
@@ -3181,14 +3196,14 @@ class KronosDesktopApp:
 
         # 2. Cập nhật các biến giao diện & lưu vào profile
         self.symbol_var.set(sym)
-        self.lot_var.set(self.bt_lot_var.get().strip())
+        self.lot_var.set(test_lot)
 
         # Đồng bộ ngược vào profile context và lưu xuống ổ cứng
         self._sync_self_to_active_ctx(include_ai_state=False)
         self.save_user_settings()
         self._update_bt_tf_display()
-        self.show_toast(f"✓ Đã lưu cài đặt Backtest vào Menu [{target_pk}] thành công!", is_error=False, duration_ms=3000)
-        self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Lot {self.bt_lot_var.get()}.")
+        self.show_toast(f"✓ Đã lưu cài đặt Backtest vào Menu Live [{target_pk}] thành công!", is_error=False, duration_ms=3000)
+        self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Lot {test_lot}.")
 
     def _clear_backtest_data(self):
         """Xóa trắng toàn bộ dữ liệu bảng lệnh, biểu đồ và chỉ số KPI để chuẩn bị chạy lượt test mới."""
@@ -5437,10 +5452,6 @@ class KronosDesktopApp:
             if not getattr(self, "_backtest_unlocked", False):
                 self._focus_backtest_password()
             else:
-                bt_sym = self.bt_sym_var.get().strip()
-                target_pk = "BTCUSD" if "BTC" in bt_sym.upper() else "XAUUSD"
-                if self.active_profile_key != target_pk:
-                    self._switch_active_profile(target_pk)
                 self._update_bt_tf_display()
 
         self.user_zoomed = False
