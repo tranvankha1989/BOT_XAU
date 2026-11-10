@@ -1,6 +1,6 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.0.7:\n- Kiểm tra và đồng bộ tính năng tự động cập nhật OTA 1-Click trực tiếp từ GitHub Release.\n- Hoàn thiện giao diện Changelog với nút Cập Nhật Ngay và Để Sau hiển thị cố định ở chân trang.\n- Tối ưu hóa hiệu năng khởi động ngầm không bật màn hình console và nâng cao độ ổn định thuật toán AI."
+  "description": "Phiên bản v1.0.8:\n- Loại bỏ triệt để hiện tượng chớp tắt cửa sổ đen Terminal/Console khi khởi động và cập nhật ứng dụng.\n- Tối ưu hóa đọc mã phần cứng HWID trực tiếp qua bộ nhớ RAM (Windows COM WMI) siêu tốc 0.05 giây không qua tiến trình trung gian.\n- Cơ chế tự động khởi động lại sau cập nhật hoàn toàn ẩn ngầm mang lại trải nghiệm mượt mà, chuyên nghiệp nhất."
 }

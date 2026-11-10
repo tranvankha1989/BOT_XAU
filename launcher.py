@@ -100,6 +100,8 @@ if False:
     import cryptography.hazmat.primitives.kdf.pbkdf2
     import cryptography.hazmat.primitives.hashes
     import cryptography.exceptions
+    import win32com
+    import win32com.client
 
 # Khóa bí mật dẫn xuất nội bộ của ứng dụng (32 bytes AES-256)
 PROPRIETARY_SALT = b"TRADING_AI_PRO_KHA_TRAN_DESIGN_IMMUTABLE_PROPRIETARY_SALT_2026"

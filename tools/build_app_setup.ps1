@@ -80,6 +80,8 @@ python -m PyInstaller --noconsole `
     --hidden-import="tkinter.messagebox" `
     --hidden-import="tkinter.filedialog" `
     --hidden-import="openpyxl" `
+    --hidden-import="win32com" `
+    --hidden-import="win32com.client" `
     --collect-all="matplotlib" `
     --collect-all="tkinter" `
     --collect-all="cryptography" `

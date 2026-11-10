@@ -7385,10 +7385,20 @@ def run_first_time_setup():
         "$s.Save() }"
     )
     try:
-        CREATE_NO_WINDOW = 0x08000000
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
-            check=False, creationflags=CREATE_NO_WINDOW
+            stdin=subprocess.DEVNULL,
+            startupinfo=startupinfo,
+            check=False,
+            creationflags=creationflags
         )
     except Exception:
         pass
@@ -7421,12 +7431,24 @@ def _find_other_running_bot_pids() -> list:
     if found_pids:
         return sorted(found_pids)
 
-    # 2. Quét dự phòng bằng tasklist có cờ CREATE_NO_WINDOW (ẩn 100%, không spawn powershell làm chớp màn hình)
+    # 2. Quét dự phòng bằng tasklist có cờ CREATE_NO_WINDOW và SW_HIDE (ẩn 100%, không spawn powershell làm chớp màn hình)
     try:
-        CREATE_NO_WINDOW = 0x08000000
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         res = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq pythonw.exe", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=3, creationflags=CREATE_NO_WINDOW
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            startupinfo=startupinfo,
+            creationflags=creationflags
         )
         for line in (res.stdout or "").splitlines():
             parts = [p.strip('"') for p in line.split(",")]
@@ -7456,9 +7478,21 @@ def _terminate_pids(pids: list):
             pass
         if not killed:
             try:
+                startupinfo = None
+                creationflags = 0
+                if sys.platform == "win32":
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
                 subprocess.run(
                     ["taskkill", "/F", "/PID", str(pid)],
-                    capture_output=True, timeout=3, creationflags=0x08000000
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=3,
+                    startupinfo=startupinfo,
+                    creationflags=creationflags
                 )
             except Exception:
                 pass

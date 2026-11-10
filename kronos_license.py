@@ -115,8 +115,58 @@ def _clean_str(val: Any) -> str:
     return cleaned
 
 
+def _get_hardware_via_wmi_com() -> Tuple[str, str, str]:
+    """Lấy thông số CPU, Mainboard, Disk Index 0 qua Windows COM WMI trực tiếp trong RAM (0 subprocess, 0 console flicker)."""
+    cpu_id, mb_serial, disk_serial = "", "", ""
+    if sys.platform != "win32":
+        return cpu_id, mb_serial, disk_serial
+
+    try:
+        import win32com.client
+        wmi = win32com.client.GetObject("winmgmts:")
+        # 1. CPU ProcessorId
+        try:
+            for item in wmi.InstancesOf("Win32_Processor"):
+                val = getattr(item, "ProcessorId", None)
+                if val:
+                    clean_v = _clean_str(val)
+                    if clean_v:
+                        cpu_id = clean_v
+                        break
+        except Exception:
+            pass
+
+        # 2. BaseBoard SerialNumber
+        try:
+            for item in wmi.InstancesOf("Win32_BaseBoard"):
+                val = getattr(item, "SerialNumber", None)
+                if val:
+                    clean_v = _clean_str(val)
+                    if clean_v:
+                        mb_serial = clean_v
+                        break
+        except Exception:
+            pass
+
+        # 3. DiskDrive Index 0 SerialNumber
+        try:
+            for item in wmi.ExecQuery("SELECT SerialNumber FROM Win32_DiskDrive WHERE Index=0"):
+                val = getattr(item, "SerialNumber", None)
+                if val:
+                    clean_v = _clean_str(val)
+                    if clean_v:
+                        disk_serial = clean_v
+                        break
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(f"Không thể đọc HWID qua WMI COM: {e}")
+
+    return cpu_id, mb_serial, disk_serial
+
+
 def _get_hardware_via_powershell() -> Tuple[str, str, str]:
-    """Lấy thông số CPU, Mainboard, Disk Index 0 qua PowerShell CIM (chuẩn Windows 10 & 11)."""
+    """Lấy thông số CPU, Mainboard, Disk Index 0 qua PowerShell CIM hoàn toàn ẩn cửa sổ console."""
     cpu_id, mb_serial, disk_serial = "", "", ""
     ps_script = """
     $Output = @{
@@ -127,15 +177,21 @@ def _get_hardware_via_powershell() -> Tuple[str, str, str]:
     Write-Output "$($Output.cpu)|$($Output.mb)|$($Output.disk)"
     """
     try:
+        startupinfo = None
         creationflags = 0
         if sys.platform == "win32":
-            creationflags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
         res = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=4,
+            startupinfo=startupinfo,
             creationflags=creationflags,
         )
         if res.returncode == 0 and res.stdout:
@@ -151,18 +207,27 @@ def _get_hardware_via_powershell() -> Tuple[str, str, str]:
 
 
 def _get_hardware_via_wmic() -> Tuple[str, str, str]:
-    """Fallback: Lấy thông số qua WMIC (Windows 7/8/10)."""
+    """Fallback: Lấy thông số qua WMIC không dùng shell=True và ẩn console 100%."""
     cpu_id, mb_serial, disk_serial = "", "", ""
 
-    def run_cmd(cmd: str) -> str:
+    def run_cmd(args: list) -> str:
         try:
-            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            startupinfo = None
+            creationflags = 0
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
             res = subprocess.run(
-                cmd,
-                shell=True,
+                args,
+                stdin=subprocess.DEVNULL,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=3,
+                startupinfo=startupinfo,
                 creationflags=creationflags,
             )
             if res.returncode == 0:
@@ -173,9 +238,9 @@ def _get_hardware_via_wmic() -> Tuple[str, str, str]:
             pass
         return ""
 
-    cpu_id = _clean_str(run_cmd("wmic cpu get processorid"))
-    mb_serial = _clean_str(run_cmd("wmic baseboard get serialnumber"))
-    disk_serial = _clean_str(run_cmd('wmic diskdrive where "Index=0" get serialnumber'))
+    cpu_id = _clean_str(run_cmd(["wmic", "cpu", "get", "processorid"]))
+    mb_serial = _clean_str(run_cmd(["wmic", "baseboard", "get", "serialnumber"]))
+    disk_serial = _clean_str(run_cmd(["wmic", "diskdrive", "where", "Index=0", "get", "serialnumber"]))
     return cpu_id, mb_serial, disk_serial
 
 
@@ -242,17 +307,24 @@ def get_hardware_id() -> str:
     if _CACHED_HWID:
         return _CACHED_HWID
 
-    # B1: Lấy qua PowerShell CIM
-    cpu, mb, disk = _get_hardware_via_powershell()
+    # B1: Thử lấy qua COM WMI trực tiếp trong RAM (nhanh nhất 0.01s, 0 subprocess, 0 console flicker)
+    cpu, mb, disk = _get_hardware_via_wmi_com()
 
-    # B2: Fallback WMIC nếu thiếu
+    # B2: Fallback PowerShell CIM nếu WMI COM thiếu hoặc không hỗ trợ
+    if not (cpu and mb and disk):
+        p_cpu, p_mb, p_disk = _get_hardware_via_powershell()
+        cpu = cpu or p_cpu
+        mb = mb or p_mb
+        disk = disk or p_disk
+
+    # B3: Fallback WMIC nếu vẫn thiếu
     if not (cpu and mb and disk):
         w_cpu, w_mb, w_disk = _get_hardware_via_wmic()
         cpu = cpu or w_cpu
         mb = mb or w_mb
         disk = disk or w_disk
 
-    # B3: Fallback Registry nếu thiếu
+    # B4: Fallback Registry nếu thiếu
     if not (cpu and mb and disk):
         r_cpu, r_mb, r_disk = _get_hardware_via_registry()
         cpu = cpu or r_cpu

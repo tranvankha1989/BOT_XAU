@@ -90,30 +90,11 @@ class AppUpdater:
         self._cached_github_token = None
 
     def _get_github_token(self) -> str:
-        """Lấy token GitHub từ biến môi trường hoặc Windows Git Credential Manager hoàn toàn ngầm không bật console."""
+        """Lấy token GitHub từ biến môi trường (nếu có cấu hình riêng trên môi trường phát triển)."""
         if hasattr(self, "_cached_github_token") and self._cached_github_token is not None:
             return self._cached_github_token
 
         token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
-        if token:
-            self._cached_github_token = token
-            return token
-
-        try:
-            CREATE_NO_WINDOW = 0x08000000
-            res = subprocess.run(
-                ["git", "credential", "fill"],
-                input="protocol=https\nhost=github.com\n\n",
-                text=True, capture_output=True, timeout=2.0,
-                creationflags=CREATE_NO_WINDOW
-            )
-            for line in (res.stdout or "").splitlines():
-                if line.startswith("password="):
-                    token = line.split("=", 1)[1].strip()
-                    break
-        except Exception:
-            pass
-
         self._cached_github_token = token
         return token
 
@@ -316,7 +297,14 @@ class AppUpdater:
     def restart_application(self):
         """Khởi động lại ứng dụng với phiên bản mới hoàn toàn chạy ngầm không bật console."""
         try:
-            CREATE_NO_WINDOW = 0x08000000
+            startupinfo = None
+            creationflags = 0
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
             if getattr(sys, "frozen", False):
                 cmd = [sys.executable] + sys.argv[1:]
             else:
@@ -325,7 +313,14 @@ class AppUpdater:
                 exe = str(pyw) if pyw.exists() else sys.executable
                 main_script = APP_ROOT / "mt5_scalping_bot.py"
                 cmd = [exe, "-B", str(main_script)] + sys.argv[1:]
-            subprocess.Popen(cmd, cwd=str(APP_ROOT), creationflags=CREATE_NO_WINDOW)
+
+            subprocess.Popen(
+                cmd,
+                cwd=str(APP_ROOT),
+                stdin=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+                creationflags=creationflags
+            )
             time.sleep(0.5)
             os._exit(0)
         except Exception as e:
