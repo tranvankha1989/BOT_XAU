@@ -790,16 +790,16 @@ class LicenseActivationDialog:
         # 1. Dựng đầy đủ giao diện trước
         self._build_ui()
 
-        # 2. Căn giữa màn hình chuẩn xác 100%
-        self._center_on_screen(640, 560)
+        # 2. Căn giữa màn hình chuẩn xác 100% (Kích thước gọn gàng, cân đối 580x425)
+        self._center_on_screen(580, 425)
         self.dialog.deiconify()
         self.dialog.lift()
         self.dialog.focus_force()
 
         # Đảm bảo giữ đúng vị trí trung tâm màn hình sau khi Windows hoàn tất vẽ (chống DWM cascade)
-        self.dialog.after(50, lambda: self._center_on_screen(640, 560))
+        self.dialog.after(50, lambda: self._center_on_screen(580, 425))
 
-    def _center_on_screen(self, width: int = 640, height: int = 560):
+    def _center_on_screen(self, width: int = 580, height: int = 425):
         """Căn giữa cửa sổ chính xác 100% trên màn hình hiển thị (hỗ trợ đa màn hình & DPI scaling)."""
         self.dialog.update_idletasks()
         w = width
@@ -825,24 +825,24 @@ class LicenseActivationDialog:
         self.dialog.geometry(f"{w}x{h}+{pos_x}+{pos_y}")
 
     def _build_ui(self):
-        root_f = tk.Frame(self.dialog, bg="#0f172a", padx=30, pady=25)
+        root_f = tk.Frame(self.dialog, bg="#0f172a", padx=24, pady=16)
         root_f.pack(fill=tk.BOTH, expand=True)
 
         # 1. TIÊU ĐỀ
         tk.Label(
             root_f, text="Kích Hoạt Bản Quyền Ứng Dụng",
-            bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 16, "bold")
-        ).pack(pady=(0, 4))
+            bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 15, "bold")
+        ).pack(pady=(0, 2))
 
         tk.Label(
             root_f,
             text="Vui lòng sao chép Mã thiết bị (HWID) bên dưới gửi cho Admin để nhận chuỗi mã kích hoạt Ed25519.",
-            bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 9), wraplength=560, justify="center"
-        ).pack(pady=(0, 16))
+            bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 8), wraplength=520, justify="center"
+        ).pack(pady=(0, 10))
 
         # 2. KHUNG HIỂN THỊ MÃ MÁY HWID & NÚT SAO CHÉP
-        hwid_card = tk.Frame(root_f, bg="#1e293b", highlightthickness=1, highlightbackground="#334155", padx=16, pady=12)
-        hwid_card.pack(fill=tk.X, pady=(0, 14))
+        hwid_card = tk.Frame(root_f, bg="#1e293b", highlightthickness=1, highlightbackground="#334155", padx=14, pady=8)
+        hwid_card.pack(fill=tk.X, pady=(0, 10))
 
         hwid_left = tk.Frame(hwid_card, bg="#1e293b")
         hwid_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -855,32 +855,32 @@ class LicenseActivationDialog:
         hwid_str = self.license_mgr.get_hwid()
         self.hwid_lbl = tk.Label(
             hwid_left, text=hwid_str,
-            bg="#1e293b", fg="#f59e0b", font=("Consolas", 12, "bold")
+            bg="#1e293b", fg="#f59e0b", font=("Consolas", 11, "bold")
         )
-        self.hwid_lbl.pack(anchor="w", pady=(2, 0))
+        self.hwid_lbl.pack(anchor="w", pady=(1, 0))
 
         self.copy_btn = tk.Button(
             hwid_card, text="Sao chép mã", bg="#25334c", fg="#ffffff",
             activebackground="#324567", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=12, pady=6, cursor="hand2",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
             command=self._copy_hwid
         )
         self.copy_btn.pack(side=tk.RIGHT)
 
         # 3. KHUNG NHẬP CHUỖI MÃ BẢN QUYỀN (ED25519)
         key_header = tk.Frame(root_f, bg="#0f172a")
-        key_header.pack(fill=tk.X, pady=(0, 4))
+        key_header.pack(fill=tk.X, pady=(0, 2))
         tk.Label(
             key_header, text="Chuỗi mã bản quyền (Ed25519)",
-            bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 9, "bold")
+            bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 8, "bold")
         ).pack(side=tk.LEFT)
 
         key_box = tk.Frame(root_f, bg="#090d16", highlightthickness=1, highlightbackground="#475569", padx=2, pady=2)
-        key_box.pack(fill=tk.X, pady=(0, 8))
+        key_box.pack(fill=tk.X, pady=(0, 6))
 
         self.key_text = tk.Text(
-            key_box, height=4, bg="#090d16", fg="#f8fafc", insertbackground="#f8fafc",
-            font=("Consolas", 9), relief=tk.FLAT, wrap=tk.CHAR, padx=6, pady=6
+            key_box, height=3, bg="#090d16", fg="#f8fafc", insertbackground="#f8fafc",
+            font=("Consolas", 8), relief=tk.FLAT, wrap=tk.CHAR, padx=6, pady=4
         )
         self.key_text.pack(fill=tk.BOTH, expand=True)
         self.key_text.insert("1.0", "Dán chuỗi bản quyền do Admin cấp (Bắt đầu bằng ED25519.)...")
@@ -889,30 +889,30 @@ class LicenseActivationDialog:
         # 4. THÔNG BÁO KẾT QUẢ / LỖI
         self.msg_lbl = tk.Label(
             root_f, text="", bg="#0f172a", fg="#f87171",
-            font=("Segoe UI", 8, "bold"), wraplength=560, justify="center"
+            font=("Segoe UI", 8, "bold"), wraplength=520, justify="center"
         )
-        self.msg_lbl.pack(pady=(0, 8))
+        self.msg_lbl.pack(pady=(0, 4))
 
         # 5. CÁC NÚT THAO TÁC (QUAY LẠI / XÁC THỰC)
         btn_row = tk.Frame(root_f, bg="#0f172a")
-        btn_row.pack(fill=tk.X, pady=(0, 10))
+        btn_row.pack(fill=tk.X, pady=(0, 8))
 
         cancel_txt = "Thoát Ứng Dụng" if self.is_startup_block else "Đóng"
         self.cancel_btn = tk.Button(
             btn_row, text=cancel_txt, bg="#1e293b", fg="#94a3b8",
             activebackground="#334155", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=16, pady=8, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=14, pady=6, cursor="hand2",
             command=self._on_close
         )
-        self.cancel_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.cancel_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
         self.activate_btn = tk.Button(
             btn_row, text="Xác Thực & Kích Hoạt", bg="#0284c7", fg="#ffffff",
             activebackground="#0369a1", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=16, pady=8, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=14, pady=6, cursor="hand2",
             command=self._on_activate
         )
-        self.activate_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(8, 0))
+        self.activate_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(6, 0))
 
         # 6. NÚT LIÊN HỆ QUẢN TRỊ VIÊN ĐỂ ĐƯỢC CẤP KEY (TELEGRAM)
         self.tg_icon_photo = _get_telegram_icon_image()
@@ -924,8 +924,8 @@ class LicenseActivationDialog:
             "activeforeground": "#7dd3fc",
             "font": ("Segoe UI", 9, "bold"),
             "relief": tk.FLAT,
-            "padx": 16,
-            "pady": 8,
+            "padx": 14,
+            "pady": 6,
             "cursor": "hand2",
             "highlightthickness": 1,
             "highlightbackground": "#0284c7",
@@ -937,13 +937,13 @@ class LicenseActivationDialog:
 
         self.contact_btn = tk.Button(root_f, **btn_kwargs)
         self.contact_btn.image = self.tg_icon_photo
-        self.contact_btn.pack(fill=tk.X, pady=(0, 14))
+        self.contact_btn.pack(fill=tk.X, pady=(0, 10))
 
         # 7. DÒNG CHỮ PHỤ CUỐI CÙNG
         tk.Label(
             root_f, text="Chữ ký số mật mã học Ed25519 xác thực an toàn tuyệt đối 100% offline",
             bg="#0f172a", fg="#64748b", font=("Segoe UI", 8, "italic")
-        ).pack(side=tk.BOTTOM)
+        ).pack(side=tk.BOTTOM, pady=(2, 0))
 
     def _show_telegram_contact_modal(self):
         """Mở cửa sổ hiển thị mã QR và thông tin liên hệ Admin qua Telegram."""
@@ -953,8 +953,8 @@ class LicenseActivationDialog:
         modal.resizable(False, False)
         modal.transient(self.dialog)
 
-        # Căn giữa so với cửa sổ cha
-        modal_w, modal_h = 420, 530
+        # Căn giữa so với cửa sổ cha (Kích thước gọn gàng, chuẩn xác 360x440)
+        modal_w, modal_h = 360, 440
         self.dialog.update_idletasks()
         try:
             px = self.dialog.winfo_x() + (self.dialog.winfo_width() - modal_w) // 2
@@ -970,15 +970,15 @@ class LicenseActivationDialog:
         except Exception:
             pass
 
-        container = tk.Frame(modal, bg="#0f172a", padx=24, pady=20)
+        container = tk.Frame(modal, bg="#0f172a", padx=18, pady=14)
         container.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(
             container,
             text="Liên Hệ Nhận Key Bản Quyền",
             bg="#0f172a", fg="#f8fafc",
-            font=("Segoe UI", 13, "bold")
-        ).pack(pady=(0, 4))
+            font=("Segoe UI", 12, "bold")
+        ).pack(pady=(0, 2))
 
         tk.Label(
             container,
@@ -986,10 +986,10 @@ class LicenseActivationDialog:
             bg="#0f172a", fg="#94a3b8",
             font=("Segoe UI", 8),
             justify="center"
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 8))
 
-        qr_card = tk.Frame(container, bg="#1e293b", highlightthickness=1, highlightbackground="#334155", padx=10, pady=10)
-        qr_card.pack(pady=(0, 12))
+        qr_card = tk.Frame(container, bg="#1e293b", highlightthickness=1, highlightbackground="#334155", padx=6, pady=6)
+        qr_card.pack(pady=(0, 8))
 
         qr_img_obj = _get_telegram_qr_image()
         if qr_img_obj:
@@ -1001,8 +1001,8 @@ class LicenseActivationDialog:
                 qr_card,
                 text="Mã QR Telegram: @TAPTRADEXAU",
                 bg="#1e293b", fg="#38bdf8",
-                font=("Segoe UI", 11, "bold"),
-                padx=20, pady=40
+                font=("Segoe UI", 10, "bold"),
+                padx=16, pady=30
             ).pack()
 
         user_lbl = tk.Label(
@@ -1011,10 +1011,10 @@ class LicenseActivationDialog:
             bg="#0f172a", fg="#38bdf8",
             font=("Segoe UI", 10, "bold")
         )
-        user_lbl.pack(pady=(0, 12))
+        user_lbl.pack(pady=(0, 8))
 
         btn_box = tk.Frame(container, bg="#0f172a")
-        btn_box.pack(fill=tk.X, pady=(0, 8))
+        btn_box.pack(fill=tk.X, pady=(0, 6))
 
         def open_tg():
             import webbrowser
@@ -1037,32 +1037,33 @@ class LicenseActivationDialog:
             text="Mở Chat Telegram",
             bg="#0284c7", fg="#ffffff",
             activebackground="#0369a1", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT, padx=10, pady=7, cursor="hand2",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=8, pady=6, cursor="hand2",
             command=open_tg
         )
-        open_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        open_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
 
         copy_btn = tk.Button(
             btn_box,
             text="Sao Chép Username",
             bg="#1e293b", fg="#f8fafc",
             activebackground="#334155", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT, padx=10, pady=7, cursor="hand2",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=8, pady=6, cursor="hand2",
             command=copy_user
         )
-        copy_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
+        copy_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(4, 0))
 
         close_btn = tk.Button(
             container,
             text="Đóng",
             bg="#1e293b", fg="#94a3b8",
             activebackground="#334155", activeforeground="#ffffff",
-            font=("Segoe UI", 9),
-            relief=tk.FLAT, padx=14, pady=6, cursor="hand2",
+            font=("Segoe UI", 8),
+            relief=tk.FLAT, padx=12, pady=5, cursor="hand2",
             command=modal.destroy
         )
+        close_btn.pack(fill=tk.X, pady=(2, 0))
         close_btn.pack(fill=tk.X, pady=(4, 0))
 
         modal.grab_set()
