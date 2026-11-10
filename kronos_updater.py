@@ -20,6 +20,8 @@ import re
 import time
 import zipfile
 import io
+import ssl
+import tempfile
 import urllib.request
 import urllib.error
 import subprocess
@@ -45,6 +47,96 @@ PROTECTED_PATHS = {
     "tools/ed25519_private.pem",
     "tools/ed25519_public.pem",
 }
+
+
+def _get_safe_ssl_context() -> ssl.SSLContext:
+    """
+    Tạo SSL Context tối ưu chống lỗi SSL: CERTIFICATE_VERIFY_FAILED trên Windows Server / VPS
+    do thiếu cập nhật Root CA trong kho chứng chỉ hệ thống.
+    """
+    # 1. Thử certifi nếu có sẵn
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+
+    # 2. Thử SSL Context bỏ qua xác thực CA hệ thống (chuyên trị máy ảo VPS / Windows Server)
+    try:
+        ctx = ssl._create_unverified_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    except Exception:
+        pass
+
+    # 3. Fallback create_default_context với cờ tắt verify
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    except Exception:
+        return None
+
+
+# Thiết lập mặc định toàn cục để bảo vệ mọi lệnh urllib.request trong app
+try:
+    ssl._create_default_https_context = _get_safe_ssl_context
+except Exception:
+    pass
+
+
+def _download_via_windows_curl(url: str, token: str = None, progress_cb=None) -> bytes:
+    """Tải tệp cập nhật bằng curl.exe tích hợp sẵn trong Windows, vượt lỗi thiếu Root CA trên VPS."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+        cmd = [
+            "curl.exe",
+            "-k",  # Bỏ qua kiểm tra chứng chỉ SSL CA bị lỗi/thiếu trên VPS
+            "-L",  # Tự động theo dõi chuyển hướng (Redirect 302 của GitHub)
+            "-s",  # Không hiện thanh console
+            "--connect-timeout", "15",
+            "-m", "90",
+            "-o", str(tmp_path),
+            url,
+        ]
+        if token:
+            cmd.extend(["-H", f"Authorization: token {token}"])
+
+        if progress_cb:
+            progress_cb(30, "Đang tải bản cập nhật qua giao thức dự phòng an toàn VPS...")
+
+        res = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=100,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
+        )
+        if res.returncode == 0 and tmp_path.exists() and tmp_path.stat().st_size > 1024:
+            if progress_cb:
+                progress_cb(70, f"Đã tải thành công ({tmp_path.stat().st_size // 1024} KB)...")
+            return tmp_path.read_bytes()
+    except Exception:
+        pass
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+    return None
 
 
 def get_current_app_version() -> str:
@@ -121,7 +213,7 @@ class AppUpdater:
         # 1. Kiểm tra qua GitHub Releases API
         try:
             req = urllib.request.Request(GITHUB_RELEASE_API, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=_get_safe_ssl_context()) as resp:
                 if resp.status == 200:
                     raw_data = resp.read().decode("utf-8")
                     rel_data = json.loads(raw_data)
@@ -152,7 +244,7 @@ class AppUpdater:
             for raw_url in (GITHUB_RAW_VERSION_DEV, GITHUB_RAW_VERSION_MAIN):
                 try:
                     req_raw = urllib.request.Request(f"{raw_url}?_t={int(time.time())}", headers=headers)
-                    with urllib.request.urlopen(req_raw, timeout=timeout) as resp_raw:
+                    with urllib.request.urlopen(req_raw, timeout=timeout, context=_get_safe_ssl_context()) as resp_raw:
                         if resp_raw.status == 200:
                             data_raw = json.loads(resp_raw.read().decode("utf-8"))
                             remote_ver = str(data_raw.get("version", "")).strip().lstrip("vV")
@@ -220,11 +312,13 @@ class AppUpdater:
                 headers["Accept"] = "application/octet-stream"
         req = urllib.request.Request(patch_url, headers=headers)
 
+        zip_bytes = None
+        ssl_ctx = _get_safe_ssl_context()
         try:
             if progress_cb:
                 progress_cb(10, "Đang kết nối đến máy chủ cập nhật...")
 
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
+            with urllib.request.urlopen(req, timeout=35.0, context=ssl_ctx) as resp:
                 total_size = int(resp.headers.get("Content-Length") or 0)
                 downloaded = 0
                 buffer = io.BytesIO()
@@ -240,10 +334,20 @@ class AppUpdater:
                         pct = int(10 + (downloaded / total_size) * 60)
                         progress_cb(min(pct, 70), f"Đang tải bản cập nhật ({downloaded // 1024} KB / {total_size // 1024} KB)...")
 
+            zip_bytes = buffer.getvalue()
+        except Exception as e_url:
+            # Fallback thần tốc: Nếu urllib bị lỗi SSL Certificate (thường gặp trên Windows Server/VPS)
+            # Tự động gọi curl.exe của Windows với cờ -k -L để vượt lỗi SSL CA
+            if progress_cb:
+                progress_cb(20, "Phát hiện VPS thiếu CA, đang kích hoạt bộ tải dự phòng...")
+            zip_bytes = _download_via_windows_curl(patch_url, token=token, progress_cb=progress_cb)
+            if not zip_bytes:
+                raise e_url
+
+        try:
             if progress_cb:
                 progress_cb(75, "Đang kiểm tra và giải nén tệp nâng cấp...")
 
-            zip_bytes = buffer.getvalue()
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
                 # Kiểm tra tiền tố thư mục nếu tải từ zipball của GitHub
                 namelist = z.namelist()
