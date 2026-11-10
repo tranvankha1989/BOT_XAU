@@ -1,6 +1,6 @@
 {
-  "version": "1.1.5",
+  "version": "1.1.6",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.5:\n- Khắc phục triệt để lỗi biểu đồ bị giá đâm xuyên qua trục Y: Tự động kéo theo giá (Dynamic Pull & Auto Rescale) ngay trong luồng vẽ nhanh Real-Time, giữ trọn vẹn râu nến và giá Live luôn hiển thị trong tầm mắt 100% khi thị trường biến động mạnh.\n- Hoàn thiện tính năng Cập Nhật Trực Tiếp Không Cần Restart App (In-Place Hot-Patch): Áp dụng các tính năng mới ngay trong phiên làm việc hiện tại mà không đóng cửa sổ, không ngắt kết nối MetaTrader 5 và không làm gián đoạn lệnh đang chạy.\n- Tối ưu hóa tính toán vùng nhìn trục Y bao trọn cả đường Chờ giá hồi (Pullback), dải kịch bản AI và các mốc SL/TP an toàn với khoảng đệm 10% đỉnh đáy."
+  "description": "Phiên bản v1.1.6:\n- Đột phá giao diện Kiểm Thử Chiến Lược (Tab 4: Backtest) với luồng trực quan hóa Real-Time (Live Streaming): Bảng danh sách lệnh tự động chèn ngay lập tức từng lệnh vừa khớp (Chốt lãi TP, Cắt lỗ SL, Hòa vốn BE+) kèm màu sắc trực quan thay vì chờ đến khi hết mô phỏng.\n- Bộ 6 thẻ chỉ số tài chính (Scorecards) nhảy số liên tục theo diễn biến khớp lệnh: Tổng lệnh (W-L-BE), Win Rate %, Lãi ròng ($), Profit Factor và Max Drawdown.\n- Đồ thị đường cong tăng trưởng vốn (Equity Curve) tự động vẽ sóng uốn lượn thời gian thực theo từng lệnh đóng.\n- Thanh trạng thái tiến độ tích hợp hiển thị số lệnh đã khớp kèm số tiền lãi/lỗ thời gian thực."
 }
