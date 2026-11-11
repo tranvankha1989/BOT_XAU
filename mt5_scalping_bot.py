@@ -762,7 +762,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.7"
+            self.app_version = "1.2.8"
             self.updater = None
 
         self._has_new_version = False
@@ -3637,6 +3637,110 @@ class KronosDesktopApp:
 
         return s1_bars
 
+    def _evaluate_bt_ai_candle(self, predictor, df_rates_ana: pd.DataFrame, idx_ana: int, cfg: dict, def_cfg: dict, ana_tf_str: str, is_btc: bool, atr: float) -> Optional[dict]:
+        """
+        Đánh giá tín hiệu AI trong Backtest chuẩn xác 100% đồng nhất với Não Live:
+        - Sử dụng đúng số nến lookback cài đặt (mặc định 450 nến).
+        - Sử dụng đúng số kịch bản num_scenarios (mặc định 8 kịch bản).
+        - Tự động điều chỉnh nhiệt độ thích ứng (Dynamic Temperature & Top-P theo khung M1/M5).
+        - Chấm điểm xác suất Transformer (Bayesian Log-Likelihood) + Đồng thuận quỹ đạo đa bước.
+        - Lọc bẫy giá phân tán kịch bản (max_dispersion).
+        """
+        try:
+            lookback = min(max(int(cfg.get("lookback", def_cfg.get("lookback", 450))), 50), 450)
+            num_scenarios = int(cfg.get("scenarios", def_cfg.get("scenarios", 8)))
+            min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", 75)))
+            min_move = float(cfg.get("min_move", def_cfg.get("min_move", 60.0 if is_btc else 1.2)))
+            max_dispersion = float(cfg.get("max_dispersion", def_cfg.get("max_dispersion", 2.5)))
+            sl_atr = float(cfg.get("sl_atr", def_cfg.get("sl_atr", 1.5)))
+            sl_buffer = float(cfg.get("sl_buffer", def_cfg.get("sl_buffer", 20.0 if is_btc else 0.5)))
+
+            sub_df = df_rates_ana.iloc[max(0, idx_ana - lookback):idx_ana].copy().reset_index(drop=True)
+            if len(sub_df) < 30:
+                return None
+
+            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
+            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+
+            dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(sub_df, ana_tf_str)
+            scenarios = self._fast_predict_scenarios(
+                predictor=predictor,
+                df_in=sub_df,
+                x_timestamp=x_ts,
+                y_timestamp=y_ts,
+                pred_len=6,
+                num_scenarios=num_scenarios,
+                T=dyn_t,
+                top_k=0,
+                top_p=dyn_top_p
+            )
+            if not scenarios:
+                return None
+
+            last_c = float(sub_df["close"].iloc[-1])
+            # Chấm điểm quỹ đạo đa bước (Path-Coherent Consensus)
+            bull_cnt = 0
+            bear_cnt = 0
+            for s in scenarios:
+                c_arr = s["close"].values.astype(float)
+                end_d = float(c_arr[-1]) - last_c
+                path_d = float(np.mean(c_arr)) - last_c
+                eff_d = 0.70 * end_d + 0.30 * path_d
+                if eff_d > 0.0:
+                    bull_cnt += 1
+                elif eff_d < 0.0:
+                    bear_cnt += 1
+            total_scen = len(scenarios)
+            b_pct = (bull_cnt / total_scen) * 100.0
+            s_pct = (bear_cnt / total_scen) * 100.0
+
+            # Trọng số xác suất Bayesian Log-Likelihood
+            raw_lps = np.array([float(s.attrs.get("log_prob", 0.0)) for s in scenarios], dtype=float)
+            if np.ptp(raw_lps) > 1e-6:
+                lp_shifted = np.clip((raw_lps - np.max(raw_lps)) * 0.35, -4.0, 0.0)
+                scen_weights = np.exp(lp_shifted)
+                scen_weights = scen_weights / np.sum(scen_weights)
+            else:
+                scen_weights = np.ones(total_scen, dtype=float) / max(float(total_scen), 1.0)
+
+            all_closes_mat = np.array([s["close"].values.astype(float) for s in scenarios], dtype=float)
+            mean_closes = np.average(all_closes_mat, axis=0, weights=scen_weights)
+            avg_end_close = float(mean_closes[-1])
+            exp_m = avg_end_close - last_c
+
+            # Kiểm tra độ phân tán kịch bản
+            end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
+            scenario_std = float(np.sqrt(np.average((end_closes - avg_end_close) ** 2, weights=scen_weights)))
+            dispersion_r = float(scenario_std / max(atr, 0.01))
+            if max_dispersion > 0.0 and dispersion_r > max_dispersion:
+                return None
+
+            best_idx = int(np.argmin([
+                float(np.mean(np.abs(s["close"].values.astype(float) - mean_closes))) / max(float(scen_weights[idx_s]) * total_scen, 0.35)
+                for idx_s, s in enumerate(scenarios)
+            ]))
+            mean_df = scenarios[best_idx]
+            pred_hi = float(mean_df["high"].max())
+            pred_lo = float(mean_df["low"].min())
+
+            base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
+            sig_dir = None
+            if b_pct >= min_consensus and exp_m >= min_move:
+                sig_dir = "BUY"
+                raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
+                sl_p = last_c - raw_sl_d
+            elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                sig_dir = "SELL"
+                raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
+                sl_p = last_c + raw_sl_d
+
+            if sig_dir is not None:
+                return {"signal": sig_dir, "sl_price": sl_p, "atr": atr, "mean_df": mean_df}
+        except Exception:
+            pass
+        return None
+
     def _run_backtest_simulation(self):
         """Động cơ mô phỏng giao dịch quá khứ chuẩn xác theo nến lịch sử hoặc nến Tick 1s và đệm giật giá Exness."""
         sym = self.bt_sym_var.get().strip()
@@ -3807,34 +3911,7 @@ class KronosDesktopApp:
                             ) and not self._bt_cancel_flag:
                                 time.sleep(0.05)
 
-                            sub_df = df_rates_ana.iloc[max(0, idx_ana - 60):idx_ana].copy().reset_index(drop=True)
-                            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
-                            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
-                            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
-                            try:
-                                scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                                last_c = float(sub_df["close"].iloc[-1])
-                                bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
-                                bear_cnt = len(scenarios) - bull_cnt
-                                b_pct = (bull_cnt / len(scenarios)) * 100.0
-                                s_pct = (bear_cnt / len(scenarios)) * 100.0
-                                exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
-                                pred_hi = float(max(float(s["high"].max()) for s in scenarios))
-                                pred_lo = float(min(float(s["low"].min()) for s in scenarios))
-                                base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
-                                sig_dir = None
-                                if b_pct >= min_consensus and exp_m >= min_move:
-                                    sig_dir = "BUY"
-                                    raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
-                                    sl_p = last_c - raw_sl_d
-                                elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                                    sig_dir = "SELL"
-                                    raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
-                                    sl_p = last_c + raw_sl_d
-                                if sig_dir is not None:
-                                    active_bt_zone = {"signal": sig_dir, "sl_price": sl_p, "atr": atr}
-                            except Exception:
-                                pass
+                            active_bt_zone = self._evaluate_bt_ai_candle(predictor, df_rates_ana, idx_ana, cfg, def_cfg, ana_tf_str, is_btc, atr)
                             bt_ai_cache[idx_ana] = dict(active_bt_zone) if active_bt_zone else None
                             time.sleep(0.005)
                     elif not use_ai:
@@ -4022,34 +4099,7 @@ class KronosDesktopApp:
                             ) and not self._bt_cancel_flag:
                                 time.sleep(0.05)
 
-                            sub_df = df_rates_ana.iloc[max(0, idx_ana-60):idx_ana].copy().reset_index(drop=True)
-                            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
-                            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
-                            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
-                            try:
-                                scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                                last_c = float(sub_df["close"].iloc[-1])
-                                bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
-                                bear_cnt = len(scenarios) - bull_cnt
-                                b_pct = (bull_cnt / len(scenarios)) * 100.0
-                                s_pct = (bear_cnt / len(scenarios)) * 100.0
-                                exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
-                                pred_hi = float(max(float(s["high"].max()) for s in scenarios))
-                                pred_lo = float(min(float(s["low"].min()) for s in scenarios))
-                                base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
-                                sig_dir = None
-                                if b_pct >= min_consensus and exp_m >= min_move:
-                                    sig_dir = "BUY"
-                                    raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
-                                    sl_p = last_c - raw_sl_d
-                                elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                                    sig_dir = "SELL"
-                                    raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
-                                    sl_p = last_c + raw_sl_d
-                                if sig_dir is not None:
-                                    active_bt_zone = {"signal": sig_dir, "sl_price": sl_p, "atr": atr}
-                            except Exception:
-                                pass
+                            active_bt_zone = self._evaluate_bt_ai_candle(predictor, df_rates_ana, idx_ana, cfg, def_cfg, ana_tf_str, is_btc, atr)
                             bt_ai_cache[idx_ana] = dict(active_bt_zone) if active_bt_zone else None
                             time.sleep(0.005)
                     elif not use_ai:

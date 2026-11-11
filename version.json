@@ -1,6 +1,6 @@
 {
-  "version": "1.2.7",
+  "version": "1.2.8",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.7:\n- Kiểm soát luồng CPU & Chống sốc điện áp (Anti-Power-Spike Event ID 41): Giới hạn PyTorch tối đa 4 luồng CPU mát mẻ, triệt tiêu 100% hiện tượng sụt áp sập nguồn đột ngột do quá tải AVX.\n- Cơ chế Thu hồi RAM Windows chủ động (EmptyWorkingSet): Tự động dọn rác và xả WorkingSet sau mỗi lần AI phân tích, giảm dung lượng RAM bot từ 1.4GB xuống ~300MB, loại bỏ hoàn toàn nguy cơ tràn RAM và lỗi màn hình xanh 0x12B FAULTY_HARDWARE_CORRUPTED_PAGE.\n- Tối ưu bộ nhớ đệm đa mô hình (Model Cache Management): Tự động giải phóng model cũ khi chuyển đổi mô hình AI để tránh giữ nhiều trọng số trong RAM cùng lúc."
+  "description": "Phiên bản v1.2.8:\n- Đồng bộ Động cơ Backtest chuẩn xác 100% với Não Live: Tự động nạp đủ 450 nến lịch sử và phân tích 8 kịch bản Monte Carlo (thay vì 60 nến / 4 kịch bản).\n- Áp dụng trọn vẹn thuật toán Adaptive Sampling (T=0.58/0.65), Trọng số xác suất Bayesian Log-Likelihood, Đồng thuận Quỹ đạo Đa bước và Bộ lọc Bất định Phân tán (max_dispersion) vào Backtest.\n- Kết quả kiểm thử quá khứ (Backtest) phản ánh chính xác tuyệt đối từng nhịp nến và tín hiệu giống hệt như đang chạy Live thời gian thực."
 }
