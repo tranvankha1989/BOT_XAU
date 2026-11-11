@@ -1,6 +1,6 @@
 {
-  "version": "1.2.5",
+  "version": "1.2.6",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.5:\n- Tối ưu trực quan biểu đồ: Ẩn các đường kịch bản vàng (tơ nhện), chỉ giữ 6 nến dự báo AI rõ ràng, tách biệt phía sau vạch phân cách.\n- Mặc định ẩn khung Nhật Ký Hệ Thống & 6 Nến Dự Báo AI khi khởi động giúp bảng quản lý lệnh mở rộng tối đa 100% (bấm nút 'Ẩn/Hiện Nhật Ký & AI' khi cần).\n- Triệt tiêu hoàn toàn xung đột Race Condition vùng canh giá (pending_pullback_order) giữa luồng UI và luồng phân tích AI ngầm.\n- Tối ưu hóa chữ ký cấu hình AI và chuẩn hóa log mốc thời gian nến phân tích đóng."
+  "description": "Phiên bản v1.2.6:\n- Khai thác tối đa sức mạnh mô hình Kronos cho Scalping M1/M5: Tự động điều chỉnh nhiệt độ thích ứng (T=0.58 cho M1, T=0.65 cho M5) và Top-P triệt tiêu nhiễu râu nến ngắn hạn.\n- Tích hợp Chấm điểm Xác suất Nội tại Transformer (Bayesian Log-Likelihood Weighting) và Đồng thuận Quỹ đạo Đa bước (Path-Coherent Consensus).\n- Chuẩn hóa hình học nến OHLC loại bỏ hoàn toàn lệch bóng râu hoặc hở thân nến dự báo.\n- Bổ sung Ngữ cảnh Đa tầng: Hợp nhất xu hướng cấu trúc EMA 34/89, áp lực Volume Delta và phát hiện quét râu thanh khoản (Pinbar Sweep) gia cố Độ tin cậy AI."
 }

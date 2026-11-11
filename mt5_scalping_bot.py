@@ -746,7 +746,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.5"
+            self.app_version = "1.2.6"
             self.updater = None
 
         self._has_new_version = False
@@ -8173,6 +8173,109 @@ class KronosDesktopApp:
                 self.log(f"Đã nạp xong mô hình AI trực tiếp từ thư mục máy ({device.upper()}).")
             return self.local_cache[key]
 
+    def _compute_adaptive_sampling_params(self, df_ai: pd.DataFrame, analysis_tf: str) -> tuple[float, float, str]:
+        """
+        Tự động điều chỉnh Nhiệt độ suy luận (Temperature) và Nucleus Sampling (Top-P)
+        tối ưu riêng cho Scalping M1/M5 và trạng thái biến động thực tế (Volatility Regime):
+        - M1/M5: Hạ nhiệt độ xuống 0.58 - 0.65 để triệt tiêu nhiễu râu nến ngắn hạn, hội tụ vào xung lực dòng tiền.
+        - Khi biến động bung mạnh (ATR ngắn hạn > 1.35x ATR dài hạn): Siết thêm T để khóa chặt xu hướng chính, tránh phân tán ảo.
+        """
+        tf_upper = str(analysis_tf).upper().strip()
+        base_map = {
+            "M1": (0.58, 0.80),
+            "M5": (0.65, 0.84),
+            "M15": (0.72, 0.86),
+            "H1": (0.78, 0.88),
+        }
+        base_t, base_top_p = base_map.get(tf_upper, (0.65, 0.84))
+        regime_tag = f"{tf_upper}-Scalp"
+
+        try:
+            if len(df_ai) >= 30:
+                atr_fast = self.calculate_atr(df_ai.iloc[-10:], 7)
+                atr_slow = self.calculate_atr(df_ai.iloc[-35:], 14)
+                vol_ratio = atr_fast / max(atr_slow, 1e-5)
+                if vol_ratio >= 1.35:
+                    base_t = max(0.48, round(base_t - 0.06, 2))
+                    base_top_p = max(0.75, round(base_top_p - 0.04, 2))
+                    regime_tag = f"{tf_upper}-Impulse"
+                elif vol_ratio <= 0.75:
+                    base_t = min(0.82, round(base_t + 0.04, 2))
+                    base_top_p = min(0.90, round(base_top_p + 0.02, 2))
+                    regime_tag = f"{tf_upper}-Range"
+        except Exception:
+            pass
+        return float(base_t), float(base_top_p), regime_tag
+
+    def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float) -> dict:
+        """
+        Trích xuất Ngữ cảnh Đa tầng (Macro Trend EMA34/89, Áp lực Order-Flow Volume Delta & Quét thanh khoản Râu nến)
+        trực tiếp từ chuỗi nến lịch sử sẵn có (0ms độ trễ mạng) để gia cố độ tin cậy cho Kronos Scalping M1/M5.
+        """
+        ctx_info = {
+            "macro_dir": 0,       # +1: Tăng, -1: Giảm, 0: Đi ngang
+            "orderflow_dir": 0,   # +1: Mua chủ động, -1: Bán chủ động
+            "wick_dir": 0,        # +1: Rút chân dưới (Buy Sweep), -1: Rút chân trên (Sell Sweep)
+            "summary_tag": "Cân bằng",
+        }
+        try:
+            closes = df_ana["close"].astype(float).values
+            if len(closes) >= 50:
+                s_close = pd.Series(closes)
+                ema_fast = float(s_close.ewm(span=34, adjust=False).mean().iloc[-1])
+                ema_slow = float(s_close.ewm(span=89, adjust=False).mean().iloc[-1])
+                ema_gap = (ema_fast - ema_slow) / max(atr, 1e-5)
+                if ema_gap >= 0.25 and closes[-1] >= ema_fast:
+                    ctx_info["macro_dir"] = 1
+                elif ema_gap <= -0.25 and closes[-1] <= ema_fast:
+                    ctx_info["macro_dir"] = -1
+
+            ref_df = df_scalp if (df_scalp is not None and len(df_scalp) >= 12) else df_ana
+            recent = ref_df.iloc[-12:]
+            h_v = recent["high"].astype(float).values
+            l_v = recent["low"].astype(float).values
+            o_v = recent["open"].astype(float).values
+            c_v = recent["close"].astype(float).values
+            v_v = recent["volume"].astype(float).values
+            rng = np.maximum(h_v - l_v, 1e-5)
+
+            # Volume Delta Proxy: Tỷ trọng đóng cửa kết hợp thân nến nhân với Tick Volume
+            clv = ((c_v - l_v) - (h_v - c_v)) / rng
+            body_pressure = (c_v - o_v) / rng
+            signed_vol = v_v * (0.6 * clv + 0.4 * body_pressure)
+            vol_sum = float(np.sum(v_v)) + 1e-5
+            norm_delta = float(np.sum(signed_vol)) / vol_sum
+            if norm_delta >= 0.12:
+                ctx_info["orderflow_dir"] = 1
+            elif norm_delta <= -0.12:
+                ctx_info["orderflow_dir"] = -1
+
+            # Phát hiện Quét râu thanh khoản (Liquidity Sweep / Pinbar Rejection) trên 2 nến gần nhất
+            last_2 = recent.iloc[-2:]
+            for _, row in last_2.iterrows():
+                ro, rh, rl, rc = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+                r_len = max(rh - rl, 1e-5)
+                if r_len >= 0.45 * atr:
+                    lower_wick = min(ro, rc) - rl
+                    upper_wick = rh - max(ro, rc)
+                    if lower_wick >= 0.52 * r_len and lower_wick > upper_wick * 1.6:
+                        ctx_info["wick_dir"] = 1
+                    elif upper_wick >= 0.52 * r_len and upper_wick > lower_wick * 1.6:
+                        ctx_info["wick_dir"] = -1
+
+            tags = []
+            if ctx_info["macro_dir"] != 0:
+                tags.append("Trend:Tăng" if ctx_info["macro_dir"] > 0 else "Trend:Giảm")
+            if ctx_info["orderflow_dir"] != 0:
+                tags.append("Vol:Mua" if ctx_info["orderflow_dir"] > 0 else "Vol:Bán")
+            if ctx_info["wick_dir"] != 0:
+                tags.append("RútChân:Dưới" if ctx_info["wick_dir"] > 0 else "RútChân:Trên")
+            if tags:
+                ctx_info["summary_tag"] = " | ".join(tags)
+        except Exception:
+            pass
+        return ctx_info
+
     def _fast_predict_scenarios(self, predictor, df_in: pd.DataFrame, x_timestamp: pd.Series, y_timestamp: pd.Series, pred_len: int = 6, num_scenarios: int = 8, T: float = 1.0, top_k: int = 0, top_p: float = 0.9):
         """
         Tăng tốc dự báo AI gấp 15x-25x (từ ~18 giây xuống ~0.8 giây trên CPU) mà giữ nguyên 100% độ chính xác toán học:
@@ -8180,6 +8283,7 @@ class KronosDesktopApp:
         - Single-Prefill + KV-Cache (batch=1 -> batch=N): Chạy 12 tầng Transformer trên lịch sử đúng 1 lần và lưu bộ đệm Key/Value (KV-Cache),
           sau đó ở mỗi bước dự báo chỉ tính toán trên đúng 1 nến mới sinh ra (seq_len=1).
         - KV-Cache cho cả Cross-Attention (decode_s2) và Tokenizer Decoder.
+        - Tích hợp chấm điểm Xác suất Log-Likelihood nội tại của từng kịch bản & Chuẩn hóa hình học nến OHLC.
         """
         device = predictor.device
         max_hist = max(32, min(len(df_in), predictor.max_context - pred_len))
@@ -8198,6 +8302,7 @@ class KronosDesktopApp:
 
         # Cố định Seed độc lập trong ngữ cảnh fork_rng theo dữ liệu OHLC của nến cuối cùng (không làm ảnh hưởng luồng khác)
         last_r = x_np[-1]
+        last_hist_close = float(last_r[3])
         data_seed = int(abs(hash((len(df_in), round(float(last_r[0]), 2), round(float(last_r[1]), 2), round(float(last_r[2]), 2), round(float(last_r[3]), 2))))) % (2**31 - 1)
 
         with self._ai_inference_lock, torch.random.fork_rng(), torch.no_grad():
@@ -8242,6 +8347,7 @@ class KronosDesktopApp:
 
             generated_pre = x_token_1[0].new_empty(num_scenarios, pred_len)
             generated_post = x_token_1[1].new_empty(num_scenarios, pred_len)
+            scenario_log_probs = torch.zeros(num_scenarios, dtype=torch.float32, device=device)
 
             for i in range(pred_len):
                 if i == 0:
@@ -8280,6 +8386,7 @@ class KronosDesktopApp:
                     v_dep_cache = torch.cat([v_dep_cache, v_dep_new], dim=2)
 
                 sample_pre = sample_from_logits(s1_logits, temperature=T, top_k=top_k, top_p=top_p, sample_logits=True)
+                log_p1 = F.log_softmax(s1_logits, dim=-1).gather(-1, sample_pre).squeeze(-1)
                 sib = predictor.model.embedding.emb_s1(sample_pre)
                 q_dep = ca.q_proj(sib).view(num_scenarios, 1, ca.n_heads, ca.head_dim).transpose(1, 2)
                 q_dep = (q_dep * cos_1) + (ca.rotary._rotate_half(q_dep) * sin_1)
@@ -8288,6 +8395,11 @@ class KronosDesktopApp:
                 x2_last = predictor.model.dep_layer.norm(last_ctx + ao_dep)
                 s2_logits = predictor.model.head.cond_forward(x2_last)[:, 0, :]
                 sample_post = sample_from_logits(s2_logits, temperature=T, top_k=top_k, top_p=top_p, sample_logits=True)
+                log_p2 = F.log_softmax(s2_logits, dim=-1).gather(-1, sample_post).squeeze(-1)
+
+                # Nhấn mạnh các nến đầu tiên của chuỗi Scalping (early horizon weight)
+                step_w = 1.15 if i < max(1, pred_len // 2) else 0.90
+                scenario_log_probs += (log_p1 + log_p2) * (step_w / max(float(pred_len), 1.0))
 
                 generated_pre[:, i] = sample_pre.squeeze(-1)
                 generated_post[:, i] = sample_post.squeeze(-1)
@@ -8326,13 +8438,24 @@ class KronosDesktopApp:
                 z_g = res_g + sa.out_proj(ao_g.transpose(1, 2).contiguous().view(num_scenarios, pred_len, sa.d_model))
                 z_g = z_g + layer.ffn(layer.norm2(z_g))
             preds = predictor.tokenizer.head(z_g).cpu().numpy()
+            log_probs_np = scenario_log_probs.cpu().numpy()
 
         scenarios = []
         cols = ["open", "high", "low", "close", "volume", "amount"]
         for b in range(num_scenarios):
             p_b = preds[b] * (x_std + 1e-5) + x_mean
+            # Chuẩn hóa hình học nến OHLC (đảm bảo High >= max(Open, Close), Low <= min(Open, Close) và nối mượt giá mở cửa)
+            if pred_len > 0:
+                p_b[0, 0] = 0.65 * float(p_b[0, 0]) + 0.35 * last_hist_close
+                for step_i in range(1, pred_len):
+                    p_b[step_i, 0] = 0.60 * float(p_b[step_i, 0]) + 0.40 * float(p_b[step_i - 1, 3])
+                body_top = np.maximum(p_b[:, 0], p_b[:, 3])
+                body_bot = np.minimum(p_b[:, 0], p_b[:, 3])
+                p_b[:, 1] = np.maximum(p_b[:, 1], body_top)
+                p_b[:, 2] = np.minimum(p_b[:, 2], body_bot)
             p_df = pd.DataFrame(p_b, columns=cols)
             p_df.insert(0, "timestamps", y_timestamp.values)
+            p_df.attrs["log_prob"] = float(log_probs_np[b])
             scenarios.append(p_df)
         return scenarios
 
@@ -9063,6 +9186,8 @@ class KronosDesktopApp:
 
                 scenarios = None
                 used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local (KV-Cache)"
+                dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(df_ai, analysis_tf)
+                macro_ctx = self._analyze_scalping_micro_macro_context(df, df_scalp, atr)
 
                 if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
                     try:
@@ -9107,8 +9232,8 @@ class KronosDesktopApp:
                             model_choice=hf_model_arg,
                             pred_len=pred_len,
                             num_scenarios=num_scenarios,
-                            temperature=1.0,
-                            top_p=0.9,
+                            temperature=dyn_t,
+                            top_p=dyn_top_p,
                             api_name="/scalping_m5"
                         )
                         data = json.loads(res_json)
@@ -9132,7 +9257,7 @@ class KronosDesktopApp:
                         self._set_loading_stage(62.0, f"Đang nạp mô hình {model_choice}...")
                     predictor = self.get_local_predictor(model_choice)
                     if pk == self.active_profile_key:
-                        self._set_loading_stage(82.0, f"Đang phân tích {num_scenarios} kịch bản xu hướng AI ({symbol})...")
+                        self._set_loading_stage(82.0, f"Đang phân tích {num_scenarios} kịch bản xu hướng AI ({symbol} | T={dyn_t:.2f})...")
                     scenarios = self._fast_predict_scenarios(
                         predictor=predictor,
                         df_in=df_ai,
@@ -9140,32 +9265,64 @@ class KronosDesktopApp:
                         y_timestamp=y_timestamp,
                         pred_len=pred_len,
                         num_scenarios=num_scenarios,
-                        T=1.0,
+                        T=dyn_t,
                         top_k=0,
-                        top_p=0.9
+                        top_p=dyn_top_p
                     )
 
-                bull_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_close)
-                bear_count = sum(1 for s in scenarios if float(s["close"].iloc[-1]) < last_close)
+                # Chấm điểm quỹ đạo đa bước (Path-Coherent Consensus): Kết hợp 70% giá đóng cuối + 30% xung lực trung bình toàn chuỗi
+                bull_count = 0
+                bear_count = 0
+                for s in scenarios:
+                    c_arr = s["close"].values.astype(float)
+                    end_d = float(c_arr[-1]) - last_close
+                    path_d = float(np.mean(c_arr)) - last_close
+                    eff_d = 0.70 * end_d + 0.30 * path_d
+                    if eff_d > 0.0:
+                        bull_count += 1
+                    elif eff_d < 0.0:
+                        bear_count += 1
                 total = len(scenarios)
                 bull_pct = (bull_count / total) * 100.0
                 bear_pct = (bear_count / total) * 100.0
 
-                # Tính đường giá đóng cửa trung bình của cả 8 kịch bản
-                mean_closes = np.mean([s["close"].values for s in scenarios], axis=0)
+                # Trọng số Xác suất Nội tại (Bayesian Log-Likelihood Weighting từ Transformer Logits)
+                raw_lps = np.array([float(s.attrs.get("log_prob", 0.0)) for s in scenarios], dtype=float)
+                if np.ptp(raw_lps) > 1e-6:
+                    lp_shifted = np.clip((raw_lps - np.max(raw_lps)) * 0.35, -4.0, 0.0)
+                    scen_weights = np.exp(lp_shifted)
+                    scen_weights = scen_weights / np.sum(scen_weights)
+                else:
+                    scen_weights = np.ones(total, dtype=float) / max(float(total), 1.0)
+
+                # Tính đường giá đóng cửa trung bình có trọng số xác suất của các kịch bản
+                all_closes_mat = np.array([s["close"].values.astype(float) for s in scenarios], dtype=float)
+                mean_closes = np.average(all_closes_mat, axis=0, weights=scen_weights)
                 avg_end_close = float(mean_closes[-1])
 
-                # Chọn Kịch bản Đại diện Chuẩn nhất (Medoid)
-                best_idx = int(np.argmin([np.mean(np.abs(s["close"].values - mean_closes)) for s in scenarios]))
+                # Chọn Kịch bản Đại diện Chuẩn nhất (MAP Medoid kết hợp độ khớp quỹ đạo và xác suất mô hình)
+                best_idx = int(np.argmin([
+                    float(np.mean(np.abs(s["close"].values.astype(float) - mean_closes))) / max(float(scen_weights[idx_s]) * total, 0.35)
+                    for idx_s, s in enumerate(scenarios)
+                ]))
                 mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy(deep=True)
 
-                # Phân tích Độ phân tán & Bất định kịch bản (Scenario Uncertainty Quantification)
+                # Phân tích Độ phân tán & Bất định kịch bản + Gia cố Ngữ cảnh Đa tầng (Macro Trend & Order-Flow)
                 end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
-                scenario_std = float(np.std(end_closes))
+                scenario_std = float(np.sqrt(np.average((end_closes - avg_end_close) ** 2, weights=scen_weights)))
                 dispersion_r = float(scenario_std / max(atr, 0.01))
                 dir_pct = max(bull_pct, bear_pct)
                 disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
-                confidence_pct = max(10.0, min(100.0, dir_pct * (1.0 - disp_penalty)))
+                base_conf = dir_pct * (1.0 - disp_penalty)
+                ai_dom_dir = 1 if bull_pct > bear_pct else (-1 if bear_pct > bull_pct else (1 if avg_end_close >= last_close else -1))
+                ctx_bonus = 0.0
+                if macro_ctx["macro_dir"] != 0:
+                    ctx_bonus += 4.0 if macro_ctx["macro_dir"] == ai_dom_dir else -3.5
+                if macro_ctx["orderflow_dir"] != 0:
+                    ctx_bonus += 3.5 if macro_ctx["orderflow_dir"] == ai_dom_dir else -2.5
+                if macro_ctx["wick_dir"] == ai_dom_dir:
+                    ctx_bonus += 3.5
+                confidence_pct = max(10.0, min(99.0, base_conf + ctx_bonus))
                 is_high_uncertainty = (max_dispersion > 0.0 and dispersion_r > max_dispersion)
 
                 expected_move = avg_end_close - last_close
@@ -9393,8 +9550,9 @@ class KronosDesktopApp:
                     max_sl_str += " (RR<2R)"
                 actual_rr = (dist_tp / cur_sl_dist) if cur_sl_dist > 0.001 else 0.0
                 rr_str = f"1:{actual_rr:.2f}R" if actual_rr > 0 else "---"
+                ctx_summary_str = macro_ctx.get("summary_tag", "Cân bằng")
                 detail_prefix = (
-                    f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  Phân tán: {dispersion_r:.2f}x ATR ({scenario_std:.2f}$)  |  Tin cậy AI: {confidence_pct:.0f}%\n"
+                    f"Giá đóng nến: {last_close:.2f}  |  Dự báo {pred_len} nến: {avg_end_close:.2f} ({expected_move:+.2f}$)  |  Phân tán: {dispersion_r:.2f}x ATR ({scenario_std:.2f}$)  |  Tin cậy AI: {confidence_pct:.0f}% [{regime_tag}: T={dyn_t:.2f} | {ctx_summary_str}]\n"
                     f"Gợi ý AI{ref_tag} ->  Entry: {entry_ref:.2f}   |   SL: {sl_price:.2f} (SL AI: {cur_sl_dist:.2f} giá [{max_sl_str}])   |   TP: {tp_price:.2f} (Cách {dist_tp:.2f} giá)   |   Tỷ lệ: {rr_str}"
                 )
                 ctx["_last_detail_prefix"] = detail_prefix
