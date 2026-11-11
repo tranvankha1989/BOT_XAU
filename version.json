@@ -1,6 +1,6 @@
 {
-  "version": "1.3.0",
+  "version": "1.3.1",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.3.0:\n- Khắc phục triệt để lỗi SL/TP của AI nhảy liên tục trong chu kỳ nến M5: Neo cứng tính toán Entry, SL & TP vào giá đóng nến M5 (last_close), loại bỏ việc ghi đè TP động theo giá tick trong vòng lặp canh lệnh, cố định số tiền USD ước tính trên nhãn biểu đồ giúp vùng dự báo AI đứng yên tuyệt đối 100% như đá tảng.\n- Nâng cấp Bảo vệ Đảo Chiều Đa Tầng Thông Minh (Dual-Tier Reversal Guard): Phân tách độc lập giữa lệnh CHƯA DỜI BE và lệnh ĐÃ DỜI BE.\n- Bổ sung tùy chọn 'Đồng thuận đảo chiều - Lệnh đã BE (0=Tắt, %)': Mặc định 90%, bảo vệ trọn vẹn đà gồng lãi cho các vị thế đã hòa vốn (Risk-Free), tránh tuyệt đối tình trạng bị ép chốt non khi sóng lớn tiếp diễn. Người dùng có thể đặt = 0 để thả rông lệnh đã BE tự do chạy theo TP hoặc Trailing Stop."
+  "description": "Phiên bản v1.3.1:\n- Đồng bộ thông số 'Nghỉ nếu dính SL nhanh' từ đơn vị phút sang đơn vị Số Nến theo Khung Phân Tích AI (nến AI, 0=Tắt).\n- Tự động thích ứng theo khung nến phân tích được chọn (Ví dụ: Khung AI là M5 thì 1 nến = 5 phút, 2 nến = 10 phút; Khung AI là M15 thì 1 nến = 15 phút, 2 nến = 30 phút; Khung AI là M1 thì 1 nến = 1 phút).\n- Khi lệnh bị cắn SL nhanh (< 1 nến AI phân tích), bot sẽ tự động bỏ qua số cây nến AI tiếp theo để tránh bão giá giật liên hoàn và bảo vệ tài khoản tối đa."
 }

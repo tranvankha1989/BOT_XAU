@@ -312,10 +312,15 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Số phút bot tạm dừng hoạt động sau khi chạm giới hạn thua liên tiếp hoặc chạm SL nhanh.",
         "how_to_set": "- Khuyên dùng: 30 đến 60 phút.\n- Cho thị trường thời gian hoàn thành nhịp biến động bất thường trước khi bot tiếp tục giao dịch."
     },
+    "fast_sl_cooldown_candles": {
+        "title": "Nghỉ nếu dính SL nhanh (Số nến AI)",
+        "what_is_it": "Nếu một lệnh vừa mở chưa đầy 1 cây nến AI đã bị quét cắn SL, chứng tỏ thị trường vừa có biến động giật mạnh bất thường. Bot sẽ tự ngắt tạm thời số cây nến AI tiếp theo để tránh bị quét liên hoàn.",
+        "how_to_set": "- Cài theo số cây nến của khung AI phân tích (Ví dụ AI chạy M5 thì 1 = 1 nến 5p, 2 = 2 nến 10p; AI chạy M15 thì 1 = 15p, 2 = 30p).\n- Đặt 0 để tắt."
+    },
     "fast_sl_cooldown_mins": {
-        "title": "Nghỉ nếu dính SL nhanh dưới 5 phút",
-        "what_is_it": "Nếu một lệnh vừa mở chưa đầy 5 phút đã bị quét cắn SL ngay lập tức, chứng tỏ thị trường vừa có tin giật đột biến. Bot sẽ tự ngắt tạm thời để tránh bị quét liên hoàn.",
-        "how_to_set": "- Khuyên dùng: 15 đến 30 phút (Đặt 0 để tắt)."
+        "title": "Nghỉ nếu dính SL nhanh (Số nến AI)",
+        "what_is_it": "Nếu một lệnh vừa mở chưa đầy 1 cây nến AI đã bị quét cắn SL, chứng tỏ thị trường vừa có biến động giật mạnh bất thường. Bot sẽ tự ngắt tạm thời số cây nến AI tiếp theo để tránh bị quét liên hoàn.",
+        "how_to_set": "- Cài theo số cây nến của khung AI phân tích (Ví dụ AI chạy M5 thì 1 = 1 nến 5p, 2 = 2 nến 10p; AI chạy M15 thì 1 = 15p, 2 = 30p).\n- Đặt 0 để tắt."
     },
 
     # ─── MỤC 4: PHÂN TÍCH AI & MÔ HÌNH ───
@@ -415,7 +420,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
         "cooldown_mins": "30",
-        "fast_sl_cooldown_mins": "15",
+        "fast_sl_cooldown_candles": "1",
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -465,7 +470,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
         "cooldown_mins": "30",
-        "fast_sl_cooldown_mins": "15",
+        "fast_sl_cooldown_candles": "1",
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -769,7 +774,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.3.0"
+            self.app_version = "1.3.1"
             self.updater = None
 
         self._has_new_version = False
@@ -2345,7 +2350,8 @@ class KronosDesktopApp:
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0", help_key="daily_sl_usd")
         self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0", help_key="max_consec_loss")
         self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30", help_key="cooldown_mins")
-        self.fast_sl_cooldown_mins_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL < 5 phút (phút, 0=Tắt):", "15", help_key="fast_sl_cooldown_mins")
+        self.fast_sl_cooldown_candles_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL nhanh (nến AI, 0=Tắt):", "1", help_key="fast_sl_cooldown_candles")
+        self.fast_sl_cooldown_mins_var = self.fast_sl_cooldown_candles_var
         tk.Button(
             sec3.content, text="↺ Khôi phục mặc định Mục 3 (Quản lý lệnh & Chốt lời)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -4719,7 +4725,8 @@ class KronosDesktopApp:
             "daily_sl_usd": self.daily_sl_usd_var,
             "max_consec_loss": self.max_consec_loss_var,
             "cooldown_mins": self.cooldown_mins_var,
-            "fast_sl_cooldown_mins": self.fast_sl_cooldown_mins_var,
+            "fast_sl_cooldown_candles": self.fast_sl_cooldown_candles_var,
+            "fast_sl_cooldown_mins": self.fast_sl_cooldown_candles_var,
             "engine": self.engine_var,
             "model": self.model_var,
             "hf_space": self.hf_space_var,
@@ -5024,7 +5031,7 @@ class KronosDesktopApp:
                     "lot", "max_pos", "scenarios", "consensus", "max_dispersion", "sl_atr", "rr",
                     "auto_be", "be_trigger_r", "auto_trail", "trail_dist_r",
                     "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price",
-                    "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins",
+                    "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles",
                     "engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "realtime_chart",
                     "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"
                 )
@@ -5055,6 +5062,23 @@ class KronosDesktopApp:
                             self.profile_settings["XAUUSD"]["max_sl_price"] = "5.0"
                     except Exception:
                         pass
+
+            # Tự động chuyển đổi thông số Nghỉ SL nhanh từ phút cũ sang đơn vị số nến AI
+            for pk in ("XAUUSD", "BTCUSD"):
+                if pk in self.profile_settings:
+                    pcfg = self.profile_settings[pk]
+                    if "fast_sl_cooldown_candles" not in pcfg:
+                        old_val = pcfg.get("fast_sl_cooldown_mins")
+                        if old_val is not None:
+                            try:
+                                old_m = float(old_val)
+                                ana_tf = pcfg.get("analysis_tf", "M15")
+                                tf_m = 15 if ana_tf == "M15" else (1 if ana_tf == "M1" else 5)
+                                pcfg["fast_sl_cooldown_candles"] = str(max(1, int(round(old_m / tf_m)))) if old_m > 0 else "0"
+                            except Exception:
+                                pcfg["fast_sl_cooldown_candles"] = "1"
+                        else:
+                            pcfg["fast_sl_cooldown_candles"] = "1"
 
             # Trích xuất và đồng bộ HF Token cho cả 2 Tab nếu có lưu
             token_saved = ""
@@ -5138,7 +5162,7 @@ class KronosDesktopApp:
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
             2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins"]),
+            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
         }
@@ -7100,10 +7124,13 @@ class KronosDesktopApp:
             cooldown_mins = max(float(cfg.get("cooldown_mins", 30.0)), 0.0)
         except ValueError:
             cooldown_mins = 0.0
+        ana_tf_str = str(cfg.get("analysis_tf", "M15")).strip()
+        ana_tf_mins = self._get_tf_minutes(ana_tf_str)
+        fast_sl_threshold_sec = ana_tf_mins * 60
         try:
-            fast_sl_cd_mins = max(float(cfg.get("fast_sl_cooldown_mins", 15.0)), 0.0)
+            fast_sl_cd_candles = max(float(cfg.get("fast_sl_cooldown_candles", cfg.get("fast_sl_cooldown_mins", 1.0))), 0.0)
         except ValueError:
-            fast_sl_cd_mins = 0.0
+            fast_sl_cd_candles = 0.0
 
         is_auto_active = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
 
@@ -7139,44 +7166,45 @@ class KronosDesktopApp:
                             f"Tạm nghỉ {cooldown_mins:.0f}p (đến {ctx['cooldown_until'].strftime('%H:%M:%S')})."
                         )
 
-        # 1.5. Xử lý Tạm ngừng khi có lệnh dính SL < 5 phút (= 0 là tắt)
-        if fast_sl_cd_mins == 0.0:
+        # 1.5. Xử lý Tạm ngừng khi có lệnh dính SL nhanh (< 1 nến AI, = 0 là tắt)
+        if fast_sl_cd_candles == 0.0:
             if ctx.get("fast_sl_cooldown_until") is not None:
                 ctx["fast_sl_cooldown_until"] = None
                 if pk == self.active_profile_key:
                     self.fast_sl_cooldown_until = None
-                self.log(f"[{pk}] Đã tắt tạm nghỉ do SL < 5 phút (thông số = 0).")
+                self.log(f"[{pk}] Đã tắt tạm nghỉ do SL nhanh (thông số = 0).")
         else:
             if ctx.get("fast_sl_cooldown_until") is not None and datetime.now() >= ctx["fast_sl_cooldown_until"]:
                 ctx["fast_sl_cooldown_until"] = None
                 if pk == self.active_profile_key:
                     self.fast_sl_cooldown_until = None
-                self.log(f"[{pk}] Hết thời gian tạm nghỉ SL < 5p -> Tiếp tục giao dịch tự động.")
-                self.show_toast(f"[{pk}] Hết tạm nghỉ SL < 5p -> Tự động tiếp tục!", is_error=False, duration_ms=2500)
+                self.log(f"[{pk}] Hết thời gian tạm nghỉ SL nhanh ({fast_sl_cd_candles:.0f} nến {ana_tf_str}) -> Tiếp tục giao dịch tự động.")
+                self.show_toast(f"[{pk}] Hết tạm nghỉ SL nhanh -> Tự động tiếp tục!", is_error=False, duration_ms=2500)
                 if is_auto_active and not ctx.get("is_analyzing", False):
                     self.enqueue_ai_scan(profile_key=pk, reason="COOLDOWN_EXPIRED")
 
             closed_deals = self._get_today_closed_deals(symbol=symbol)
             for cd in closed_deals:
-                if cd.get("is_sl_loss") and (0 <= cd.get("duration_sec", -1) < 300):
+                if cd.get("is_sl_loss") and (0 <= cd.get("duration_sec", -1) < fast_sl_threshold_sec):
                     last_ticket = cd.get("ticket")
                     if ctx.get("last_fast_sl_deal_ticket") != last_ticket:
                         now_ts = int(time.time())
                         close_ts = cd.get("close_ts", now_ts)
                         elapsed_sec = max(0, now_ts - close_ts)
-                        total_cd_sec = fast_sl_cd_mins * 60.0
+                        total_cd_sec = fast_sl_cd_candles * ana_tf_mins * 60.0
                         ctx["last_fast_sl_deal_ticket"] = last_ticket
                         if elapsed_sec < total_cd_sec:
                             rem_sec = total_cd_sec - elapsed_sec
                             ctx["fast_sl_cooldown_until"] = datetime.now() + timedelta(seconds=rem_sec)
                             ctx["pending_pullback_order"] = None
                             dur_display = cd.get("duration", f"{cd.get('duration_sec', 0)}s")
+                            cd_mins_total = fast_sl_cd_candles * ana_tf_mins
                             self.log(
-                                f"[{pk} - Tạm nghỉ SL < 5p] Lệnh #{last_ticket} dính SL sau {dur_display} (Lỗ: {cd.get('net_pnl', 0.0):+.2f}$) -> "
-                                f"Tạm nghỉ {fast_sl_cd_mins:.0f}p (đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')})."
+                                f"[{pk} - Tạm nghỉ SL nhanh] Lệnh #{last_ticket} dính SL sau {dur_display} (< 1 nến {ana_tf_str}) -> "
+                                f"Tạm nghỉ {fast_sl_cd_candles:.0f} nến {ana_tf_str} ({cd_mins_total:.0f}p, đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')})."
                             )
                             self.show_toast(
-                                f"[{pk}] Lệnh #{last_ticket} SL sau {dur_display} (< 5p) -> Tạm nghỉ {fast_sl_cd_mins:.0f}p (Tự động mở lại)",
+                                f"[{pk}] Lệnh #{last_ticket} SL nhanh -> Tạm nghỉ {fast_sl_cd_candles:.0f} nến {ana_tf_str} ({cd_mins_total:.0f}p)",
                                 is_error=True,
                                 duration_ms=3000
                             )
@@ -7289,8 +7317,16 @@ class KronosDesktopApp:
         if fscd is not None and now < fscd:
             rem = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem, 60)
-            parts.append(f"Tạm ngưng giao dịch do lệnh SL < 5 phút [{m:02d}p:{s:02d}s]")
+            cfg = self._get_profile_cfg(pk)
+            ana_tf_str = str(cfg.get("analysis_tf", "M15")).strip()
+            parts.append(f"Tạm ngưng do SL nhanh (< 1 nến {ana_tf_str}) [{m:02d}p:{s:02d}s]")
         return " | ".join(parts)
+
+    def _get_tf_minutes(self, tf_str: str) -> int:
+        """Chuyển đổi chuỗi Timeframe (M1, M5, M15, M30, H1, H4, D1) sang số phút tương ứng."""
+        tf_upper = str(tf_str).upper().strip()
+        tf_min_map = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+        return tf_min_map.get(tf_upper, 5)
 
     def _get_profile_magic_number(self, profile_key: str = None) -> int:
         """Lấy Magic Number do người dùng thiết lập cho từng Tab (XAUUSD mặc định 20260501, BTCUSD mặc định 20260502)."""
@@ -9038,11 +9074,13 @@ class KronosDesktopApp:
             status_text = f"[{pk}] Tạm ngưng giao dịch do {reason} [Mở lại 00:00]"
             text_color = "#ffffff" if "LÃI" in reason.upper() else RED_DOWN
 
-        # 2. Tạm nghỉ do lệnh dính SL < 5 phút (Lỗi / Cắt lỗ -> Màu đỏ)
+        # 2. Tạm nghỉ do lệnh dính SL nhanh (Lỗi / Cắt lỗ -> Màu đỏ)
         elif fscd is not None and now < fscd:
             rem_sec = max(0, int((fscd - now).total_seconds()))
             m, s = divmod(rem_sec, 60)
-            status_text = f"[{pk}] Tạm ngưng giao dịch do lệnh SL < 5 phút [{m:02d}p:{s:02d}s]"
+            cfg = self._get_profile_cfg(pk)
+            ana_tf_str = str(cfg.get("analysis_tf", "M15")).strip()
+            status_text = f"[{pk}] Tạm ngưng do SL nhanh (< 1 nến {ana_tf_str}) [{m:02d}p:{s:02d}s]"
             text_color = RED_DOWN
 
         # 3. Tạm nghỉ sau chuỗi thua liên tiếp (Lỗi / Cắt lỗ -> Màu đỏ)
