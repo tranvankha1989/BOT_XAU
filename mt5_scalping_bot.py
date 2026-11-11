@@ -253,9 +253,14 @@ PARAM_HELP_GUIDE = {
         "how_to_set": "- LUÔN BẬT (Mặc định). Tính năng này giúp giảm thiểu tối đa các pha lỗ nặng do thị trường quay ngoắt 180 độ."
     },
     "rev_consensus": {
-        "title": "Đồng thuận đảo chiều tối thiểu (%)",
-        "what_is_it": "Độ đồng thuận của AI theo chiều ngược lại cần đạt tối thiểu bao nhiêu % thì cơ chế Bảo vệ đảo chiều mới được kích hoạt.",
-        "how_to_set": "- Khuyên dùng: 75% đến 80%.\n- Ngăn việc thoát lệnh sớm do các đợt rung lắc đảo chiều giả trong thời gian ngắn."
+        "title": "Đồng thuận đảo chiều - Lệnh chưa BE (%)",
+        "what_is_it": "Độ đồng thuận của AI theo chiều ngược lại cần đạt tối thiểu bao nhiêu % để kích hoạt cơ chế Bảo vệ đảo chiều cho các lệnh CHƯA DỜI HÒA VỐN (đang chịu rủi ro vốn ban đầu).",
+        "how_to_set": "- Khuyên dùng: 65% đến 75% (Mặc định 75%).\n- Bảo vệ sớm vốn tài khoản khi thị trường có dấu hiệu quay đầu ngược chiều."
+    },
+    "rev_be_consensus": {
+        "title": "Đồng thuận đảo chiều - Lệnh đã BE (0=Tắt, %)",
+        "what_is_it": "Ngưỡng đồng thuận AI tối thiểu theo chiều ngược lại để kích hoạt chốt lời cho các lệnh ĐÃ DỜI HÒA VỐN (BE+).\n- THÔNG MINH: Lệnh đã dời BE là lệnh Risk-Free (hoàn toàn không còn rủi ro mất vốn), do đó cần ngưỡng đồng thuận cao hơn lệnh thường để tránh bị chốt non khi sóng lớn vẫn còn tiếp diễn.\n- Nếu đặt 0: TẮT (Không bao giờ ép chốt lệnh đã BE khi AI đảo chiều, để lệnh tự do gồng lãi theo Trailing Stop hoặc TP).",
+        "how_to_set": "- Khuyên dùng: 85% đến 90% (Mặc định 90%).\n- Đặt = 0 nếu muốn thả rông cho các lệnh đã dời BE tự gồng lãi tối đa."
     },
     "rev_min_move": {
         "title": "Biên độ ngược chiều tối thiểu (Giá)",
@@ -399,6 +404,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "trail_dist_r": "0.35",
         "auto_rev_close": True,
         "rev_consensus": "75",
+        "rev_be_consensus": "90",
         "rev_min_move": "0",
         "be_plus_price": "0.2",
         "basket_tp_usd": "0",
@@ -448,6 +454,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "trail_dist_r": "0.35",
         "auto_rev_close": True,
         "rev_consensus": "75",
+        "rev_be_consensus": "90",
         "rev_min_move": "0",
         "be_plus_price": "5.0",
         "basket_tp_usd": "0",
@@ -762,7 +769,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.9"
+            self.app_version = "1.3.0"
             self.updater = None
 
         self._has_new_version = False
@@ -2305,7 +2312,8 @@ class KronosDesktopApp:
 
         self.auto_rev_close_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec3.content, "Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry+)", self.auto_rev_close_var, help_key="auto_rev_close", fg=GOLD_ACCENT)
-        self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều (%):", "75", help_key="rev_consensus")
+        self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh chưa BE (%):", "75", help_key="rev_consensus")
+        self.rev_be_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh đã BE (0=Tắt, %):", "90", help_key="rev_be_consensus")
         self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0", help_key="rev_min_move")
         self.be_plus_price_var = self._add_labeled_entry(sec3.content, "   + Giá lãi nhỏ vào Entry (Giá):", "0.2", help_key="be_plus_price")
 
@@ -4700,6 +4708,7 @@ class KronosDesktopApp:
             "trail_dist_r": self.trail_dist_r_var,
             "auto_rev_close": self.auto_rev_close_var,
             "rev_consensus": self.rev_consensus_var,
+            "rev_be_consensus": self.rev_be_consensus_var,
             "rev_min_move": self.rev_min_move_var,
             "be_plus_price": self.be_plus_price_var,
             "basket_tp_usd": self.basket_tp_usd_var,
@@ -5014,7 +5023,7 @@ class KronosDesktopApp:
                 shared_keys = (
                     "lot", "max_pos", "scenarios", "consensus", "max_dispersion", "sl_atr", "rr",
                     "auto_be", "be_trigger_r", "auto_trail", "trail_dist_r",
-                    "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price",
+                    "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price",
                     "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins",
                     "engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "realtime_chart",
                     "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"
@@ -5129,7 +5138,7 @@ class KronosDesktopApp:
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
             2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins"]),
+            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_mins"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
         }
@@ -7486,11 +7495,7 @@ class KronosDesktopApp:
             min_rr = 2.0 if p.get("sl_tightened_for_2r") else (rr if rr > 0.0 else 2.0)
             target_tp_dist = round(cur_sl_dist * max(rr, min_rr), 2)
             if cached_tp_val is not None:
-                cached_dist = abs(float(cached_tp_val) - cur_price)
-                if cached_dist >= target_tp_dist:
-                    tp_price = float(cached_tp_val)
-                else:
-                    tp_price = round(cur_price + target_tp_dist, 2) if action == "BUY" else round(cur_price - target_tp_dist, 2)
+                tp_price = float(cached_tp_val)
             else:
                 tp_price = round(cur_price + target_tp_dist, 2) if action == "BUY" else round(cur_price - target_tp_dist, 2)
 
@@ -7501,10 +7506,6 @@ class KronosDesktopApp:
                 if pk == self.active_profile_key:
                     self.pending_pullback_order = None
                 return
-
-            ctx["cached_tp"] = tp_price
-            if pk == self.active_profile_key:
-                self.cached_tp = tp_price
 
             # Thu hồi nguyên tử (Atomic Pop) pending_pullback_order TRƯỚC khi gửi lệnh để tuyệt đối không vào đúp 2 lệnh
             ctx["pending_pullback_order"] = None
@@ -9480,7 +9481,7 @@ class KronosDesktopApp:
                         action = "BUY"
                         sig_color = GREEN_UP
                         sig_title = f"🟢 TÍN HIỆU [{pk}]: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total}, cần ≥ {min_consensus:.0f}%) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
-                    entry_ref = tick.ask if tick else last_close
+                    entry_ref = round(last_close, 2)
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
                     sl_price = round(entry_ref - total_sl_dist, 2)
@@ -9498,7 +9499,7 @@ class KronosDesktopApp:
                         action = "SELL"
                         sig_color = RED_DOWN
                         sig_title = f"🔴 TÍN HIỆU [{pk}]: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total}, cần ≥ {min_consensus:.0f}%) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
-                    entry_ref = tick.bid if tick else last_close
+                    entry_ref = round(last_close, 2)
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
                     sl_price = round(entry_ref + total_sl_dist, 2)
@@ -9539,51 +9540,65 @@ class KronosDesktopApp:
                 ctx["_sig_color"] = sig_color
 
                 # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
-                rev_action = action
-                if rev_action is None and not is_high_uncertainty:
-                    if bull_pct >= rev_consensus and (rev_min_move <= 0.0 or expected_move >= rev_min_move):
-                        rev_action = "BUY"
-                    elif bear_pct >= rev_consensus and (rev_min_move <= 0.0 or (-expected_move) >= rev_min_move):
-                        rev_action = "SELL"
-
+                # Phân tầng thông minh: Lệnh CHƯA DỜI BE áp dụng rev_consensus (Mục 3), Lệnh ĐÃ DỜI BE áp dụng rev_be_consensus (mặc định 90%, 0=Tắt)
                 has_losing_opposite_pos = False
-                if rev_action is not None:
+                if auto_rev_close:
                     with self._mt5_lock:
                         open_positions = mt5.positions_get(symbol=symbol)
                         sym_info = mt5.symbol_info(symbol) if open_positions else None
                     if open_positions:
                         digits = sym_info.digits if sym_info else 2
                         eps_eq = tols["eps_equal"]
+                        try:
+                            rev_be_consensus = float(cfg.get("rev_be_consensus", 90.0))
+                        except ValueError:
+                            rev_be_consensus = 90.0
+
                         for pos in open_positions:
                             is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
-                            is_opposite = (rev_action == "BUY" and not is_buy_pos) or (rev_action == "SELL" and is_buy_pos)
-                            if not is_opposite:
+                            opp_action = "SELL" if is_buy_pos else "BUY"
+                            opp_pct = bear_pct if is_buy_pos else bull_pct
+                            opp_move = (-expected_move) if is_buy_pos else expected_move
+
+                            is_at_be = self._is_pos_at_be(pos, eps_eq)
+                            if is_at_be:
+                                # Lệnh ĐÃ DỜI BE: Phải đạt ngưỡng Đồng thuận đảo chiều 2 (rev_be_consensus, mặc định 90%, = 0 là TẮT)
+                                if rev_be_consensus <= 0.0:
+                                    continue
+                                is_rev_triggered = (not is_high_uncertainty) and (opp_pct >= rev_be_consensus) and (rev_min_move <= 0.0 or opp_move >= rev_min_move)
+                                rev_tag = f"Lệnh đã BE - Cần ≥ {rev_be_consensus:g}% [Đạt {opp_pct:.0f}%]"
+                            else:
+                                # Lệnh CHƯA DỜI BE: Áp dụng ngưỡng Đồng thuận đảo chiều 1 (rev_consensus, mặc định 75%) hoặc Tín hiệu chính AI
+                                is_rev_triggered = (action == opp_action) or (
+                                    (not is_high_uncertainty) and (opp_pct >= rev_consensus) and (rev_min_move <= 0.0 or opp_move >= rev_min_move)
+                                )
+                                rev_tag = f"Lệnh chưa BE - Cần ≥ {rev_consensus:g}% [Đạt {opp_pct:.0f}%]"
+
+                            if not is_rev_triggered:
                                 continue
 
                             # QUY TẮC 1: Lệnh ngược chiều đang CÓ LÃI (> 0$) -> Chốt lời ngay để đảo chiều
                             if pos.profit > 0.0:
-                                if auto_rev_close:
-                                    ok_c, msg_c = self._close_single_pos(pos)
-                                    self.pending_be_exit_tickets.discard(pos.ticket)
-                                    self.log(f"🔄 [{pk} - Quy tắc 1 - AI Đảo Chiều sang {rev_action}] Lệnh cũ đang lãi -> {msg_c}")
+                                ok_c, msg_c = self._close_single_pos(pos)
+                                self.pending_be_exit_tickets.discard(pos.ticket)
+                                self.log(f"🔄 [{pk} - Quy tắc 1 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Lệnh #{pos.ticket} đang lãi -> {msg_c}")
                             else:
                                 # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$) -> Chờ hồi về Entry + khoản lãi nhỏ (be_plus_price) để thoát có lãi nhẹ
                                 has_losing_opposite_pos = True
-                                if auto_rev_close:
-                                    be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
-                                    be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
-                                    self.pending_be_exit_tickets.add(pos.ticket)
-                                    if abs(pos.tp - be_target_price) >= eps_eq:
-                                        if self._modify_position_sltp(pos, pos.sl, be_target_price):
-                                            self.log(
-                                                f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
-                                                f"đã kéo điểm thoát về {be_label_tag} ({be_target_price:.2f}) chờ hồi thoát có lãi nhẹ!"
-                                            )
-                                        else:
-                                            self.log(
-                                                f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {rev_action}] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
-                                                f"tự động thoát ngay khi giá hồi về {be_label_tag} ({be_target_price:.2f})!"
-                                            )
+                                be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
+                                be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
+                                self.pending_be_exit_tickets.add(pos.ticket)
+                                if abs(pos.tp - be_target_price) >= eps_eq:
+                                    if self._modify_position_sltp(pos, pos.sl, be_target_price):
+                                        self.log(
+                                            f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
+                                            f"đã kéo điểm thoát về {be_label_tag} ({be_target_price:.2f}) chờ hồi thoát có lãi nhẹ!"
+                                        )
+                                    else:
+                                        self.log(
+                                            f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
+                                            f"tự động thoát ngay khi giá hồi về {be_label_tag} ({be_target_price:.2f})!"
+                                        )
 
                 # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL & TỶ LỆ REWARD/RISK >= 2R
                 cur_sl_dist = abs(entry_ref - sl_price)
@@ -10107,8 +10122,10 @@ class KronosDesktopApp:
             with self._mt5_lock:
                 sym_info = mt5.symbol_info(symbol) if MT5_AVAILABLE else None
             contract_sz = float(sym_info.trade_contract_size) if (sym_info and sym_info.trade_contract_size > 0) else (1.0 if "BTC" in str(symbol).upper() else 100.0)
-            est_sl_usd = -abs(live_price - sl_price) * lot_val * contract_sz
-            est_tp_usd = abs(tp_price - live_price) * lot_val * contract_sz
+            # Cố định số tiền USD ước tính theo khoảng cách từ Entry đóng nến đến SL/TP (không tính theo live_price để nhãn text đứng yên tuyệt đối)
+            entry_anchor = float(hist["close"].iloc[-2]) if (has_forming_candle and len(hist) >= 2) else float(hist["close"].iloc[-1])
+            est_sl_usd = -abs(entry_anchor - sl_price) * lot_val * contract_sz
+            est_tp_usd = abs(tp_price - entry_anchor) * lot_val * contract_sz
             ai_col_idx = max(len(open_positions) if open_positions else 0, 1 if self.pending_pullback_order is not None else 0)
             ai_label_x = base_label_x + (ai_col_idx * col_step_x)
 
