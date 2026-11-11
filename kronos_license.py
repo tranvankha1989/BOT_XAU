@@ -690,7 +690,7 @@ class LicenseManager:
         3. Kiểm tra chống tua lùi thời gian (Anti-Clock Rollback).
         """
         now = time.time()
-        if not force_refresh and self._cached_status and (now - self._last_status_check) < 1.0:
+        if not force_refresh and self._cached_status and (now - self._last_status_check) < 60.0:
             return self._cached_status
 
         state = load_license_state(self.hwid)
@@ -724,9 +724,10 @@ class LicenseManager:
             self._last_status_check = now
             return res
 
-        # Cập nhật mốc chạy mới nhất
-        state["last_run_timestamp"] = now
-        save_license_state(self.hwid, state)
+        # Chỉ ghi cập nhật mốc chạy xuống ổ cứng tối đa 5 phút/lần hoặc khi làm mới cưỡng bức để tránh nghẽn I/O
+        if force_refresh or (now - last_run_ts) >= 300.0:
+            state["last_run_timestamp"] = now
+            save_license_state(self.hwid, state)
 
         # ─── TRƯỜNG HỢP 1: ĐÃ KÍCH HOẠT KEY BẢN QUYỀN ED25519 ──────────────────
         saved_key = str(state.get("license_key", "")).strip()

@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.7"
+            self.app_version = "1.1.8"
             self.updater = None
 
         self._has_new_version = False
@@ -823,9 +823,11 @@ class KronosDesktopApp:
         self._cached_deals_stats = (0.0, 0, None)
         self._cached_deals_by_sym = {}
         self._ai_scan_lock = threading.Lock()
+        self._ai_inference_lock = threading.RLock()
         self._mt5_lock = threading.RLock()
         self._log_file_lock = threading.Lock()
         self._order_guard_lock = threading.Lock()
+        self._pos_action_in_flight = set()
         self._order_in_flight = {"XAUUSD": False, "BTCUSD": False}
         self._last_order_open_mono = {"XAUUSD": 0.0, "BTCUSD": 0.0}
         self._last_order_candle_ts = {"XAUUSD": None, "BTCUSD": None}
@@ -3468,6 +3470,7 @@ class KronosDesktopApp:
         trades = []
         equity = init_cap
         equity_curve = [(0, equity)]
+        bt_ai_cache = {}
 
         # ── KỊCH BẢN 1: MÔ PHỎNG NẾN TICK 1 GIÂY (S1 PRECISION) ───────────────
         if is_s1_mode and len(s1_bars) > 50:
@@ -3502,24 +3505,37 @@ class KronosDesktopApp:
 
                     idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right"))
                     if use_ai and predictor is not None and idx_ana >= 50:
-                        sub_df = df_rates_ana.iloc[max(0, idx_ana - 60):idx_ana].copy().reset_index(drop=True)
-                        x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
-                        dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
-                        y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
-                        try:
-                            scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                            last_c = float(sub_df["close"].iloc[-1])
-                            bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
-                            bear_cnt = len(scenarios) - bull_cnt
-                            b_pct = (bull_cnt / len(scenarios)) * 100.0
-                            s_pct = (bear_cnt / len(scenarios)) * 100.0
-                            exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
-                            if b_pct >= min_consensus and exp_m >= min_move:
-                                signal = "BUY"
-                            elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                                signal = "SELL"
-                        except Exception:
-                            pass
+                        if idx_ana in bt_ai_cache:
+                            signal = bt_ai_cache[idx_ana]
+                        else:
+                            # Nhường quyền ưu tiên số 1 cho Bot Live nếu đang quét AI thời gian thực
+                            while (
+                                getattr(self, "is_analyzing", False)
+                                or self.profile_ctx.get("XAUUSD", {}).get("is_analyzing", False)
+                                or self.profile_ctx.get("BTCUSD", {}).get("is_analyzing", False)
+                            ) and not self._bt_cancel_flag:
+                                time.sleep(0.05)
+
+                            sub_df = df_rates_ana.iloc[max(0, idx_ana - 60):idx_ana].copy().reset_index(drop=True)
+                            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
+                            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+                            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+                            try:
+                                scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                                last_c = float(sub_df["close"].iloc[-1])
+                                bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
+                                bear_cnt = len(scenarios) - bull_cnt
+                                b_pct = (bull_cnt / len(scenarios)) * 100.0
+                                s_pct = (bear_cnt / len(scenarios)) * 100.0
+                                exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                                if b_pct >= min_consensus and exp_m >= min_move:
+                                    signal = "BUY"
+                                elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                                    signal = "SELL"
+                            except Exception:
+                                pass
+                            bt_ai_cache[idx_ana] = signal
+                            time.sleep(0.005)
 
                     if signal is None and not use_ai:
                         idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right"))
@@ -3687,24 +3703,36 @@ class KronosDesktopApp:
                 signal = None
                 idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right"))
                 if use_ai and predictor is not None and idx_ana >= 50:
-                    sub_df = df_rates_ana.iloc[max(0, idx_ana-60):idx_ana].copy().reset_index(drop=True)
-                    x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
-                    dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
-                    y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
-                    try:
-                        scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                        last_c = float(sub_df["close"].iloc[-1])
-                        bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
-                        bear_cnt = len(scenarios) - bull_cnt
-                        b_pct = (bull_cnt / len(scenarios)) * 100.0
-                        s_pct = (bear_cnt / len(scenarios)) * 100.0
-                        exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
-                        if b_pct >= min_consensus and exp_m >= min_move:
-                            signal = "BUY"
-                        elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                            signal = "SELL"
-                    except Exception:
-                        pass
+                    if idx_ana in bt_ai_cache:
+                        signal = bt_ai_cache[idx_ana]
+                    else:
+                        while (
+                            getattr(self, "is_analyzing", False)
+                            or self.profile_ctx.get("XAUUSD", {}).get("is_analyzing", False)
+                            or self.profile_ctx.get("BTCUSD", {}).get("is_analyzing", False)
+                        ) and not self._bt_cancel_flag:
+                            time.sleep(0.05)
+
+                        sub_df = df_rates_ana.iloc[max(0, idx_ana-60):idx_ana].copy().reset_index(drop=True)
+                        x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
+                        dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+                        y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+                        try:
+                            scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                            last_c = float(sub_df["close"].iloc[-1])
+                            bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
+                            bear_cnt = len(scenarios) - bull_cnt
+                            b_pct = (bull_cnt / len(scenarios)) * 100.0
+                            s_pct = (bear_cnt / len(scenarios)) * 100.0
+                            exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                            if b_pct >= min_consensus and exp_m >= min_move:
+                                signal = "BUY"
+                            elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                                signal = "SELL"
+                        except Exception:
+                            pass
+                        bt_ai_cache[idx_ana] = signal
+                        time.sleep(0.005)
 
                 if signal is None and not use_ai:
                     ma_short = np.mean(closes[-3:])
@@ -6282,6 +6310,12 @@ class KronosDesktopApp:
     def _realtime_tick_loop(self):
         if getattr(self, "_app_closing", False):
             return
+        # Bảo vệ Luồng Giao Diện Chính (Non-Blocking Lock): Nếu luồng ngầm đang tải dữ liệu MT5 nặng, bỏ qua nhịp này để UI luôn mượt 60 FPS
+        if not self._mt5_lock.acquire(blocking=False):
+            if not getattr(self, "_app_closing", False):
+                self.root.after(1000, self._realtime_tick_loop)
+            return
+        self._mt5_lock.release()
         try:
             with self._mt5_lock:
                 mt5_ok = bool(MT5_AVAILABLE and (mt5.terminal_info() is not None or mt5.initialize()))
@@ -6352,7 +6386,7 @@ class KronosDesktopApp:
         sym_key = symbol or "__ALL__"
         now_mono = time.monotonic()
         cached_entry = self._cached_deals_by_sym.get(sym_key)
-        if cached_entry is not None and (now_mono - cached_entry[0]) < 4.0:
+        if cached_entry is not None and (now_mono - cached_entry[0]) < 10.0:
             return cached_entry[1]
         try:
             # Lấy ngày hôm nay theo Giờ Việt Nam (GMT+7, Asia/Ho_Chi_Minh)
@@ -6431,7 +6465,7 @@ class KronosDesktopApp:
             self._cached_closed_deals_map = {}
         if use_cache:
             cached = self._cached_closed_deals_map.get(range_key)
-            if cached is not None and (now_mono - cached[0]) < 2.0:
+            if cached is not None and (now_mono - cached[0]) < 15.0:
                 return cached[1]
 
         try:
@@ -6443,6 +6477,7 @@ class KronosDesktopApp:
 
             with self._mt5_lock:
                 deals = mt5.history_deals_get(query_from, query_to)
+                all_orders = mt5.history_orders_get(query_from, query_to)
 
             if not deals:
                 self._cached_closed_deals_map[range_key] = (now_mono, [])
@@ -6452,6 +6487,14 @@ class KronosDesktopApp:
             for d in deals:
                 if d.entry == mt5.DEAL_ENTRY_IN:
                     entry_by_pos[d.position_id] = d
+
+            # Gom nhóm toàn bộ orders theo position_id trong RAM (O(1) lookup, triệt tiêu hoàn toàn lỗi N+1 IPC gây đơ app)
+            first_order_by_pos = {}
+            if all_orders:
+                for ord_item in all_orders:
+                    pid = getattr(ord_item, "position_id", 0)
+                    if pid and pid not in first_order_by_pos:
+                        first_order_by_pos[pid] = ord_item
 
             closed_items = []
             closed_deals = [
@@ -6483,14 +6526,9 @@ class KronosDesktopApp:
 
                 # Tính 1R và phân loại WIN (>= 1R) / BE+ (< 1R) / LOSS (< 0)
                 contract_size = 100.0 if (d.symbol and "XAU" in d.symbol) else 1.0
-                orders = None
-                with self._mt5_lock:
-                    try:
-                        orders = mt5.history_orders_get(position=d.position_id)
-                    except Exception:
-                        pass
-                sl_price = orders[0].sl if (orders and len(orders) > 0) else 0.0
-                tp_price = orders[0].tp if (orders and len(orders) > 0) else 0.0
+                ord_first = first_order_by_pos.get(d.position_id)
+                sl_price = ord_first.sl if ord_first is not None else 0.0
+                tp_price = ord_first.tp if ord_first is not None else 0.0
                 sl_dist = abs(open_p - sl_price) if (open_p > 0 and sl_price > 0) else 0.0
                 one_r = (sl_dist * d.volume * contract_size) if sl_dist > 0 else (8.0 if (d.symbol and "XAU" in d.symbol) else 4.0)
 
@@ -6824,6 +6862,7 @@ class KronosDesktopApp:
             getattr(mt5, "TRADE_RETCODE_DONE", 10009),
             getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010),
             getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+            getattr(mt5, "TRADE_RETCODE_NO_CHANGES", 10025),
         }
 
         with self._mt5_lock:
@@ -7195,33 +7234,55 @@ class KronosDesktopApp:
 
             # Quy tắc Giữ lệnh tối đa (Time-Stop): Chỉ áp dụng cho các lệnh CHƯA dời BE/Trailing (ngâm lệnh ì ạch hoặc đang âm)
             # Lệnh đã dời BE / đang Trailing là lệnh Free-Risk hoàn toàn, được tự do chạy theo sóng để gồng lãi tối đa
+            is_ui_thread = (threading.current_thread() is threading.main_thread())
             if max_hold_mins > 0.0 and (elapsed_sec / 60.0) >= max_hold_mins and not is_be_or_trailing:
                 if "Chốt lời" in max_hold_action:
                     if pos.profit > 0.0:
-                        ok_h, msg_h = self._close_single_pos(pos)
-                        if ok_h:
-                            self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi nhẹ ({pos.profit:+.2f}$) -> {msg_h}")
-                            continue
+                        if is_ui_thread:
+                            self._dispatch_pos_action_async(
+                                ("CLOSE_MAX_HOLD", pos.ticket), self._close_single_pos, pos,
+                                log_prefix=f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi nhẹ ({pos.profit:+.2f}$) -> "
+                            )
+                        else:
+                            ok_h, msg_h = self._close_single_pos(pos)
+                            if ok_h:
+                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi nhẹ ({pos.profit:+.2f}$) -> {msg_h}")
+                                continue
                     else:
                         if pos.ticket not in self.pending_be_exit_tickets:
                             self.pending_be_exit_tickets.add(pos.ticket)
                             if abs(pos.tp - be_target_price) >= eps_eq:
-                                self._modify_position_sltp(pos, pos.sl, be_target_price)
-                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} giữ {dur_str} (đang âm {pos.profit:+.2f}$) -> Đã dời TP về {be_label_tag} ({be_target_price:.2f}) để tự thoát hòa vốn!")
+                                log_m = f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} giữ {dur_str} (đang âm {pos.profit:+.2f}$) -> Đã dời TP về {be_label_tag} ({be_target_price:.2f}) để tự thoát hòa vốn!"
+                                if is_ui_thread:
+                                    self._dispatch_pos_action_async(("MOD_TP_BE_HOLD", pos.ticket), self._modify_position_sltp, pos, pos.sl, be_target_price, log_msg=log_m)
+                                elif self._modify_position_sltp(pos, pos.sl, be_target_price):
+                                    self.log(log_m)
                 elif "Dời SL" in max_hold_action:
                     if is_buy and (pos.sl == 0 or pos.sl < be_target_price - eps_eq * 0.5):
                         if be_target_price < pos.price_current - min_stop_d:
-                            if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh BUY #{pos.ticket} giữ {dur_str} -> Đã dời SL về {be_label_tag} ({be_target_price:.2f})")
+                            log_m = f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh BUY #{pos.ticket} giữ {dur_str} -> Đã dời SL về {be_label_tag} ({be_target_price:.2f})"
+                            if is_ui_thread:
+                                self._dispatch_pos_action_async(("MOD_SL_BE_HOLD", pos.ticket), self._modify_position_sltp, pos, be_target_price, pos.tp, log_msg=log_m)
+                            elif self._modify_position_sltp(pos, be_target_price, pos.tp):
+                                self.log(log_m)
                     elif (not is_buy) and (pos.sl == 0 or pos.sl > be_target_price + eps_eq * 0.5):
                         if be_target_price > pos.price_current + min_stop_d:
-                            if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                                self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh SELL #{pos.ticket} giữ {dur_str} -> Đã kéo SL về {be_label_tag} ({be_target_price:.2f})")
+                            log_m = f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh SELL #{pos.ticket} giữ {dur_str} -> Đã kéo SL về {be_label_tag} ({be_target_price:.2f})"
+                            if is_ui_thread:
+                                self._dispatch_pos_action_async(("MOD_SL_BE_HOLD", pos.ticket), self._modify_position_sltp, pos, be_target_price, pos.tp, log_msg=log_m)
+                            elif self._modify_position_sltp(pos, be_target_price, pos.tp):
+                                self.log(log_m)
                 elif "Đóng tất cả" in max_hold_action:
-                    ok_h, msg_h = self._close_single_pos(pos)
-                    if ok_h:
-                        self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> {msg_h}")
-                        continue
+                    if is_ui_thread:
+                        self._dispatch_pos_action_async(
+                            ("CLOSE_ALL_HOLD", pos.ticket), self._close_single_pos, pos,
+                            log_prefix=f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> "
+                        )
+                    else:
+                        ok_h, msg_h = self._close_single_pos(pos)
+                        if ok_h:
+                            self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> {msg_h}")
+                            continue
 
             # Kiểm tra nếu lệnh đang ở chế độ "Quy tắc 3: Chờ giá hồi về Entry (+ lãi nhỏ) để thoát khi AI báo đảo chiều"
             is_waiting_be_exit = (
@@ -7232,16 +7293,26 @@ class KronosDesktopApp:
                 status_str = f"Chờ về {be_label_tag} thoát ({current_r:+.2f}R)"
                 # Nếu giá đã hồi về chạm/vượt mức Entry + lãi nhỏ (be_target_price) mà sàn chưa khớp TP -> Đóng ngay lập tức
                 if price_move >= be_plus_price and (pos.profit >= 0.0 or be_plus_price > 0.0):
-                    ok_be, msg_be = self._close_single_pos(pos)
-                    if ok_be:
-                        self.pending_be_exit_tickets.discard(pos.ticket)
-                        self.log(f"[{pk} - Thoát {be_label_tag}] Giá hồi về {be_target_price:.2f} -> {msg_be}")
-                        continue
+                    if is_ui_thread:
+                        self._dispatch_pos_action_async(
+                            ("CLOSE_WAIT_BE", pos.ticket), self._close_single_pos, pos,
+                            log_prefix=f"[{pk} - Thoát {be_label_tag}] Giá hồi về {be_target_price:.2f} -> ",
+                            clear_be_ticket=pos.ticket
+                        )
+                    else:
+                        ok_be, msg_be = self._close_single_pos(pos)
+                        if ok_be:
+                            self.pending_be_exit_tickets.discard(pos.ticket)
+                            self.log(f"[{pk} - Thoát {be_label_tag}] Giá hồi về {be_target_price:.2f} -> {msg_be}")
+                            continue
                 # Nếu TP chưa được đặt về be_target_price (do lúc trước giá quá sát), tự động đặt TP = be_target_price khi đủ khoảng cách
                 elif abs(pos.tp - be_target_price) >= eps_eq and abs(pos.price_current - be_target_price) > min_stop_d:
                     if (is_buy and pos.price_current < be_target_price - min_stop_d) or ((not is_buy) and pos.price_current > be_target_price + min_stop_d):
-                        if self._modify_position_sltp(pos, pos.sl, be_target_price):
-                            self.log(f"[{pk} - Quy tắc 3] Đặt TP lệnh #{pos.ticket} về {be_label_tag} ({be_target_price:.2f})")
+                        log_m = f"[{pk} - Quy tắc 3] Đặt TP lệnh #{pos.ticket} về {be_label_tag} ({be_target_price:.2f})"
+                        if is_ui_thread:
+                            self._dispatch_pos_action_async(("MOD_TP_RULE3", pos.ticket), self._modify_position_sltp, pos, pos.sl, be_target_price, log_msg=log_m)
+                        elif self._modify_position_sltp(pos, pos.sl, be_target_price):
+                            self.log(log_m)
 
             if is_buy:
                 if abs(pos.sl - be_target_price) < eps_eq or abs(pos.sl - entry_exact) < eps_eq:
@@ -7251,15 +7322,23 @@ class KronosDesktopApp:
 
                 if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl < be_target_price - eps_eq * 0.5):
                     if be_target_price < pos.price_current - min_stop_d:
-                        if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                            self.log(f"[{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Nâng SL BUY #{pos.ticket} lên {be_target_price:.2f} (+{be_plus_price:g} giá)")
+                        log_m = f"[{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Nâng SL BUY #{pos.ticket} lên {be_target_price:.2f} (+{be_plus_price:g} giá)"
+                        if is_ui_thread:
+                            self._dispatch_pos_action_async(("AUTO_BE", pos.ticket), self._modify_position_sltp, pos, be_target_price, pos.tp, log_msg=log_m)
+                            status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
+                        elif self._modify_position_sltp(pos, be_target_price, pos.tp):
+                            self.log(log_m)
                             status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current - trail_dist_price, digits)
                     if desired_sl > be_target_price and desired_sl > pos.sl + min_trail_step and desired_sl < pos.price_current - min_stop_d:
-                        if self._modify_position_sltp(pos, desired_sl, pos.tp):
-                            self.log(f"[{pk} - Trailing {current_r:.2f}R] Nâng SL BUY #{pos.ticket} lên {desired_sl:.2f}")
+                        log_m = f"[{pk} - Trailing {current_r:.2f}R] Nâng SL BUY #{pos.ticket} lên {desired_sl:.2f}"
+                        if is_ui_thread:
+                            self._dispatch_pos_action_async(("AUTO_TRAIL", pos.ticket), self._modify_position_sltp, pos, desired_sl, pos.tp, log_msg=log_m)
+                            status_str = f"Trailing ({current_r:+.2f}R)"
+                        elif self._modify_position_sltp(pos, desired_sl, pos.tp):
+                            self.log(log_m)
                             status_str = f"Trailing ({current_r:+.2f}R)"
             else:
                 if pos.sl > 0 and (abs(pos.sl - be_target_price) < eps_eq or abs(pos.sl - entry_exact) < eps_eq):
@@ -7269,15 +7348,23 @@ class KronosDesktopApp:
 
                 if auto_be and current_r >= be_trigger_r and (pos.sl == 0 or pos.sl > be_target_price + eps_eq * 0.5):
                     if be_target_price > pos.price_current + min_stop_d:
-                        if self._modify_position_sltp(pos, be_target_price, pos.tp):
-                            self.log(f"[{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Kéo SL SELL #{pos.ticket} xuống {be_target_price:.2f} (+{be_plus_price:g} giá)")
+                        log_m = f"[{pk} - Auto-SL {be_label_tag} {current_r:.2f}R] Kéo SL SELL #{pos.ticket} xuống {be_target_price:.2f} (+{be_plus_price:g} giá)"
+                        if is_ui_thread:
+                            self._dispatch_pos_action_async(("AUTO_BE", pos.ticket), self._modify_position_sltp, pos, be_target_price, pos.tp, log_msg=log_m)
+                            status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
+                        elif self._modify_position_sltp(pos, be_target_price, pos.tp):
+                            self.log(log_m)
                             status_str = f"SL = {be_label_tag} ({current_r:+.2f}R)"
 
                 if auto_trail and current_r >= (be_trigger_r + 0.3):
                     desired_sl = round(pos.price_current + trail_dist_price, digits)
                     if desired_sl < be_target_price and (pos.sl == 0 or desired_sl < pos.sl - min_trail_step) and desired_sl > pos.price_current + min_stop_d:
-                        if self._modify_position_sltp(pos, desired_sl, pos.tp):
-                            self.log(f"[{pk} - Trailing {current_r:.2f}R] Kéo SL SELL #{pos.ticket} xuống {desired_sl:.2f}")
+                        log_m = f"[{pk} - Trailing {current_r:.2f}R] Kéo SL SELL #{pos.ticket} xuống {desired_sl:.2f}"
+                        if is_ui_thread:
+                            self._dispatch_pos_action_async(("AUTO_TRAIL", pos.ticket), self._modify_position_sltp, pos, desired_sl, pos.tp, log_msg=log_m)
+                            status_str = f"Trailing ({current_r:+.2f}R)"
+                        elif self._modify_position_sltp(pos, desired_sl, pos.tp):
+                            self.log(log_m)
                             status_str = f"Trailing ({current_r:+.2f}R)"
 
             tag = "profit_pos" if pos.profit >= 0 else "profit_neg"
@@ -7409,16 +7496,49 @@ class KronosDesktopApp:
         )
         return len(positions), total_profit
 
+    def _dispatch_pos_action_async(self, action_key: tuple, fn, *args, log_msg: str = None, log_prefix: str = None, clear_be_ticket: int = None):
+        """Thực thi đóng/sửa SL-TP bất đồng bộ trên luồng nền có cờ chống trùng lặp để không bao giờ gây đơ UI chính."""
+        if action_key in self._pos_action_in_flight:
+            return
+        self._pos_action_in_flight.add(action_key)
+
+        def _worker():
+            try:
+                res = fn(*args)
+                if isinstance(res, tuple):
+                    ok, msg = res[0], res[1]
+                    if ok:
+                        if clear_be_ticket is not None:
+                            self.pending_be_exit_tickets.discard(clear_be_ticket)
+                        if log_prefix:
+                            self.log(f"{log_prefix}{msg}")
+                        elif log_msg:
+                            self.log(log_msg)
+                elif res and log_msg:
+                    self.log(log_msg)
+            except Exception:
+                pass
+            finally:
+                self._pos_action_in_flight.discard(action_key)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _modify_position_sltp(self, pos, new_sl: float, new_tp: float) -> bool:
         with self._mt5_lock:
             sym_info = mt5.symbol_info(pos.symbol)
             digits = sym_info.digits if sym_info else 2
+            r_sl = round(new_sl, digits) if new_sl > 0 else 0.0
+            r_tp = round(new_tp, digits) if new_tp > 0 else 0.0
+            cur_sl = round(float(getattr(pos, "sl", 0.0) or 0.0), digits)
+            cur_tp = round(float(getattr(pos, "tp", 0.0) or 0.0), digits)
+            if r_sl == cur_sl and r_tp == cur_tp:
+                return True
             req = {
                 "action": mt5.TRADE_ACTION_SLTP,
                 "position": pos.ticket,
                 "symbol": pos.symbol,
-                "sl": round(new_sl, digits),
-                "tp": round(new_tp, digits) if new_tp > 0 else 0.0
+                "sl": r_sl,
+                "tp": r_tp
             }
             ok, _, _ = self._send_mt5_order_with_retry(req, pos.symbol, context_tag=f"MODIFY_SLTP_#{pos.ticket}", max_retries=2)
             return ok
@@ -7581,51 +7701,52 @@ class KronosDesktopApp:
         return True
 
     def get_local_predictor(self, model_choice: str):
-        norm_choice = model_choice.replace("Kronos-", "AI-", 1) if model_choice.startswith("Kronos-") else model_choice
-        cfg = MODEL_CONFIGS.get(norm_choice, list(MODEL_CONFIGS.values())[0])
-        key = cfg["model"]
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        if key not in self.local_cache:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            weights_root = os.path.join(base_dir, "model", "weights")
-            os.makedirs(weights_root, exist_ok=True)
+        with self._ai_inference_lock:
+            norm_choice = model_choice.replace("Kronos-", "AI-", 1) if model_choice.startswith("Kronos-") else model_choice
+            cfg = MODEL_CONFIGS.get(norm_choice, list(MODEL_CONFIGS.values())[0])
+            key = cfg["model"]
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            if key not in self.local_cache:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                weights_root = os.path.join(base_dir, "model", "weights")
+                os.makedirs(weights_root, exist_ok=True)
 
-            tok_name = cfg["tokenizer"].split("/")[-1]
-            mod_name = cfg["model"].split("/")[-1]
-            local_tok_dir = os.path.join(weights_root, tok_name)
-            local_mod_dir = os.path.join(weights_root, mod_name)
+                tok_name = cfg["tokenizer"].split("/")[-1]
+                mod_name = cfg["model"].split("/")[-1]
+                local_tok_dir = os.path.join(weights_root, tok_name)
+                local_mod_dir = os.path.join(weights_root, mod_name)
 
-            fb_tok = cfg.get("fallback_tokenizer", cfg["tokenizer"])
-            fb_mod = cfg.get("fallback_model", cfg["model"])
+                fb_tok = cfg.get("fallback_tokenizer", cfg["tokenizer"])
+                fb_mod = cfg.get("fallback_model", cfg["model"])
 
-            self.log(f"Đang nạp mô hình {norm_choice} vào {device.upper()}...")
-            if os.path.exists(os.path.join(local_tok_dir, "model.safetensors")):
-                tokenizer = KronosTokenizer.from_pretrained(local_tok_dir)
-            else:
-                if cfg.get("is_custom", False):
-                    self.log(f"ℹ️ Chưa có trọng số fine-tune '{tok_name}', tự động dùng '{fb_tok}'.")
-                tokenizer = KronosTokenizer.from_pretrained(fb_tok)
-                try:
-                    tokenizer.save_pretrained(local_tok_dir)
-                except Exception:
-                    pass
+                self.log(f"Đang nạp mô hình {norm_choice} vào {device.upper()}...")
+                if os.path.exists(os.path.join(local_tok_dir, "model.safetensors")):
+                    tokenizer = KronosTokenizer.from_pretrained(local_tok_dir)
+                else:
+                    if cfg.get("is_custom", False):
+                        self.log(f"ℹ️ Chưa có trọng số fine-tune '{tok_name}', tự động dùng '{fb_tok}'.")
+                    tokenizer = KronosTokenizer.from_pretrained(fb_tok)
+                    try:
+                        tokenizer.save_pretrained(local_tok_dir)
+                    except Exception:
+                        pass
 
-            if os.path.exists(os.path.join(local_mod_dir, "model.safetensors")):
-                model = Kronos.from_pretrained(local_mod_dir)
-            else:
-                if cfg.get("is_custom", False):
-                    self.log(f"ℹ️ Chưa có trọng số fine-tune '{mod_name}', tự động dùng '{fb_mod}'.")
-                model = Kronos.from_pretrained(fb_mod)
-                try:
-                    model.save_pretrained(local_mod_dir)
-                except Exception:
-                    pass
+                if os.path.exists(os.path.join(local_mod_dir, "model.safetensors")):
+                    model = Kronos.from_pretrained(local_mod_dir)
+                else:
+                    if cfg.get("is_custom", False):
+                        self.log(f"ℹ️ Chưa có trọng số fine-tune '{mod_name}', tự động dùng '{fb_mod}'.")
+                    model = Kronos.from_pretrained(fb_mod)
+                    try:
+                        model.save_pretrained(local_mod_dir)
+                    except Exception:
+                        pass
 
-            tokenizer.eval()
-            model.eval()
-            self.local_cache[key] = KronosPredictor(model, tokenizer, device=device, max_context=cfg["max_context"])
-            self.log(f"Đã nạp xong mô hình AI trực tiếp từ thư mục máy ({device.upper()}).")
-        return self.local_cache[key]
+                tokenizer.eval()
+                model.eval()
+                self.local_cache[key] = KronosPredictor(model, tokenizer, device=device, max_context=cfg["max_context"])
+                self.log(f"Đã nạp xong mô hình AI trực tiếp từ thư mục máy ({device.upper()}).")
+            return self.local_cache[key]
 
     def _fast_predict_scenarios(self, predictor, df_in: pd.DataFrame, x_timestamp: pd.Series, y_timestamp: pd.Series, pred_len: int = 6, num_scenarios: int = 8, T: float = 1.0, top_k: int = 0, top_p: float = 0.9):
         """
@@ -7654,7 +7775,7 @@ class KronosDesktopApp:
         last_r = x_np[-1]
         data_seed = int(abs(hash((len(df_in), round(float(last_r[0]), 2), round(float(last_r[1]), 2), round(float(last_r[2]), 2), round(float(last_r[3]), 2))))) % (2**31 - 1)
 
-        with torch.random.fork_rng(), torch.no_grad():
+        with self._ai_inference_lock, torch.random.fork_rng(), torch.no_grad():
             torch.manual_seed(data_seed)
             x_t = torch.from_numpy(x_norm[np.newaxis, :]).to(device)
             x_st = torch.from_numpy(x_stamp_np[np.newaxis, :]).to(device)

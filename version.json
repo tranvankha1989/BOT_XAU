@@ -1,6 +1,6 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-10",
-  "description": "Phiên bản v1.1.7:\n- Cô lập hoàn toàn bộ thông số Backtest với Bot Live: Chuyển đổi mã kiểm thử hoặc mở Tab Backtest không còn tự động hoán đổi cấu hình của Menu Bot Live.\n- Đổi tên nút thành '[💾 Áp Dụng Vào Bot Live]' kèm hộp thoại cảnh báo xác nhận (Popup) bảo vệ người dùng, ngăn chặn việc vô tình ghi đè cấu hình Live của Tab Vàng.\n- Tối ưu hóa tính năng nạp thông số từ Menu sang Backtest và đồng bộ hiển thị khung thời gian kiểm thử trực quan."
+  "release_date": "2026-11-11",
+  "description": "Phiên bản v1.1.8:\n- Khắc phục triệt để lỗi đơ giao diện 'Trading AI PRO.exe is not responding' khi chạy liên tục: Chuyển truy vấn lịch sử MT5 từ N+1 IPC sang Batch Query 1 lần trong RAM, nâng cấp Non-Blocking Lock cho luồng UI và thực thi đóng/sửa SL-TP bất đồng bộ (Async).\n- Tối ưu hóa bộ đệm bản quyền (License Cache 60s, hạn chế ghi đĩa xuống 5 phút/lần) và triệt tiêu lỗi MT5 retcode=10025 (No changes).\n- Lá chắn 4 lớp chống xung đột AI giữa Backtest và Bot Live: Khóa suy luận AI (RLock), tự động nhường quyền ưu tiên tuyệt đối cho Bot Live (Preemption), bộ đệm kết quả AI theo nến và nhả nhịp CPU."
 }
