@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.2"
+            self.app_version = "1.2.3"
             self.updater = None
 
         self._has_new_version = False
@@ -941,8 +941,25 @@ class KronosDesktopApp:
         # Khởi động kết nối, chạy phân tích AI lần đầu tự động và bật luồng Real-Time
         self.root.after(150, self.check_mt5_connection)
         self.root.after(350, self.trigger_single_scan)
+        self.root.after(600, self._restore_auto_running_after_update)
         self.root.after(1000, self._realtime_tick_loop)
         self.root.after(2000, self._check_update_on_startup)
+
+    def _restore_auto_running_after_update(self):
+        """Khôi phục tự động trạng thái công tắc AUTO RUNNING của các Tab ngay sau khi ứng dụng tự khởi động lại từ bản cập nhật OTA."""
+        try:
+            running_list = getattr(self, "_pending_restore_running_profiles", None)
+            if not running_list:
+                return
+            self._pending_restore_running_profiles = []
+            for pk in running_list:
+                if pk in ("XAUUSD", "BTCUSD") and not self.profile_ctx.get(pk, {}).get("auto_loop_running", False):
+                    self.start_auto_scan(profile_key=pk)
+            self.log(
+                f"🚀 [TỰ ĐỘNG ÁP DỤNG SAU CẬP NHẬT v{self.app_version}] Đã nạp toàn bộ cài đặt mới, khôi phục trạng thái AUTO ({', '.join(running_list)}) và gửi Request cho AI phân tích lại!"
+            )
+        except Exception as e:
+            self.log_error("RESTORE_AUTO_AFTER_UPDATE", e, show_in_ui=False)
 
     def _create_empty_profile_ctx(self, profile_key: str) -> dict:
         """Khởi tạo bộ trạng thái độc lập cho từng Tab (XAUUSD / BTCUSD)."""
@@ -1965,17 +1982,21 @@ class KronosDesktopApp:
                 if pk != self.active_profile_key:
                     self.trigger_single_scan(profile_key=pk)
             self._refresh_realtime_chart(force_full_redraw=True)
+            self.show_toast(
+                f"✓ Đã nâng cấp v{v_str}, nạp lại Cài đặt & Request Backend AI thành công!",
+                is_error=False,
+                duration_ms=2500
+            )
+            self.log(
+                f"🎉 [CẬP NHẬT & ĐỒNG BỘ BACKEND] Đã nâng cấp lên v{v_str}, tự động nạp lại cài đặt mới và khởi chạy lại dịch vụ nền."
+            )
+            # Tự động khởi chạy lại tiến trình mới sạch sẽ sau 300ms để đảm bảo 100% core_engine.bin và các luồng ngầm chạy mã mới nhất
+            if hasattr(self, "updater") and self.updater is not None:
+                self.root.after(300, self.updater.restart_application)
         except Exception as be_err:
             self.log(f"⚠️ [OTA BACKEND RELOAD] Khởi tạo lại dịch vụ nền: {be_err}")
-
-        self.show_toast(
-            f"✓ Đã nâng cấp v{v_str}, nạp lại Cài đặt & Request Backend AI thành công!",
-            is_error=False,
-            duration_ms=4000
-        )
-        self.log(
-            f"🎉 [CẬP NHẬT & ĐỒNG BỘ BACKEND] Đã nâng cấp lên v{v_str}, tự động nạp lại cài đặt mới và yêu cầu AI phân tích lại ngay lập tức."
-        )
+            if hasattr(self, "updater") and self.updater is not None:
+                self.root.after(300, self.updater.restart_application)
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -3439,11 +3460,12 @@ class KronosDesktopApp:
         self.symbol_var.set(sym)
         self.lot_var.set(test_lot)
 
-        # Đồng bộ ngược vào profile context và lưu xuống ổ cứng
+        # Đồng bộ ngược vào profile context, lưu xuống ổ cứng và áp dụng ngay cho Backend AI
         self._sync_self_to_active_ctx(include_ai_state=False)
         self.save_user_settings()
+        self.apply_live_settings_and_rescan(profile_key=target_pk, source_label="Áp dụng từ Backtest")
         self._update_bt_tf_display()
-        self.show_toast(f"✓ Đã lưu cài đặt Backtest vào Menu Live [{target_pk}] thành công!", is_error=False, duration_ms=3000)
+        self.show_toast(f"✓ Đã lưu & Áp dụng ngay cài đặt Backtest vào [{target_pk}]!", is_error=False, duration_ms=3000)
         self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Lot {test_lot}.")
 
     def _clear_backtest_data(self):
@@ -4690,13 +4712,46 @@ class KronosDesktopApp:
         except Exception:
             pass
 
+    def apply_live_settings_and_rescan(self, profile_key: str = None, source_label: str = "Menu Cài Đặt"):
+        """
+        Đồng bộ ngay lập tức toàn bộ thông số Cài đặt trên giao diện vào bộ nhớ điều hành của Bot,
+        tái tính toán lại Vùng Canh Giá / SL / TP theo thông số mới và tự động gửi Request cho Backend AI quét lại ngay lập tức
+        mà không cần tắt/mở lại ứng dụng.
+        """
+        pk = profile_key or self.active_profile_key
+        self._sync_self_to_active_ctx(include_ai_state=False)
+        cfg = self._get_profile_cfg(pk)
+        ctx = self.profile_ctx.get(pk, {})
+
+        # Đồng bộ khung xem biểu đồ nếu người dùng đổi Khung phân tích hoặc Khung vào lệnh
+        scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+        ana_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
+        if hasattr(self, "chart_view_tf_by_profile"):
+            cur_view = self.chart_view_tf_by_profile.get(pk)
+            if cur_view not in (scalp_tf, ana_tf):
+                self.chart_view_tf_by_profile[pk] = scalp_tf
+        self._update_forecast_tab_header()
+        self._update_bt_tf_display()
+
+        # Xóa chữ ký biểu đồ cũ và kích hoạt quét lại AI theo bộ thông số cài đặt mới ngay lập tức
+        self._last_drawn_chart_key = None
+        self._last_drawn_pos_sig = None
+        if not ctx.get("is_analyzing", False):
+            self.trigger_single_scan(profile_key=pk)
+        else:
+            self._refresh_realtime_chart(force_full_redraw=True)
+        self.log(
+            f"⚡ [ÁP DỤNG CÀI ĐẶT TRỰC TIẾP - {pk}] Đã nạp cấu hình mới từ {source_label} "
+            f"(AI: {ana_tf} -> Scalp: {scalp_tf} | Lot: {cfg.get('lot')} | Max SL: {cfg.get('max_sl_price')}$ | RR: {cfg.get('rr')}R) và yêu cầu Backend cập nhật ngay!"
+        )
+
     def manual_save_user_settings(self):
-        """Người dùng nhấn nút Lưu cài đặt: Ghi ra file và hiển thị Toast góc phải tự tắt sau 2 giây."""
+        """Người dùng nhấn nút Lưu cài đặt: Ghi ra file, áp dụng ngay vào luồng Live + gọi lại Backend AI mà không cần restart app."""
         saved_ok = self.save_user_settings(show_feedback=True)
         now_str = datetime.now().strftime("%H:%M:%S")
         if saved_ok:
-            self.log(f"[CÀI ĐẶT] ✓ Đã lưu thành công toàn bộ thông số và Token của Tab {self.active_profile_key} vào ổ cứng ({now_str}).")
-            self.show_toast(f"Đã lưu cài đặt [{self.active_profile_key}] & Áp dụng ngay!", is_error=False, duration_ms=2000)
+            self.apply_live_settings_and_rescan(profile_key=self.active_profile_key, source_label="Nút Lưu Cài Đặt")
+            self.show_toast(f"Đã lưu & Áp dụng ngay cài đặt [{self.active_profile_key}]!", is_error=False, duration_ms=2200)
         else:
             self.log(f"[CÀI ĐẶT] ⚠️ Không thể lưu cài đặt ({now_str}).")
             self.show_toast("Không thể lưu file cài đặt!", is_error=True, duration_ms=3000)
@@ -4754,6 +4809,7 @@ class KronosDesktopApp:
                 json.dump(imported_data, f, ensure_ascii=False, indent=2)
 
             self.load_user_settings()
+            self.apply_live_settings_and_rescan(profile_key=self.active_profile_key, source_label="Nhập File Cấu Hình")
             now_str = datetime.now().strftime("%H:%M:%S")
             if hasattr(self, "save_status_lbl"):
                 self.save_status_lbl.config(
@@ -4790,6 +4846,11 @@ class KronosDesktopApp:
             payload["hf_space"] = space_val
             payload["last_active_tab"] = self.active_profile_key
             payload["bottom_panel_height"] = int(getattr(self, "_saved_bottom_panel_h", 240))
+            payload["auto_running_profiles"] = [
+                pk for pk in ("XAUUSD", "BTCUSD")
+                if self.profile_ctx.get(pk, {}).get("auto_loop_running", False)
+                or (pk == self.active_profile_key and getattr(self, "auto_loop_running", False))
+            ]
             payload["profiles"] = {
                 "XAUUSD": dict(self.profile_settings["XAUUSD"]),
                 "BTCUSD": dict(self.profile_settings["BTCUSD"]),
@@ -4937,6 +4998,11 @@ class KronosDesktopApp:
                 except Exception:
                     self._saved_bottom_panel_h = 240
 
+            if ("--after-update" in sys.argv) and isinstance(data, dict) and isinstance(data.get("auto_running_profiles"), list):
+                self._pending_restore_running_profiles = [
+                    pk for pk in data["auto_running_profiles"] if pk in ("XAUUSD", "BTCUSD")
+                ]
+
             self.log(f"Đã khôi phục hồ sơ cài đặt riêng cho Tab {last_tab} (XAUUSD & BTCUSD độc lập).")
             if token_saved:
                 self.log(f"🔑 Hugging Face Token đã sẵn sàng ({token_saved[:5]}...{token_saved[-4:]}).")
@@ -4983,6 +5049,7 @@ class KronosDesktopApp:
             self._loading_settings = False
 
         self.save_user_settings()
+        self.apply_live_settings_and_rescan(profile_key=pk, source_label=f"Khôi phục {sec_title}")
         self.log(f"[CÀI ĐẶT] Đã khôi phục thông số mặc định tối ưu cho {sec_title} ({pk}).")
 
     def reset_all_settings(self):
@@ -5017,6 +5084,7 @@ class KronosDesktopApp:
             self._loading_settings = False
 
         self.save_user_settings()
+        self.apply_live_settings_and_rescan(profile_key=pk, source_label="Khôi phục toàn bộ mặc định")
         self.log(f"[CÀI ĐẶT] Đã khôi phục TOÀN BỘ thông số mặc định tối ưu cho tab {pk}.")
 
     # =========================================================================
@@ -5663,6 +5731,7 @@ class KronosDesktopApp:
             self.menu_toggle_btn.config(bg="#252f42", fg="#ffffff")
             target_x = -self.drawer_width - 5
             self.save_user_settings()
+            self.apply_live_settings_and_rescan(profile_key=self.active_profile_key, source_label="Đóng Menu Cài Đặt")
 
         self._animate_drawer_step(target_x)
 

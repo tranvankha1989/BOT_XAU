@@ -559,12 +559,14 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
                     messagebox.showinfo(
                         "Cập Nhật Thành Công",
                         f"Đã nâng cấp ứng dụng lên phiên bản v{latest_ver} thành công!\n"
-                        f"Hệ thống đang tự động làm mới giao diện, nạp lại cài đặt mới và yêu cầu Backend AI phân tích lại ngay lập tức.",
+                        f"Hệ thống sẽ tự động làm mới tiến trình, nạp toàn bộ cài đặt mới và yêu cầu Backend AI phân tích lại ngay lập tức.",
                         parent=dialog
                     )
                     dialog.destroy()
                     if on_complete:
                         on_complete(True, latest_ver)
+                    else:
+                        updater.restart_application()
                 else:
                     messagebox.showerror("Cập Nhật Thất Bại", f"Không thể cập nhật:\n{err}", parent=dialog)
                     btn_update.config(state=tk.NORMAL, text="Thử lại")
