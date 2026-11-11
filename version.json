@@ -1,6 +1,6 @@
 {
-  "version": "1.2.3",
+  "version": "1.2.4",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.3:\n- Nâng cấp cơ chế Áp Dụng Cài Đặt Trực Tiếp (Live Settings & Backend Sync): Ngay khi bấm 'Lưu Cài Đặt', đóng Menu cấu hình, khôi phục mặc định hoặc nhập file cấu hình, hệ thống lập tức cập nhật thông số (Khung giờ, Lot, Max SL, RR, Đồng thuận, Phân tán...) và tự động gửi Request cho Backend AI tính toán lại vùng Entry / SL / TP trên biểu đồ mà không cần tắt/mở lại App.\n- Tự động làm mới tiến trình sau khi cập nhật OTA (Auto-Restart & Restore Running State): Khi cập nhật phiên bản mới, ứng dụng tự động khởi chạy lại tiến trình mới trong tích tắc, tự khôi phục đúng Tab cùng công tắc AUTO RUNNING và quét lại AI ngay lập tức."
+  "description": "Phiên bản v1.2.4:\n- Loại bỏ hoàn toàn cơ chế bấm quét thủ công (Manual Scan): Gỡ bỏ nút bấm 'Quét AI (Reload)' thủ công (chuyển thành thanh hiển thị 'TIẾN TRÌNH AI' tự động), đảm bảo hệ thống chỉ phân tích chuẩn xác theo đúng chu kỳ đóng nến của Khung Phân Tích AI người dùng cài đặt.\n- Triệt tiêu 100% xung đột quét lặp lại khi đổi khung thời gian hoặc đóng Menu: Đồng bộ tuyệt đối mốc thời gian nến đã đóng (last_ana_candle_time), tách biệt sự kiện đổi Khung vào lệnh (Scalp) với Khung phân tích AI và kiểm tra chữ ký cấu hình trước khi quét."
 }

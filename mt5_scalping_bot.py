@@ -462,6 +462,7 @@ PROFILE_STATE_ATTRS = (
     "auto_loop_running",
     "is_analyzing",
     "last_candle_time",
+    "last_ana_candle_time",
     "last_recommendation",
     "pending_pullback_order",
     "daily_limit_locked_date",
@@ -498,6 +499,7 @@ PROFILE_STATE_ATTRS = (
 AI_MANAGED_STATE_ATTRS = frozenset({
     "is_analyzing",
     "last_candle_time",
+    "last_ana_candle_time",
     "last_recommendation",
     "cached_scenarios",
     "cached_mean_df",
@@ -743,7 +745,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.3"
+            self.app_version = "1.2.4"
             self.updater = None
 
         self._has_new_version = False
@@ -778,6 +780,7 @@ class KronosDesktopApp:
         self.auto_loop_running = False
         self.is_analyzing = False
         self.last_candle_time = None
+        self.last_ana_candle_time = None
         self.last_recommendation = None
         self.heartbeat_toggle = False
         self._loading_settings = False
@@ -968,6 +971,8 @@ class KronosDesktopApp:
             "auto_loop_running": False,
             "is_analyzing": False,
             "last_candle_time": None,
+            "last_ana_candle_time": None,
+            "_last_ai_scan_config_sig": None,
             "last_recommendation": None,
             "pending_pullback_order": None,
             "daily_limit_locked_date": None,
@@ -1346,8 +1351,8 @@ class KronosDesktopApp:
             self._draw_capsule(c, x1, y1, x2, y2, fill=bg_col, outline="#3d4f6d", width=1)
             c.create_text(
                 w / 2, h / 2,
-                text="🔄 100%",
-                fill="#ffffff",
+                text="✓ 100%",
+                fill="#10b981",
                 font=("Segoe UI", 9, "bold")
             )
 
@@ -2499,18 +2504,17 @@ class KronosDesktopApp:
         sig_right = tk.Frame(sig_box, bg=PANEL_BG)
         sig_right.pack(side=tk.RIGHT, padx=(12, 0), anchor="center")
 
-        # 1. Nút Reload dạng viên thuốc bo tròn hiển thị % trực quan
+        # 1. Thanh hiển thị Tiến Trình AI (Chỉ hiển thị tiến độ tự động theo đúng khung thời gian cài đặt, không bấm quét tay)
         reload_col = tk.Frame(sig_right, bg=PANEL_BG)
         reload_col.pack(side=tk.LEFT, padx=(0, 10))
         tk.Label(
-            reload_col, text="QUÉT AI (RELOAD)", bg=PANEL_BG, fg=TEXT_MUTED,
+            reload_col, text="TIẾN TRÌNH AI", bg=PANEL_BG, fg=TEXT_MUTED,
             font=("Segoe UI", 7, "bold")
-        ).pack( pady=(0, 2))
+        ).pack(pady=(0, 2))
         self.reload_canvas = tk.Canvas(
-            reload_col, width=118, height=32, bg=PANEL_BG, highlightthickness=0, cursor="hand2"
+            reload_col, width=118, height=32, bg=PANEL_BG, highlightthickness=0
         )
         self.reload_canvas.pack()
-        self.reload_canvas.bind("<Button-1>", lambda e: self.trigger_single_scan())
         self._draw_reload_pill()
 
         # 2. Công tắc gạt (Toggle Switch) bo tròn mềm mại cho START / STOP
@@ -4712,11 +4716,33 @@ class KronosDesktopApp:
         except Exception:
             pass
 
-    def apply_live_settings_and_rescan(self, profile_key: str = None, source_label: str = "Menu Cài Đặt"):
+    def _get_ai_scan_config_sig(self, profile_key: str = None) -> tuple:
+        """Lấy chữ ký các thông số ảnh hưởng đến phân tích AI của một Tab để chỉ quét lại khi người dùng thực sự đổi khung/thông số AI."""
+        pk = profile_key or self.active_profile_key
+        cfg = self._get_profile_cfg(pk)
+        scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+        ana_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
+        return (
+            str(cfg.get("symbol", pk)).strip(),
+            ana_tf,
+            str(cfg.get("model", "")).strip(),
+            str(cfg.get("engine", "")).strip(),
+            str(cfg.get("lookback", "450")).strip(),
+            str(cfg.get("pred_len", "6")).strip(),
+            str(cfg.get("scenarios", "8")).strip(),
+            str(cfg.get("consensus", "75")).strip(),
+            str(cfg.get("max_dispersion", "2.5")).strip(),
+            str(cfg.get("min_move", "1.2")).strip(),
+            str(cfg.get("sl_atr", "1.5")).strip(),
+            str(cfg.get("sl_buffer", "0.5")).strip(),
+            str(cfg.get("max_sl_price", "5.0")).strip(),
+            str(cfg.get("rr", "2.0")).strip(),
+        )
+
+    def apply_live_settings_and_rescan(self, profile_key: str = None, source_label: str = "Menu Cài Đặt", force_rescan: bool = False):
         """
         Đồng bộ ngay lập tức toàn bộ thông số Cài đặt trên giao diện vào bộ nhớ điều hành của Bot,
-        tái tính toán lại Vùng Canh Giá / SL / TP theo thông số mới và tự động gửi Request cho Backend AI quét lại ngay lập tức
-        mà không cần tắt/mở lại ứng dụng.
+        cập nhật biểu đồ/vùng canh giá và CHỈ gửi Request cho AI phân tích lại nếu Khung Phân Tích AI hoặc thông số AI thực sự thay đổi.
         """
         pk = profile_key or self.active_profile_key
         self._sync_self_to_active_ctx(include_ai_state=False)
@@ -4733,17 +4759,29 @@ class KronosDesktopApp:
         self._update_forecast_tab_header()
         self._update_bt_tf_display()
 
-        # Xóa chữ ký biểu đồ cũ và kích hoạt quét lại AI theo bộ thông số cài đặt mới ngay lập tức
         self._last_drawn_chart_key = None
         self._last_drawn_pos_sig = None
-        if not ctx.get("is_analyzing", False):
-            self.trigger_single_scan(profile_key=pk)
+
+        new_ai_sig = self._get_ai_scan_config_sig(pk)
+        prev_ai_sig = ctx.get("_last_ai_scan_config_sig")
+        need_ai_rescan = force_rescan or (prev_ai_sig != new_ai_sig) or (ctx.get("cached_mean_df") is None)
+
+        if need_ai_rescan:
+            ctx["_last_ai_scan_config_sig"] = new_ai_sig
+            ctx["last_ana_candle_time"] = None
+            if not ctx.get("is_analyzing", False):
+                self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE")
+            self.log(
+                f"⚡ [ÁP DỤNG CÀI ĐẶT - {pk}] Đã nạp cấu hình mới từ {source_label} "
+                f"(Phân tích AI: {ana_tf} -> Vào lệnh: {scalp_tf} | Lot: {cfg.get('lot')} | Max SL: {cfg.get('max_sl_price')}$ | RR: {cfg.get('rr')}R) -> Đồng bộ theo khung {ana_tf}!"
+            )
         else:
             self._refresh_realtime_chart(force_full_redraw=True)
-        self.log(
-            f"⚡ [ÁP DỤNG CÀI ĐẶT TRỰC TIẾP - {pk}] Đã nạp cấu hình mới từ {source_label} "
-            f"(AI: {ana_tf} -> Scalp: {scalp_tf} | Lot: {cfg.get('lot')} | Max SL: {cfg.get('max_sl_price')}$ | RR: {cfg.get('rr')}R) và yêu cầu Backend cập nhật ngay!"
-        )
+            if source_label != "Đóng Menu Cài Đặt":
+                self.log(
+                    f"✓ [CÀI ĐẶT TRỰC TIẾP - {pk}] Đã áp dụng ngay ({source_label}): "
+                    f"Phân tích AI [{ana_tf}] -> Vào lệnh [{scalp_tf}] | Lot: {cfg.get('lot')} | Max SL: {cfg.get('max_sl_price')}$ | RR: {cfg.get('rr')}R (Giữ nguyên chu kỳ quét tự động [{ana_tf}])."
+                )
 
     def manual_save_user_settings(self):
         """Người dùng nhấn nút Lưu cài đặt: Ghi ra file, áp dụng ngay vào luồng Live + gọi lại Backend AI mà không cần restart app."""
@@ -5596,8 +5634,8 @@ class KronosDesktopApp:
     def _bind_auto_save_settings(self):
         for var in self._get_settings_vars_map().values():
             var.trace_add("write", self.save_user_settings)
-        self.tf_var.trace_add("write", self._on_timeframe_changed)
-        self.analysis_tf_var.trace_add("write", self._on_timeframe_changed)
+        self.tf_var.trace_add("write", self._on_scalp_timeframe_changed)
+        self.analysis_tf_var.trace_add("write", self._on_analysis_timeframe_changed)
         self.root.bind_all("<Button-1>", self._on_global_click_outside_menu, add="+")
         self.root.bind_all("<Button-3>", self._on_global_click_outside_menu, add="+")
 
@@ -5687,7 +5725,26 @@ class KronosDesktopApp:
 
         self.log(f"👁️ [{pk}] Đang xem biểu đồ khung [{tf_opt}]. (Cài đặt AI: Phân tích [{ana_tf}] -> Vào lệnh [{scalp_tf}]).")
 
-    def _on_timeframe_changed(self, *args):
+    def _on_scalp_timeframe_changed(self, *args):
+        """Khi người dùng đổi Khung vào lệnh (Scalp): Chỉ cập nhật khung canh lệnh và biểu đồ, KHÔNG kích hoạt quét lại AI."""
+        if self._loading_settings:
+            return
+        pk = self.active_profile_key
+        self._sync_self_to_active_ctx(include_ai_state=False)
+        scalp_tf = self.tf_var.get().strip() or "M5"
+        ana_tf = self.analysis_tf_var.get().strip() or scalp_tf
+        if not hasattr(self, "chart_view_tf_by_profile"):
+            self.chart_view_tf_by_profile = {}
+        self.chart_view_tf_by_profile[pk] = scalp_tf
+        self._highlight_active_tf_btn(scalp_tf)
+        self._update_forecast_tab_header()
+        self._update_bt_tf_display()
+        self._last_drawn_chart_key = None
+        self._refresh_realtime_chart(force_full_redraw=True)
+        self.log(f"🎯 [{pk}] Đã đổi Khung vào lệnh (Scalp) sang [{scalp_tf}] (Giữ nguyên chu kỳ phân tích AI trên khung [{ana_tf}]).")
+
+    def _on_analysis_timeframe_changed(self, *args):
+        """Khi người dùng đổi Khung phân tích AI: Đồng bộ sang khung thời gian phân tích mới và chỉ quét 1 lần cho khung mới."""
         if self._loading_settings:
             return
         pk = self.active_profile_key
@@ -5698,20 +5755,8 @@ class KronosDesktopApp:
             self.profile_ctx[pk]["user_zoomed"] = False
             self.profile_ctx[pk]["saved_xlim"] = None
             self.profile_ctx[pk]["saved_ylim"] = None
-        scalp_tf = self.tf_var.get().strip()
-        ana_tf = self.analysis_tf_var.get().strip()
-        if not hasattr(self, "chart_view_tf_by_profile"):
-            self.chart_view_tf_by_profile = {}
-        if pk not in self.chart_view_tf_by_profile:
-            self.chart_view_tf_by_profile[pk] = scalp_tf
-        active_tf = self.chart_view_tf_by_profile.get(pk, scalp_tf)
-        self._highlight_active_tf_btn(active_tf)
-        self._update_forecast_tab_header()
-        if ana_tf == scalp_tf:
-            self.log(f"🔄 [{pk}] Cài đặt Menu: Soi [{scalp_tf}] -> Trade [{scalp_tf}]. Đang quét lại AI...")
-        else:
-            self.log(f"🔄 [{pk}] Cài đặt Menu Đa Khung: Phân tích AI trên [{ana_tf}] -> Vào lệnh Scalping trên [{scalp_tf}]. Đang quét lại AI...")
-        self.trigger_single_scan(profile_key=pk)
+            self.profile_ctx[pk]["last_ana_candle_time"] = None
+        self.apply_live_settings_and_rescan(profile_key=pk, source_label="Đổi Khung Phân Tích AI")
 
     def toggle_left_menu(self):
         """Trượt mượt mà (Slide-Over Animation) cột Menu bên trái mà không làm giật hay vẽ lại biểu đồ."""
@@ -8315,8 +8360,11 @@ class KronosDesktopApp:
         df = df[["timestamps", "open", "high", "low", "close", "volume"]].dropna()
         return df.sort_values("timestamps").reset_index(drop=True)
 
-    def _refresh_realtime_chart(self, symbol: str, tf_str: str, force_full_redraw: bool = False):
+    def _refresh_realtime_chart(self, symbol: str = None, tf_str: str = None, force_full_redraw: bool = False):
         active_pk = self.active_profile_key
+        cfg_cur = self._get_profile_cfg(active_pk)
+        symbol = symbol or str(cfg_cur.get("symbol", active_pk)).strip()
+        tf_str = tf_str or str(cfg_cur.get("tf", "M5")).strip() or "M5"
         ana_tf = self.analysis_tf_var.get().strip() or tf_str
         view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(active_pk, tf_str)
         active_tf = view_tf
@@ -8700,7 +8748,9 @@ class KronosDesktopApp:
 
     def trigger_single_scan(self, profile_key: str = None):
         pk = profile_key or self.active_profile_key
-        self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
+        if pk in self.profile_ctx:
+            self.profile_ctx[pk]["_last_ai_scan_config_sig"] = self._get_ai_scan_config_sig(pk)
+        self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE")
 
     def _update_bot_status_bar(self, profile_key: str = None):
         """
@@ -8821,7 +8871,7 @@ class KronosDesktopApp:
         mode_desc = f"AI phân tích đóng nến {ana_tf_val} -> Python canh vùng giá {tf_val}/Tick" if ana_tf_val != tf_val else f"Canh đóng nến {tf_val} & bám sát vùng giá AI"
         self.log(f"[{pk} - {sym}] Đã BẬT công tắc AUTO ({mode_desc})...")
         if self.profile_ctx[pk].get("cached_mean_df") is None and not self.profile_ctx[pk].get("is_analyzing", False):
-            self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
+            self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE")
         threading.Thread(target=self._auto_loop_worker, args=(pk, worker_token), daemon=True).start()
 
     def stop_auto_scan(self, profile_key: str = None):
@@ -8963,14 +9013,10 @@ class KronosDesktopApp:
                 with self._mt5_lock:
                     tick = mt5.symbol_info_tick(symbol)
                 tols = self._get_symbol_tolerances(symbol, tick)
-                server_now_ts = pd.to_datetime(int(tick.time), unit="s") if tick is not None else df_with_forming["timestamps"].iloc[-1]
-                forming_open_ts = df_with_forming["timestamps"].iloc[-1]
-                forming_age_sec = (server_now_ts - forming_open_ts).total_seconds()
 
-                # Nếu kích hoạt tự động khi đóng nến (AUTO_CANDLE), giữ ngưỡng cắt nến mới mở 60s cho cả đơn khung & đa khung
-                # để dù mã thứ 2 có xếp hàng chờ mã thứ 1 phân tích xong (~2-5s) thì vẫn phân tích chính xác cây nến vừa đóng!
-                age_cutoff_sec = 60.0 if reason == "AUTO_CANDLE" else 15.0
-                if forming_age_sec < age_cutoff_sec and len(df_with_forming) > 35:
+                # Luôn phân tích trên các cây nến ĐÃ ĐÓNG của Khung Phân Tích AI (analysis_tf)
+                # và lưu chính xác mốc thời gian nến đã đóng vào last_ana_candle_time để đồng bộ 100% với _auto_loop_worker
+                if len(df_with_forming) > 35:
                     df = df_with_forming.iloc[:-1].reset_index(drop=True)
                 else:
                     df = df_with_forming.iloc[-chart_bars:].reset_index(drop=True)
@@ -8991,6 +9037,7 @@ class KronosDesktopApp:
                 last_time = df_scalp["timestamps"].iloc[-1]
                 ctx["last_candle_time"] = last_time
                 ctx["last_ana_candle_time"] = df["timestamps"].iloc[-1]
+                ctx["_last_ai_scan_config_sig"] = self._get_ai_scan_config_sig(pk)
                 if pk == self.active_profile_key:
                     self.last_candle_time = last_time
                 atr_scalp = self.calculate_atr(df_scalp, 14)
