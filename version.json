@@ -1,6 +1,6 @@
 {
-  "version": "1.2.8",
+  "version": "1.2.9",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.8:\n- Đồng bộ Động cơ Backtest chuẩn xác 100% với Não Live: Tự động nạp đủ 450 nến lịch sử và phân tích 8 kịch bản Monte Carlo (thay vì 60 nến / 4 kịch bản).\n- Áp dụng trọn vẹn thuật toán Adaptive Sampling (T=0.58/0.65), Trọng số xác suất Bayesian Log-Likelihood, Đồng thuận Quỹ đạo Đa bước và Bộ lọc Bất định Phân tán (max_dispersion) vào Backtest.\n- Kết quả kiểm thử quá khứ (Backtest) phản ánh chính xác tuyệt đối từng nhịp nến và tín hiệu giống hệt như đang chạy Live thời gian thực."
+  "description": "Phiên bản v1.2.9:\n- Nâng cấp cơ chế Kiểm soát Số lệnh tối đa (max_pos) và Nhồi lệnh Risk-Free: Tự động loại bỏ các lệnh ĐÃ DỜI SL VỀ HÒA VỐN (BE+) khỏi bộ đếm số lệnh mở.\n- Giải phóng hạn mức lệnh cho bot: Chỉ những lệnh chưa dời BE (đang chịu rủi ro vốn) mới tính vào trần số lệnh tối đa, cho phép bot tiếp tục nhồi lệnh theo sóng an toàn tuyệt đối khi các lệnh trước đã khóa rủi ro.\n- Bổ sung chỉ báo chi tiết trên bảng vị thế: Hiển thị minh bạch số lệnh chưa BE vs đã BE đang chạy trên tài khoản.\n- Đồng bộ hóa logic loại trừ lệnh BE trên toàn bộ quy trình: Canh vùng AI M1, khớp lệnh MT5, Time-Stop giữ lệnh tối đa và hiển thị giao diện."
 }

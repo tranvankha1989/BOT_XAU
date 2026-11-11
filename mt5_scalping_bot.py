@@ -154,9 +154,9 @@ PARAM_HELP_GUIDE = {
         "how_to_set": "- Vốn 200$ - 500$: Cài 0.01 lot.\n- Vốn 1,000$: Cài 0.02 - 0.03 lot.\n- Vốn 3,000$ - 5,000$: Cài 0.05 - 0.10 lot.\n- Nguyên tắc vàng: Giữ tổng rủi ro khi dính SL của tất cả các lệnh không vượt quá 1% - 2% vốn tài khoản."
     },
     "max_pos": {
-        "title": "Số lệnh tối đa cùng lúc (Max Positions)",
-        "what_is_it": "Giới hạn số lượng vị thế (lệnh) mở đồng thời tối đa của cặp tiền này. Khi tổng số lệnh đang mở chạm ngưỡng này, bot sẽ khóa chức năng mở thêm lệnh.",
-        "how_to_set": "- Đánh an toàn tuyệt đối: Đặt 1 lệnh (Đóng lệnh này mới vào lệnh khác).\n- Đánh nhồi / DCA kiểm soát rủi ro: Đặt 2 đến 3 lệnh.\n- Cảnh báo: Không nên đặt > 4 lệnh vì dễ gây áp lực ký quỹ (Margin Call) khi thị trường chạy một chiều mạnh."
+        "title": "Số lệnh chưa BE tối đa (Max At-Risk Positions)",
+        "what_is_it": "Giới hạn số lượng vị thế ĐANG CHỊU RỦI RO (chưa dời SL về hòa vốn BE) mở đồng thời tối đa của cặp tiền này.\n- QUY TẮC BẢO VỆ: Các lệnh ĐÃ DỜI BE (Risk-Free) sẽ tự động được LOẠI BỎ KHỎI BỘ ĐẾM, cho phép bot tiếp tục nhồi thêm lệnh pullback mới mà vẫn kiểm soát rủi ro tài khoản an toàn tuyệt đối!",
+        "how_to_set": "- Đánh an toàn: Đặt 1 đến 2 lệnh chưa BE.\n- Đánh nhồi sóng dài: Đặt 3 đến 4 lệnh (khi lệnh cũ dời BE, bot sẽ tự động giải phóng hạn mức để mở thêm lệnh mới theo sóng).\n- Cảnh báo: Không nên đặt quá nhiều lệnh chưa BE để tránh rủi ro ký quỹ khi thị trường biến động giật mạnh."
     },
     "magic_number": {
         "title": "Mã định danh lệnh (Magic Number)",
@@ -762,7 +762,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.8"
+            self.app_version = "1.2.9"
             self.updater = None
 
         self._has_new_version = False
@@ -7468,7 +7468,11 @@ class KronosDesktopApp:
             with self._mt5_lock:
                 open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
-                if len(open_positions) >= max_pos:
+                tols = self._get_symbol_tolerances(symbol)
+                eps_eq = tols.get("eps_equal", 0.05)
+                # Loại bỏ các lệnh ĐÃ DỜI BE (Risk-Free) khỏi bộ đếm số lệnh tối đa
+                at_risk_positions = [pos for pos in open_positions if not self._is_pos_at_be(pos, eps_eq)]
+                if len(at_risk_positions) >= max_pos:
                     return
                 for pos in open_positions:
                     is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
@@ -7649,6 +7653,22 @@ class KronosDesktopApp:
                 return one_r
         return 150.0 if "BTC" in str(pos.symbol).upper() else 5.0
 
+    def _is_pos_at_be(self, pos, eps_eq: float = None) -> bool:
+        """
+        Kiểm tra xem một vị thế đã được dời SL về Hòa Vốn (BE) hoặc Trailing có lãi hay chưa.
+        Lệnh đã dời BE được tính là Risk-Free (hoàn toàn không còn rủi ro thua lỗ vốn ban đầu),
+        do đó sẽ được LOẠI BỎ KHỎI BỘ ĐẾM SỐ LỆNH TỐI ĐA (max_pos) khi xét điều kiện nhồi lệnh.
+        """
+        if pos is None or getattr(pos, "sl", 0.0) <= 0.0:
+            return False
+        if eps_eq is None:
+            eps_eq = self._get_symbol_tolerances(getattr(pos, "symbol", "")).get("eps_equal", 0.05)
+        is_buy = (pos.type == getattr(mt5, "POSITION_TYPE_BUY", 0))
+        if is_buy:
+            return pos.sl >= (pos.price_open - eps_eq)
+        else:
+            return pos.sl <= (pos.price_open + eps_eq)
+
     def _update_open_positions_and_manage(self, symbol: str, profile_key: str = None):
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
@@ -7712,16 +7732,10 @@ class KronosDesktopApp:
 
             # Kiểm tra trạng thái an toàn: Lệnh đã được dời SL về Hòa vốn (BE) hoặc đang Trailing Stop hay chưa
             is_be_or_trailing = False
-            if is_buy:
-                if pos.sl > 0 and (pos.sl >= be_target_price - eps_eq * 0.5 or pos.sl >= entry_exact - eps_eq * 0.5):
-                    is_be_or_trailing = True
-                elif auto_be and current_r >= be_trigger_r:
-                    is_be_or_trailing = True
-            else:
-                if pos.sl > 0 and (pos.sl <= be_target_price + eps_eq * 0.5 or pos.sl <= entry_exact + eps_eq * 0.5):
-                    is_be_or_trailing = True
-                elif auto_be and current_r >= be_trigger_r:
-                    is_be_or_trailing = True
+            if self._is_pos_at_be(pos, eps_eq):
+                is_be_or_trailing = True
+            elif auto_be and current_r >= be_trigger_r:
+                is_be_or_trailing = True
 
             # Quy tắc Giữ lệnh tối đa (Time-Stop): Chỉ áp dụng cho các lệnh CHƯA dời BE/Trailing (ngâm lệnh ì ạch hoặc đang âm)
             # Lệnh đã dời BE / đang Trailing là lệnh Free-Risk hoàn toàn, được tự do chạy theo sóng để gồng lãi tối đa
@@ -7981,8 +7995,14 @@ class KronosDesktopApp:
             self.cached_be_count = be_count
             self.cached_closed_count = closed_count
 
+        # Thống kê số lệnh chưa dời BE (chịu rủi ro) vs đã dời BE (Risk-Free)
+        eps_eq_sum = tols["eps_equal"]
+        at_risk_c = sum(1 for p in positions if not self._is_pos_at_be(p, eps_eq_sum))
+        be_c = len(positions) - at_risk_c
+        be_detail_str = f" ({at_risk_c} chưa BE, {be_c} đã BE)" if len(positions) > 0 and be_c > 0 else ""
+
         summary_widget.config(
-            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh ({total_profit:+.2f}$)  |  Đã chốt hôm nay: {closed_count} lệnh ({closed_profit_sum:+.2f}$){win_rate_tag}  |  Tổng Lãi/Lỗ Ngày (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
+            text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh{be_detail_str} ({total_profit:+.2f}$)  |  Đã chốt hôm nay: {closed_count} lệnh ({closed_profit_sum:+.2f}$){win_rate_tag}  |  Tổng Lãi/Lỗ Ngày (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
             fg=GOLD_ACCENT if is_locked else (pnl_color if len(positions) > 0 else CYAN_LIVE)
         )
         return len(positions), total_profit
@@ -8782,8 +8802,13 @@ class KronosDesktopApp:
 
                 mt5.symbol_select(symbol, True)
                 positions = mt5.positions_get(symbol=symbol)
-                if positions is not None and len(positions) >= max_positions:
-                    return False, f"Đã có {len(positions)}/{max_positions} lệnh đang mở. Bỏ qua lệnh mới."
+                if positions is not None:
+                    tols = self._get_symbol_tolerances(symbol)
+                    eps_eq = tols.get("eps_equal", 0.05)
+                    # Loại bỏ các lệnh ĐÃ DỜI BE (Risk-Free) khỏi bộ đếm số lệnh tối đa
+                    at_risk_positions = [p for p in positions if not self._is_pos_at_be(p, eps_eq)]
+                    if len(at_risk_positions) >= max_positions:
+                        return False, f"Đã có {len(at_risk_positions)}/{max_positions} lệnh chưa dời BE đang mở (tổng {len(positions)} lệnh). Bỏ qua nhồi lệnh mới."
 
                 # Kiểm tra các quy tắc nhồi lệnh (Multi-Entry Guard) khi đã có ít nhất 1 lệnh đang chạy
                 if positions is not None and len(positions) > 0:
@@ -8817,7 +8842,7 @@ class KronosDesktopApp:
                             is_p_buy = (p.type == mt5.POSITION_TYPE_BUY)
                             if is_p_buy != (action == "BUY"):
                                 continue
-                            is_at_be = (p.sl > 0 and p.sl >= (p.price_open - 1e-4)) if is_p_buy else (p.sl > 0 and p.sl <= (p.price_open + 1e-4))
+                            is_at_be = self._is_pos_at_be(p, eps_eq)
                             if not is_at_be:
                                 dir_tag = "BUY" if is_p_buy else "SELL"
                                 return False, f"🛡️ [{pk} - Risk-Free] Lệnh #{p.ticket} ({dir_tag} @ {p.price_open:.2f}) chưa dời SL về hòa vốn BE (SL: {p.sl:.2f}). Chưa đủ điều kiện nhồi lệnh an toàn."
