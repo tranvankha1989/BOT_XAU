@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.1"
+            self.app_version = "1.2.2"
             self.updater = None
 
         self._has_new_version = False
@@ -807,6 +807,7 @@ class KronosDesktopApp:
         self._chart_mean_df = None
         self._chart_all_times = []
         self._chart_n_hist = 0
+        self._chart_pred_gap = 0
         self._chart_total_x = 0
         self._pos_text_artists = []
         self._forming_wick_line = None
@@ -1796,7 +1797,7 @@ class KronosDesktopApp:
     def _on_update_hot_applied(self, success: bool, new_version: str = ""):
         """
         Xử lý ngay sau khi gói cập nhật OTA đã tải xong:
-        - Nạp lại mã nguồn & động cơ mới vào RAM.
+        - Nạp lại mã nguồn & động cơ mới vào RAM (hỗ trợ cả file .py lẫn khối nhị phân mã hóa core_engine.bin khi chạy từ Trading AI PRO.exe).
         - Tự động làm mới toàn bộ giao diện (UI), nạp lại cài đặt (Settings) và gọi lại Backend (MT5 + AI Scan + Auto Loop)
           để áp dụng 100% tính năng & thông số mới ngay lập tức mà không cần người dùng tắt/mở lại App thủ công.
         """
@@ -1820,24 +1821,59 @@ class KronosDesktopApp:
         except Exception:
             pass
 
-        # 2. Hot-Reload toàn bộ module phụ trợ & mã nguồn chính mới vào RAM
+        # 2. Hot-Reload toàn bộ module phụ trợ & mã nguồn chính mới vào RAM (từ file .py hoặc giải mã core_engine.bin)
         try:
             import importlib
             import importlib.util
-            for sub_mod in ("kronos_license", "kronos_updater"):
-                if sub_mod in sys.modules:
+            import marshal
+            import hashlib
+            import types
+
+            reloaded_mod = None
+            app_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+            bot_py_candidates = [
+                os.path.join(app_dir, "mt5_scalping_bot.py"),
+                os.path.abspath(__file__),
+            ]
+            for cand_py in bot_py_candidates:
+                if cand_py and os.path.exists(cand_py) and cand_py.lower().endswith(".py"):
                     try:
-                        importlib.reload(sys.modules[sub_mod])
+                        for sub_mod, sub_fn in (("kronos_license", "kronos_license.py"), ("kronos_updater", "kronos_updater.py")):
+                            sub_p = os.path.join(os.path.dirname(cand_py), sub_fn)
+                            if os.path.exists(sub_p):
+                                s_spec = importlib.util.spec_from_file_location(sub_mod, sub_p)
+                                s_mod = importlib.util.module_from_spec(s_spec)
+                                s_spec.loader.exec_module(s_mod)
+                                sys.modules[sub_mod] = s_mod
+                        spec = importlib.util.spec_from_file_location("mt5_scalping_bot_reloaded", cand_py)
+                        reloaded_mod = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(reloaded_mod)
+                        break
                     except Exception:
-                        pass
+                        reloaded_mod = None
 
-            bot_path = os.path.abspath(__file__)
-            if os.path.exists(bot_path):
-                spec = importlib.util.spec_from_file_location("mt5_scalping_bot_reloaded", bot_path)
-                reloaded_mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(reloaded_mod)
+            # Dự phòng giải mã trực tiếp từ core_engine.bin trong RAM nếu chạy bản .exe đóng gói không có file .py
+            if reloaded_mod is None:
+                bin_path = os.path.join(app_dir, "core_engine.bin")
+                if os.path.exists(bin_path):
+                    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                    salt = b"TRADING_AI_PRO_KHA_TRAN_DESIGN_IMMUTABLE_PROPRIETARY_SALT_2026"
+                    eng_key = hashlib.sha256(b"KHA_TRAN_TRADING_ALGORITHM_AES_KEY_V1" + salt).digest()
+                    aad_hdr = b"TRADING_AI_PRO_ENCRYPTED_BINARY_CONTAINER_V1"
+                    with open(bin_path, "rb") as f_bin:
+                        raw_bin = f_bin.read()
+                    container_bytes = AESGCM(eng_key).decrypt(raw_bin[:12], raw_bin[12:], aad_hdr)
+                    raw_dict = marshal.loads(container_bytes)
+                    for sub_m in ("kronos_license", "kronos_updater"):
+                        if sub_m in raw_dict:
+                            m_obj = types.ModuleType(sub_m)
+                            exec(marshal.loads(raw_dict[sub_m]), m_obj.__dict__)
+                            sys.modules[sub_m] = m_obj
+                    if "mt5_scalping_bot" in raw_dict:
+                        reloaded_mod = types.ModuleType("mt5_scalping_bot_reloaded")
+                        exec(marshal.loads(raw_dict["mt5_scalping_bot"]), reloaded_mod.__dict__)
 
-                # Đồng bộ các hằng số cấu hình mặc định & hướng dẫn mới sang module đang chạy
+            if reloaded_mod is not None:
                 cur_mod = sys.modules.get(__name__)
                 for const_name in (
                     "DEFAULT_PROFILE_SETTINGS",
@@ -1856,12 +1892,15 @@ class KronosDesktopApp:
                     for k, v in new_cls.__dict__.items():
                         if callable(v) or isinstance(v, property):
                             setattr(KronosDesktopApp, k, v)
+                            if cur_mod is not None and hasattr(cur_mod, "KronosDesktopApp"):
+                                setattr(getattr(cur_mod, "KronosDesktopApp"), k, v)
         except Exception as reload_err:
             self.log(f"⚠️ [OTA HOT-PATCH] Nạp phương thức mới: {reload_err}")
 
         # 3. Khởi tạo bổ sung các thuộc tính mới (nếu phiên bản mới vừa thêm vào __init__)
         default_new_attrs = {
             "show_ai_chart_overlay": True,
+            "_chart_pred_gap": 0,
             "pos_tree_by_profile": {},
             "pos_summary_lbl_by_profile": {},
             "pred_tree_by_profile": {},
@@ -6092,6 +6131,8 @@ class KronosDesktopApp:
         hist = self._chart_hist_df
         mean_df = self._chart_mean_df
         n_hist = self._chart_n_hist
+        pred_gap = int(getattr(self, "_chart_pred_gap", 0))
+        pred_start = n_hist + pred_gap
 
         if hist is not None and 0 <= idx < n_hist:
             r = hist.iloc[idx]
@@ -6108,8 +6149,8 @@ class KronosDesktopApp:
                     text=f"🕒 {ts_full}  |  O: {o:.2f}   H: {h:.2f}   L: {l:.2f}   C: {c:.2f} ({chg:+.2f}$)",
                     fg=col
                 )
-        elif getattr(self, "show_ai_chart_overlay", True) and mean_df is not None and n_hist <= idx < n_hist + len(mean_df):
-            r = mean_df.iloc[idx - n_hist]
+        elif getattr(self, "show_ai_chart_overlay", True) and mean_df is not None and pred_start <= idx < pred_start + len(mean_df):
+            r = mean_df.iloc[idx - pred_start]
             ts_full = r["timestamps"].strftime("%d/%m %H:%M")
             o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
             chg = c - o
@@ -9339,12 +9380,15 @@ class KronosDesktopApp:
         n_hist = len(hist)
         show_ai_ov = bool(getattr(self, "show_ai_chart_overlay", True))
         # Hiển thị phần nến dự báo AI ngay trên biểu đồ hợp nhất khi bật lớp phủ Dự Báo AI và đang ở khung phân tích
+        # Tách cụm 6 nến dự báo AI cách xa cây nến đang chạy một khoảng đệm 3 nến (pred_gap = 3) để dễ quan sát và phân biệt rõ ràng
         n_pred = (len(mean_df) if mean_df is not None else 0) if show_ai_ov else 0
-        total_x = n_hist + n_pred
+        pred_gap = 3 if n_pred > 0 else 0
+        total_x = n_hist + pred_gap + n_pred
 
         self._chart_hist_df = hist
         self._chart_mean_df = mean_df if show_ai_ov else None
         self._chart_n_hist = n_hist
+        self._chart_pred_gap = pred_gap
         self._chart_total_x = total_x
 
         default_vis = 170
@@ -9618,32 +9662,34 @@ class KronosDesktopApp:
             )
             self._pos_text_artists.append((t_wait, 0))
 
-        # 3. Cụm Dự báo Kronos AI (Hiển thị trực tiếp trên biểu đồ hợp nhất khi bật lớp phủ Dự Báo AI)
+        # 3. Cụm Dự báo Kronos AI (Tách cách xa cây nến đang chạy pred_gap = 3 nhịp để dễ quan sát & phân biệt rõ nến dự báo AI với nến Live)
         all_times = list(hist["timestamps"].dt.strftime("%H:%M"))
         if show_ai_ov and scenarios is not None and mean_df is not None:
+            pred_start_x = n_hist + pred_gap
+            sep_x = n_hist + (pred_gap * 0.5) - 0.5
             anchor_idx = n_hist - 1
             anchor_y = float(hist["close"].iloc[anchor_idx])
-            x_pred = np.arange(n_hist, n_hist + n_pred)
+            x_pred = np.arange(pred_start_x, pred_start_x + n_pred)
 
-            alpha_line = 0.42
+            alpha_line = 0.38
             for idx, s_df in enumerate(scenarios):
                 xs = np.concatenate([[anchor_idx], x_pred])
                 ys = np.concatenate([[anchor_y], s_df["close"].values])
-                self.ax.plot(xs, ys, color="#ffd54f", alpha=alpha_line, linewidth=1.1, label="8 Kịch bản AI" if idx == 0 else "")
+                self.ax.plot(xs, ys, color="#ffd54f", alpha=alpha_line, linewidth=0.9, label="8 Kịch bản AI" if idx == 0 else "")
 
             for j in range(n_pred):
-                idx_x = n_hist + j
+                idx_x = pred_start_x + j
                 o, h, l, c = mean_df.loc[j, ["open", "high", "low", "close"]]
                 color = "#ffd54f" if c >= o else "#ff8a65"
-                self.ax.plot([idx_x, idx_x], [l, h], color=color, linewidth=1.4)
+                self.ax.plot([idx_x, idx_x], [l, h], color=color, linewidth=1.25)
                 bottom = min(o, c)
                 height = max(abs(c - o), 0.05)
-                self.ax.add_patch(Rectangle((idx_x - 0.33, bottom), 0.66, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
+                self.ax.add_patch(Rectangle((idx_x - 0.30, bottom), 0.60, height, facecolor=color, edgecolor=color, label="Nến Dự báo AI" if j == 0 else ""))
 
-            self.ax.axvline(x=n_hist - 0.5, color=GOLD_ACCENT, linestyle="--", linewidth=1.1, alpha=0.8)
-            all_times += list(mean_df["timestamps"].dt.strftime("%H:%M"))
+            self.ax.axvline(x=sep_x, color=GOLD_ACCENT, linestyle="--", linewidth=0.95, alpha=0.75)
+            all_times += [""] * pred_gap + list(mean_df["timestamps"].dt.strftime("%H:%M"))
 
-        # Luôn hiển thị đường & nhãn SL/TP Đề Xuất của AI trên mọi khung thời gian (M1/M5/M15/H1) và kể cả khi đang có lệnh mở
+        # Luôn hiển thị đường & nhãn SL/TP Đề Xuất của AI với nét mảnh thanh thoát trên mọi khung giờ (M1/M5/M15/H1) và kể cả khi đang có lệnh mở
         if show_ai_ov and sl_price is not None and tp_price is not None:
             try:
                 lot_val = float(self.lot_var.get())
@@ -9658,26 +9704,26 @@ class KronosDesktopApp:
             ai_label_x = base_label_x + (ai_col_idx * col_step_x)
 
             self.ax.axhline(
-                y=sl_price, color="#ff5252", linestyle="-.", linewidth=1.35, alpha=0.92, zorder=14,
+                y=sl_price, color="#ff6b81", linestyle=(0, (4, 3)), linewidth=0.75, alpha=0.80, zorder=14,
                 label=f"SL đề xuất AI: {sl_price:.2f} ({est_sl_usd:+.1f}$)"
             )
             t_ai_sl = self.ax.text(
                 ai_label_x, sl_price,
-                f" 🧠 SL AI đề xuất: {sl_price:.2f} ({est_sl_usd:+.1f}$) ",
-                color="#ffdce0", backgroundcolor="#5c1622",
-                fontsize=7.5, fontweight="bold", va="center", clip_on=True, zorder=17
+                f" SL AI: {sl_price:.2f} ({est_sl_usd:+.1f}$) ",
+                color="#ffcdd2", backgroundcolor="#3b1219",
+                fontsize=7.0, va="center", clip_on=True, zorder=17
             )
             self._pos_text_artists.append((t_ai_sl, ai_col_idx))
 
             self.ax.axhline(
-                y=tp_price, color="#00e676", linestyle="-.", linewidth=1.35, alpha=0.92, zorder=14,
+                y=tp_price, color="#69f0ae", linestyle=(0, (4, 3)), linewidth=0.75, alpha=0.80, zorder=14,
                 label=f"TP đề xuất AI: {tp_price:.2f} ({est_tp_usd:+.1f}$)"
             )
             t_ai_tp = self.ax.text(
                 ai_label_x, tp_price,
-                f" 🧠 TP AI đề xuất: {tp_price:.2f} ({est_tp_usd:+.1f}$) ",
-                color="#d0f8ce", backgroundcolor="#0d3b26",
-                fontsize=7.5, fontweight="bold", va="center", clip_on=True, zorder=17
+                f" TP AI: {tp_price:.2f} ({est_tp_usd:+.1f}$) ",
+                color="#b9f6ca", backgroundcolor="#0d2e1e",
+                fontsize=7.0, va="center", clip_on=True, zorder=17
             )
             self._pos_text_artists.append((t_ai_tp, ai_col_idx))
 
@@ -9961,11 +10007,19 @@ def _terminate_pids(pids: list):
 def ensure_single_app_instance():
     """
     Kiểm tra khi khởi động xem có phiên bản App nào đang mở sẵn hoặc bị treo chạy ngầm không:
+    - Nếu khởi động tự động sau khi cập nhật OTA (--after-update): Tự động đóng phiên cũ đang thoát và mở thẳng phiên mới (không hiện bảng hỏi).
     - Nếu khởi động lần đầu bình thường: Trả về ngay lập tức (< 0.05ms), tuyệt đối không mở Terminal hay quét tiến trình.
     - Nếu phát hiện tiến trình cũ: Hiển thị hộp thoại cho phép người dùng ĐÓNG tiến trình ngầm cũ để mở phiên mới sạch sẽ,
       hoặc chuyển sang cửa sổ đang mở sẵn (tuyệt đối không để 2 App chạy song song gây xung đột MT5 / vào đúp lệnh).
     """
     global _SINGLETON_MUTEX_HANDLE
+    is_after_update = ("--after-update" in sys.argv)
+    if is_after_update:
+        old_pids = _find_other_running_bot_pids()
+        if old_pids:
+            _terminate_pids(old_pids)
+            time.sleep(0.35)
+
     mutex_name = "Local\\KhaTran_Kronos_MT5_Scalping_Bot_Singleton_v2"
     already_exists = False
     try:
@@ -9975,9 +10029,8 @@ def ensure_single_app_instance():
     except Exception:
         pass
 
-    # Nếu không bị trùng Mutex (phiên chạy duy nhất): Ghi nhận lock file và vào app tức thì 0.01ms
-    # Tuyệt đối không bật PowerShell hay quét tiến trình làm chớp cửa sổ đen!
-    if not already_exists:
+    # Nếu không bị trùng Mutex (hoặc vừa khởi chạy tự động sau cập nhật OTA): Ghi nhận lock file và vào app tức thì
+    if not already_exists or is_after_update:
         try:
             os.makedirs(os.path.dirname(INSTANCE_LOCK_FILE), exist_ok=True)
             with open(INSTANCE_LOCK_FILE, "w", encoding="utf-8") as f:

@@ -1,6 +1,6 @@
 {
-  "version": "1.2.1",
+  "version": "1.2.2",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.1:\n- Hiển thị trực quan đường & nhãn '🧠 SL AI đề xuất' / '🧠 TP AI đề xuất' trên mọi khung thời gian biểu đồ (M1, M5, M15, H1) và hiển thị song song ngay cả khi đang có lệnh mở, giúp đối chiếu trực tiếp SL/TP đề xuất của AI với lệnh thực tế.\n- Nâng cấp cơ chế Cập Nhật Nóng (OTA Full Backend & Settings Sync): Ngay sau khi cập nhật phiên bản mới, hệ thống tự động dựng lại giao diện mới, nạp lại toàn bộ Cài đặt (Settings), khởi động lại luồng Worker bằng mã nguồn mới và tự động gửi Request cho Backend AI phân tích lại ngay lập tức mà không cần tắt/mở lại ứng dụng."
+  "description": "Phiên bản v1.2.2:\n- Tách cụm 6 Nến Dự Báo AI cách xa cây nến đang chạy một khoảng đệm 3 nhịp nến (pred_gap = 3) kèm đường phân cách ở giữa, giúp dễ dàng quan sát và phân biệt rõ nến dự báo tương lai của AI với cây nến Live hiện tại.\n- Tinh chỉnh đường Line & nhãn SL / TP đề xuất của AI sang nét đứt mảnh thanh thoát (linewidth 0.75, font gọn 7.0pt), không còn dày hay thô.\n- Nâng cấp cơ chế Cập Nhật Nóng (OTA Hot-Reload) hỗ trợ giải mã trực tiếp cả core_engine.bin lẫn mt5_scalping_bot.py ngay trong RAM cho bản thương mại (.exe), tự động dựng lại giao diện, nạp lại Cài đặt mới và gửi Request cho Backend AI phân tích lại ngay lập tức mà không cần khởi động lại ứng dụng."
 }

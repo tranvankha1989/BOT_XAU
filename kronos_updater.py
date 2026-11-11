@@ -399,7 +399,7 @@ class AppUpdater:
             return False, f"Lỗi trong quá trình cập nhật: {e}"
 
     def restart_application(self):
-        """Khởi động lại ứng dụng với phiên bản mới hoàn toàn chạy ngầm không bật console."""
+        """Khởi động lại ứng dụng với phiên bản mới hoàn toàn chạy ngầm không bật console và tự động bỏ qua hộp thoại hỏi trùng tiến trình."""
         try:
             startupinfo = None
             creationflags = 0
@@ -409,14 +409,15 @@ class AppUpdater:
                 startupinfo.wShowWindow = 0  # SW_HIDE
                 creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
+            extra_args = [a for a in sys.argv[1:] if a != "--after-update"] + ["--after-update"]
             if getattr(sys, "frozen", False):
-                cmd = [sys.executable] + sys.argv[1:]
+                cmd = [sys.executable] + extra_args
             else:
                 py_dir = Path(sys.executable).parent
                 pyw = py_dir / "pythonw.exe"
                 exe = str(pyw) if pyw.exists() else sys.executable
                 main_script = APP_ROOT / "mt5_scalping_bot.py"
-                cmd = [exe, "-B", str(main_script)] + sys.argv[1:]
+                cmd = [exe, "-B", str(main_script)] + extra_args
 
             subprocess.Popen(
                 cmd,
@@ -425,7 +426,7 @@ class AppUpdater:
                 startupinfo=startupinfo,
                 creationflags=creationflags
             )
-            time.sleep(0.5)
+            time.sleep(0.35)
             os._exit(0)
         except Exception as e:
             messagebox.showerror("Khởi Động Lại Thất Bại", f"Không thể tự động khởi động lại App:\n{e}\nVui lòng mở lại ứng dụng thủ công.")
