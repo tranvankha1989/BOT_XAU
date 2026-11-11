@@ -501,6 +501,7 @@ AI_MANAGED_STATE_ATTRS = frozenset({
     "last_candle_time",
     "last_ana_candle_time",
     "last_recommendation",
+    "pending_pullback_order",
     "cached_scenarios",
     "cached_mean_df",
     "cached_action",
@@ -745,7 +746,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.4"
+            self.app_version = "1.2.5"
             self.updater = None
 
         self._has_new_version = False
@@ -2862,8 +2863,8 @@ class KronosDesktopApp:
 
         self.side_sub_frames_by_profile[profile_key] = (log_sub, ai_sub)
 
+        # Mặc định ẩn khung Nhật Ký & 6 Nến Dự Báo AI khi khởi động để Bảng Quản Lý Lệnh rộng tối đa (bấm nút '📋 Ẩn/Hiện Nhật Ký & AI' khi cần xem)
         horiz_paned.add(tree_container, minsize=460, stretch="always")
-        horiz_paned.add(side_drawer, minsize=280, stretch="never")
 
     def _switch_profile_side_mode(self, profile_key: str, mode: str):
         """Chuyển đổi giữa xem Nhật Ký Hệ Thống và Bảng 6 Nến Dự Báo AI ngay trong khung phụ của Tab đang mở."""
@@ -2896,6 +2897,13 @@ class KronosDesktopApp:
                 paned.forget(drawer)
             else:
                 paned.add(drawer, minsize=280, stretch="never")
+                paned.update_idletasks()
+                total_w = paned.winfo_width()
+                if total_w > 600:
+                    try:
+                        paned.sash_place(0, max(460, total_w - 430), 0)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -8967,6 +8975,7 @@ class KronosDesktopApp:
                 # Chụp bản sao cấu hình độc lập của đúng hồ sơ pk (XAUUSD hoặc BTCUSD) tại thời điểm bắt đầu phân tích
                 cfg = dict(self._get_profile_cfg(pk))
                 ctx = self.profile_ctx[pk]
+                ctx["_last_ai_scan_config_sig"] = self._get_ai_scan_config_sig(pk)
                 default_sym = DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "XAUUSDm")
                 symbol = str(cfg.get("symbol", default_sym)).strip() or default_sym
                 scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
@@ -9035,11 +9044,12 @@ class KronosDesktopApp:
                     df_scalp = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
 
                 last_time = df_scalp["timestamps"].iloc[-1]
+                ana_closed_time = df["timestamps"].iloc[-1]
                 ctx["last_candle_time"] = last_time
-                ctx["last_ana_candle_time"] = df["timestamps"].iloc[-1]
-                ctx["_last_ai_scan_config_sig"] = self._get_ai_scan_config_sig(pk)
+                ctx["last_ana_candle_time"] = ana_closed_time
                 if pk == self.active_profile_key:
                     self.last_candle_time = last_time
+                    self.last_ana_candle_time = ana_closed_time
                 atr_scalp = self.calculate_atr(df_scalp, 14)
                 atr_ana = self.calculate_atr(df, 14) if analysis_tf != scalp_tf else atr_scalp
                 atr = max(atr_scalp, atr_ana * 0.65)
@@ -9376,7 +9386,7 @@ class KronosDesktopApp:
                         trade_msg = f"⚠️ Chặn mở lệnh: Độ phân tán kịch bản AI cao ({dispersion_r:.2f}x ATR > {max_dispersion:.1f}x ATR) — Bất định cao, tránh bẫy giá"
                         self.log(f"⚠️ [{pk}] Độ phân tán kịch bản AI cao ({dispersion_r:.2f}x ATR > {max_dispersion:.1f}x ATR, độ lệch {scenario_std:.2f}$). Tự động chặn vào lệnh mới để tránh bẫy giá bất định.")
                     else:
-                        self.log(f"[{pk} - {symbol}] Phân tích xong nến {last_time}: Chưa đủ điều kiện vào lệnh.")
+                        self.log(f"[{pk} - {symbol}] Phân tích xong nến {analysis_tf} ({ana_closed_time}): Chưa đủ điều kiện vào lệnh.")
 
                 max_sl_str = f"Max: {effective_max_sl:.2f} giá" if effective_max_sl > 0.0 else "Theo AI"
                 if sl_tightened_for_2r:
@@ -9778,20 +9788,11 @@ class KronosDesktopApp:
             )
             self._pos_text_artists.append((t_wait, 0))
 
-        # 3. Cụm Dự báo Kronos AI (Tách cách xa cây nến đang chạy pred_gap = 3 nhịp để dễ quan sát & phân biệt rõ nến dự báo AI với nến Live)
+        # 3. Cụm Dự báo Kronos AI (Tách cách xa cây nến đang chạy pred_gap = 3 nhịp, chỉ vẽ 6 Nến Dự Báo AI gọn gàng, ẩn các đường kịch bản tơ nhện)
         all_times = list(hist["timestamps"].dt.strftime("%H:%M"))
-        if show_ai_ov and scenarios is not None and mean_df is not None:
+        if show_ai_ov and mean_df is not None:
             pred_start_x = n_hist + pred_gap
             sep_x = n_hist + (pred_gap * 0.5) - 0.5
-            anchor_idx = n_hist - 1
-            anchor_y = float(hist["close"].iloc[anchor_idx])
-            x_pred = np.arange(pred_start_x, pred_start_x + n_pred)
-
-            alpha_line = 0.38
-            for idx, s_df in enumerate(scenarios):
-                xs = np.concatenate([[anchor_idx], x_pred])
-                ys = np.concatenate([[anchor_y], s_df["close"].values])
-                self.ax.plot(xs, ys, color="#ffd54f", alpha=alpha_line, linewidth=0.9, label="8 Kịch bản AI" if idx == 0 else "")
 
             for j in range(n_pred):
                 idx_x = pred_start_x + j

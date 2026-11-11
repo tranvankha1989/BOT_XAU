@@ -1,6 +1,6 @@
 {
-  "version": "1.2.4",
+  "version": "1.2.5",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.4:\n- Loại bỏ hoàn toàn cơ chế bấm quét thủ công (Manual Scan): Gỡ bỏ nút bấm 'Quét AI (Reload)' thủ công (chuyển thành thanh hiển thị 'TIẾN TRÌNH AI' tự động), đảm bảo hệ thống chỉ phân tích chuẩn xác theo đúng chu kỳ đóng nến của Khung Phân Tích AI người dùng cài đặt.\n- Triệt tiêu 100% xung đột quét lặp lại khi đổi khung thời gian hoặc đóng Menu: Đồng bộ tuyệt đối mốc thời gian nến đã đóng (last_ana_candle_time), tách biệt sự kiện đổi Khung vào lệnh (Scalp) với Khung phân tích AI và kiểm tra chữ ký cấu hình trước khi quét."
+  "description": "Phiên bản v1.2.5:\n- Tối ưu trực quan biểu đồ: Ẩn các đường kịch bản vàng (tơ nhện), chỉ giữ 6 nến dự báo AI rõ ràng, tách biệt phía sau vạch phân cách.\n- Mặc định ẩn khung Nhật Ký Hệ Thống & 6 Nến Dự Báo AI khi khởi động giúp bảng quản lý lệnh mở rộng tối đa 100% (bấm nút 'Ẩn/Hiện Nhật Ký & AI' khi cần).\n- Triệt tiêu hoàn toàn xung đột Race Condition vùng canh giá (pending_pullback_order) giữa luồng UI và luồng phân tích AI ngầm.\n- Tối ưu hóa chữ ký cấu hình AI và chuẩn hóa log mốc thời gian nến phân tích đóng."
 }
