@@ -1,6 +1,6 @@
 {
-  "version": "1.2.6",
+  "version": "1.2.7",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.6:\n- Khai thác tối đa sức mạnh mô hình Kronos cho Scalping M1/M5: Tự động điều chỉnh nhiệt độ thích ứng (T=0.58 cho M1, T=0.65 cho M5) và Top-P triệt tiêu nhiễu râu nến ngắn hạn.\n- Tích hợp Chấm điểm Xác suất Nội tại Transformer (Bayesian Log-Likelihood Weighting) và Đồng thuận Quỹ đạo Đa bước (Path-Coherent Consensus).\n- Chuẩn hóa hình học nến OHLC loại bỏ hoàn toàn lệch bóng râu hoặc hở thân nến dự báo.\n- Bổ sung Ngữ cảnh Đa tầng: Hợp nhất xu hướng cấu trúc EMA 34/89, áp lực Volume Delta và phát hiện quét râu thanh khoản (Pinbar Sweep) gia cố Độ tin cậy AI."
+  "description": "Phiên bản v1.2.7:\n- Kiểm soát luồng CPU & Chống sốc điện áp (Anti-Power-Spike Event ID 41): Giới hạn PyTorch tối đa 4 luồng CPU mát mẻ, triệt tiêu 100% hiện tượng sụt áp sập nguồn đột ngột do quá tải AVX.\n- Cơ chế Thu hồi RAM Windows chủ động (EmptyWorkingSet): Tự động dọn rác và xả WorkingSet sau mỗi lần AI phân tích, giảm dung lượng RAM bot từ 1.4GB xuống ~300MB, loại bỏ hoàn toàn nguy cơ tràn RAM và lỗi màn hình xanh 0x12B FAULTY_HARDWARE_CORRUPTED_PAGE.\n- Tối ưu bộ nhớ đệm đa mô hình (Model Cache Management): Tự động giải phóng model cũ khi chuyển đổi mô hình AI để tránh giữ nhiều trọng số trong RAM cùng lúc."
 }

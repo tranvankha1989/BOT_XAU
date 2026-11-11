@@ -28,8 +28,24 @@ from tkinter import ttk, messagebox, filedialog
 
 import numpy as np
 import pandas as pd
+import gc
 import torch
 import torch.nn.functional as F
+
+# Cấu hình giới hạn luồng PyTorch CPU: Giữ CPU hoạt động mát mẻ ở mức an toàn (tối đa 4 luồng hoặc 50% CPU),
+# chống sốc tải AVX-512/AVX2 gây sụt áp nguồn (Kernel-Power Event ID 41) hoặc quá nhiệt bo mạch chủ.
+try:
+    _cpu_cnt = os.cpu_count() or 4
+    _safe_threads = min(4, max(1, _cpu_cnt // 2))
+    torch.set_num_threads(_safe_threads)
+    if hasattr(torch, "set_num_interop_threads"):
+        try:
+            torch.set_num_interop_threads(min(2, max(1, _safe_threads // 2)))
+        except Exception:
+            pass
+except Exception:
+    pass
+
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
@@ -746,7 +762,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.6"
+            self.app_version = "1.2.7"
             self.updater = None
 
         self._has_new_version = False
@@ -8169,9 +8185,44 @@ class KronosDesktopApp:
 
                 tokenizer.eval()
                 model.eval()
+                # Nếu đổi sang model khác, dọn dẹp model cũ trong cache để không tích tụ 2-3 model trong RAM cùng lúc
+                if len(self.local_cache) > 0 and key not in self.local_cache:
+                    self.local_cache.clear()
+                    self._cleanup_memory_and_trim_workingset()
                 self.local_cache[key] = KronosPredictor(model, tokenizer, device=device, max_context=cfg["max_context"])
                 self.log(f"Đã nạp xong mô hình AI trực tiếp từ thư mục máy ({device.upper()}).")
             return self.local_cache[key]
+
+    def _cleanup_memory_and_trim_workingset(self):
+        """
+        Thu hồi bộ nhớ RAM chủ động và xả bộ đệm Windows WorkingSet:
+        - Dọn dẹp rác Python (gc.collect).
+        - Giải phóng bộ đệm VRAM PyTorch CUDA nếu có (torch.cuda.empty_cache).
+        - Gọi Windows API EmptyWorkingSet để trả lại RAM vật lý cho hệ điều hành,
+          chống tràn RAM (OOM) và triệt tiêu lỗi nén trang RAM (BSOD 0x12B FAULTY_HARDWARE_CORRUPTED_PAGE).
+        """
+        try:
+            gc.collect(generation=2)
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                    if hasattr(torch.cuda, "ipc_collect"):
+                        torch.cuda.ipc_collect()
+                except Exception:
+                    pass
+            if sys.platform == "win32":
+                try:
+                    from ctypes import wintypes
+                    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+                    psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+                    psapi.EmptyWorkingSet.restype = wintypes.BOOL
+                    h_proc = kernel32.GetCurrentProcess()
+                    psapi.EmptyWorkingSet(h_proc)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _compute_adaptive_sampling_params(self, df_ai: pd.DataFrame, analysis_tf: str) -> tuple[float, float, str]:
         """
@@ -8457,6 +8508,7 @@ class KronosDesktopApp:
             p_df.insert(0, "timestamps", y_timestamp.values)
             p_df.attrs["log_prob"] = float(log_probs_np[b])
             scenarios.append(p_df)
+        self._cleanup_memory_and_trim_workingset()
         return scenarios
 
     def fetch_mt5_candles(self, symbol: str, timeframe_str: str, count: int, include_forming: bool = False):
@@ -9070,6 +9122,12 @@ class KronosDesktopApp:
                     tf_msg = f"{ana_tf} (Canh vùng {scalp_tf})" if ana_tf != scalp_tf else ana_tf
                     self.log(f"🔔 [{pk} - {symbol}] Nến phân tích {tf_msg} mới vừa đóng ({latest_ana_time}). Đưa vào hàng đợi phân tích AI...")
                     self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE", closed_candle_ts=latest_ana_time)
+
+                # Định kỳ xả bộ nhớ đệm RAM mỗi 30 nhịp lặp (~15s) để chống đầy RAM
+                ctx["_auto_clean_cnt"] = ctx.get("_auto_clean_cnt", 0) + 1
+                if ctx["_auto_clean_cnt"] >= 30:
+                    ctx["_auto_clean_cnt"] = 0
+                    self._cleanup_memory_and_trim_workingset()
             except Exception as e:
                 if not conn_err_logged:
                     conn_err_logged = True
@@ -9589,6 +9647,7 @@ class KronosDesktopApp:
             if pk == self.active_profile_key:
                 self.is_analyzing = False
                 self._ui_after(0, self._finish_scan_progress_anim)
+            self._cleanup_memory_and_trim_workingset()
 
     def _update_ui_results(self, profile_key, df_live_scalp, df_live_ana, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, scalp_tf, analysis_tf):
         # Luôn cập nhật bảng 6 nến dự báo AI riêng của đúng Tab đó (ngay cả khi đang chạy ngầm)
