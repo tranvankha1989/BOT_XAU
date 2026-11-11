@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.8"
+            self.app_version = "1.1.9"
             self.updater = None
 
         self._has_new_version = False
@@ -3475,8 +3475,10 @@ class KronosDesktopApp:
         # ── KỊCH BẢN 1: MÔ PHỎNG NẾN TICK 1 GIÂY (S1 PRECISION) ───────────────
         if is_s1_mode and len(s1_bars) > 50:
             total_s1 = len(s1_bars)
-            self.root.after(0, lambda: self._update_bt_status(f"Đang mô phỏng {total_s1:,} nến 1 giây (giật nến thực tế)...", 22))
+            self.root.after(0, lambda: self._update_bt_status(f"Đang mô phỏng {total_s1:,} nến 1 giây (Canh vùng AI {ana_tf_str})...", 22))
             s1_idx = 0
+            active_bt_zone = None
+            last_ana_idx = -1
 
             while s1_idx < total_s1 - 1 and not self._bt_cancel_flag:
                 pct = 22 + int((s1_idx / total_s1) * 75)
@@ -3488,13 +3490,14 @@ class KronosDesktopApp:
                 cur_sec = s1_bars[s1_idx][0]
                 cur_time = datetime.fromtimestamp(cur_sec, tz=VN_TZ)
 
-                # Kiểm tra tín hiệu vào lệnh tại các thời điểm đóng nến
-                is_candle_event = (cur_sec % interval_sec < 2)
-                signal = None
-                atr = 20.0 if is_btc else 1.5
+                # 1. Chỉ gọi AI khi có cây nến Khung Phân Tích (ana_tf, VD: M5) mới đóng cửa
+                idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right")) - 1
+                if idx_ana >= 50 and idx_ana != last_ana_idx:
+                    last_ana_idx = idx_ana
+                    active_bt_zone = None
 
-                if is_candle_event:
                     idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right"))
+                    atr = 20.0 if is_btc else 1.5
                     if idx_scalp >= 20:
                         sub_recent = df_rates_scalp.iloc[max(0, idx_scalp - 14):idx_scalp]
                         highs = sub_recent["high"].values
@@ -3503,10 +3506,9 @@ class KronosDesktopApp:
                         trs = [max(highs[j] - lows[j], abs(highs[j] - closes[j-1]), abs(lows[j] - closes[j-1])) for j in range(1, len(highs))]
                         atr = float(np.mean(trs)) if trs else (20.0 if is_btc else 1.5)
 
-                    idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right"))
-                    if use_ai and predictor is not None and idx_ana >= 50:
+                    if use_ai and predictor is not None:
                         if idx_ana in bt_ai_cache:
-                            signal = bt_ai_cache[idx_ana]
+                            active_bt_zone = bt_ai_cache[idx_ana]
                         else:
                             # Nhường quyền ưu tiên số 1 cho Bot Live nếu đang quét AI thời gian thực
                             while (
@@ -3528,17 +3530,25 @@ class KronosDesktopApp:
                                 b_pct = (bull_cnt / len(scenarios)) * 100.0
                                 s_pct = (bear_cnt / len(scenarios)) * 100.0
                                 exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                                pred_hi = float(max(float(s["high"].max()) for s in scenarios))
+                                pred_lo = float(min(float(s["low"].min()) for s in scenarios))
+                                base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
+                                sig_dir = None
                                 if b_pct >= min_consensus and exp_m >= min_move:
-                                    signal = "BUY"
+                                    sig_dir = "BUY"
+                                    raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
+                                    sl_p = last_c - raw_sl_d
                                 elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                                    signal = "SELL"
+                                    sig_dir = "SELL"
+                                    raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
+                                    sl_p = last_c + raw_sl_d
+                                if sig_dir is not None:
+                                    active_bt_zone = {"signal": sig_dir, "sl_price": sl_p, "atr": atr}
                             except Exception:
                                 pass
-                            bt_ai_cache[idx_ana] = signal
+                            bt_ai_cache[idx_ana] = dict(active_bt_zone) if active_bt_zone else None
                             time.sleep(0.005)
-
-                    if signal is None and not use_ai:
-                        idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right"))
+                    elif not use_ai:
                         if idx_scalp >= 14:
                             recent = df_rates_scalp.iloc[max(0, idx_scalp - 14):idx_scalp]
                             closes = recent["close"].values
@@ -3549,29 +3559,33 @@ class KronosDesktopApp:
                             swing_high = max(highs[-10:-1])
                             swing_low = min(lows[-10:-1])
                             c_close = closes[-1]
+                            raw_sl_d = max(atr * sl_atr + sl_buffer, 8.0 if is_btc else 0.5)
                             if c_close > swing_high and ma_short > ma_long:
-                                signal = "BUY"
+                                active_bt_zone = {"signal": "BUY", "sl_price": c_close - raw_sl_d, "atr": atr}
                             elif c_close < swing_low and ma_short < ma_long:
-                                signal = "SELL"
+                                active_bt_zone = {"signal": "SELL", "sl_price": c_close + raw_sl_d, "atr": atr}
+
+                # 2. Python canh giá từng giây (S1) về đúng vùng Entry/SL-TP của AI để vào lệnh
+                signal = None
+                if active_bt_zone is not None:
+                    z_sig = active_bt_zone["signal"]
+                    z_sl = active_bt_zone["sl_price"]
+                    cur_p = s1_bars[s1_idx][5] if z_sig == "BUY" else s1_bars[s1_idx][4]
+                    cur_sl_d = (cur_p - z_sl) if z_sig == "BUY" else (z_sl - cur_p)
+                    if cur_sl_d <= 0.0:
+                        # Giá đã phá qua SL của AI -> Hủy vùng canh của chu kỳ M5 hiện tại
+                        active_bt_zone = None
+                    elif max_sl_price <= 0.0 or cur_sl_d <= max_sl_price:
+                        signal = z_sig
+                        sl_price = z_sl
+                        entry_price = cur_p
+                        one_r_dist = max(cur_sl_d, 8.0 if is_btc else 0.5)
+                        tp_mult = max(rr, 2.0) if rr > 0 else 2.0
+                        tp_price = (entry_price + one_r_dist * tp_mult) if z_sig == "BUY" else (entry_price - one_r_dist * tp_mult)
+                        active_bt_zone = None
 
                 if signal is not None:
-                    raw_sl_dist = atr * sl_atr
-                    total_sl_dist = raw_sl_dist + sl_buffer
-                    if max_sl_price > 0.0:
-                        total_sl_dist = min(total_sl_dist, max_sl_price)
-                    total_sl_dist = max(total_sl_dist, 8.0 if is_btc else 0.5)
-
-                    one_r_dist = total_sl_dist
                     be_moved = False
-
-                    if signal == "BUY":
-                        entry_price = s1_bars[s1_idx][5] # Giá Ask
-                        sl_price = entry_price - total_sl_dist
-                        tp_price = entry_price + (total_sl_dist * (rr if rr > 0 else 1.5))
-                    else:
-                        entry_price = s1_bars[s1_idx][4] # Giá Bid
-                        sl_price = entry_price + total_sl_dist
-                        tp_price = entry_price - (total_sl_dist * (rr if rr > 0 else 1.5))
 
                     out_price = entry_price
                     exit_reason = "Đóng cuối phiên"
@@ -3671,8 +3685,10 @@ class KronosDesktopApp:
         else:
             rates = rates_scalp
             total_bars = len(rates)
-            self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến ({scalp_tf_str}). Đang mô phỏng giao dịch...", 20))
+            self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến ({scalp_tf_str}). Đang mô phỏng canh vùng AI {ana_tf_str}...", 20))
             bar_idx = 20
+            active_bt_zone = None
+            last_ana_idx = -1
 
             while bar_idx < total_bars - 1 and not self._bt_cancel_flag:
                 pct = 20 + int((bar_idx / total_bars) * 75)
@@ -3698,68 +3714,91 @@ class KronosDesktopApp:
                 cur_bar = rates[bar_idx]
                 cur_sec = int(cur_bar[0])
                 cur_time = datetime.fromtimestamp(cur_sec, tz=VN_TZ)
+                cur_high = float(cur_bar[2])
+                cur_low = float(cur_bar[3])
                 cur_close = float(cur_bar[4])
 
+                idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right")) - 1
+                if idx_ana >= 50 and idx_ana != last_ana_idx:
+                    last_ana_idx = idx_ana
+                    active_bt_zone = None
+                    if use_ai and predictor is not None:
+                        if idx_ana in bt_ai_cache:
+                            active_bt_zone = bt_ai_cache[idx_ana]
+                        else:
+                            while (
+                                getattr(self, "is_analyzing", False)
+                                or self.profile_ctx.get("XAUUSD", {}).get("is_analyzing", False)
+                                or self.profile_ctx.get("BTCUSD", {}).get("is_analyzing", False)
+                            ) and not self._bt_cancel_flag:
+                                time.sleep(0.05)
+
+                            sub_df = df_rates_ana.iloc[max(0, idx_ana-60):idx_ana].copy().reset_index(drop=True)
+                            x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
+                            dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
+                            y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
+                            try:
+                                scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
+                                last_c = float(sub_df["close"].iloc[-1])
+                                bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
+                                bear_cnt = len(scenarios) - bull_cnt
+                                b_pct = (bull_cnt / len(scenarios)) * 100.0
+                                s_pct = (bear_cnt / len(scenarios)) * 100.0
+                                exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
+                                pred_hi = float(max(float(s["high"].max()) for s in scenarios))
+                                pred_lo = float(min(float(s["low"].min()) for s in scenarios))
+                                base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
+                                sig_dir = None
+                                if b_pct >= min_consensus and exp_m >= min_move:
+                                    sig_dir = "BUY"
+                                    raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
+                                    sl_p = last_c - raw_sl_d
+                                elif s_pct >= min_consensus and (-exp_m) >= min_move:
+                                    sig_dir = "SELL"
+                                    raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
+                                    sl_p = last_c + raw_sl_d
+                                if sig_dir is not None:
+                                    active_bt_zone = {"signal": sig_dir, "sl_price": sl_p, "atr": atr}
+                            except Exception:
+                                pass
+                            bt_ai_cache[idx_ana] = dict(active_bt_zone) if active_bt_zone else None
+                            time.sleep(0.005)
+                    elif not use_ai:
+                        ma_short = np.mean(closes[-3:])
+                        ma_long = np.mean(closes[-10:])
+                        swing_high = max(highs[-10:-1])
+                        swing_low = min(lows[-10:-1])
+                        raw_sl_d = max(atr * sl_atr + sl_buffer, 8.0 if is_btc else 0.5)
+                        if cur_close > swing_high and ma_short > ma_long:
+                            active_bt_zone = {"signal": "BUY", "sl_price": cur_close - raw_sl_d, "atr": atr}
+                        elif cur_close < swing_low and ma_short < ma_long:
+                            active_bt_zone = {"signal": "SELL", "sl_price": cur_close + raw_sl_d, "atr": atr}
+
                 signal = None
-                idx_ana = int(np.searchsorted(rate_ana_times, cur_sec, side="right"))
-                if use_ai and predictor is not None and idx_ana >= 50:
-                    if idx_ana in bt_ai_cache:
-                        signal = bt_ai_cache[idx_ana]
-                    else:
-                        while (
-                            getattr(self, "is_analyzing", False)
-                            or self.profile_ctx.get("XAUUSD", {}).get("is_analyzing", False)
-                            or self.profile_ctx.get("BTCUSD", {}).get("is_analyzing", False)
-                        ) and not self._bt_cancel_flag:
-                            time.sleep(0.05)
-
-                        sub_df = df_rates_ana.iloc[max(0, idx_ana-60):idx_ana].copy().reset_index(drop=True)
-                        x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
-                        dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
-                        y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
-                        try:
-                            scenarios = self._fast_predict_scenarios(predictor, sub_df, x_ts, y_ts, pred_len=6, num_scenarios=4, T=1.0)
-                            last_c = float(sub_df["close"].iloc[-1])
-                            bull_cnt = sum(1 for s in scenarios if float(s["close"].iloc[-1]) > last_c)
-                            bear_cnt = len(scenarios) - bull_cnt
-                            b_pct = (bull_cnt / len(scenarios)) * 100.0
-                            s_pct = (bear_cnt / len(scenarios)) * 100.0
-                            exp_m = float(np.mean([float(s["close"].iloc[-1]) - last_c for s in scenarios]))
-                            if b_pct >= min_consensus and exp_m >= min_move:
-                                signal = "BUY"
-                            elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                                signal = "SELL"
-                        except Exception:
-                            pass
-                        bt_ai_cache[idx_ana] = signal
-                        time.sleep(0.005)
-
-                if signal is None and not use_ai:
-                    ma_short = np.mean(closes[-3:])
-                    ma_long = np.mean(closes[-10:])
-                    swing_high = max(highs[-10:-1])
-                    swing_low = min(lows[-10:-1])
-                    if cur_close > swing_high and ma_short > ma_long:
+                if active_bt_zone is not None:
+                    z_sig = active_bt_zone["signal"]
+                    z_sl = active_bt_zone["sl_price"]
+                    limit_p = (z_sl + max_sl_price) if (z_sig == "BUY" and max_sl_price > 0) else ((z_sl - max_sl_price) if (z_sig == "SELL" and max_sl_price > 0) else cur_close)
+                    if (z_sig == "BUY" and cur_low <= z_sl) or (z_sig == "SELL" and cur_high >= z_sl):
+                        active_bt_zone = None
+                    elif z_sig == "BUY" and (max_sl_price <= 0.0 or cur_low <= limit_p):
                         signal = "BUY"
-                    elif cur_close < swing_low and ma_short < ma_long:
+                        entry_price = min(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
+                        sl_price = z_sl
+                        one_r_dist = max(entry_price - sl_price, 8.0 if is_btc else 0.5)
+                        tp_mult = max(rr, 2.0) if rr > 0 else 2.0
+                        tp_price = entry_price + one_r_dist * tp_mult
+                        active_bt_zone = None
+                    elif z_sig == "SELL" and (max_sl_price <= 0.0 or cur_high >= limit_p):
                         signal = "SELL"
+                        entry_price = max(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
+                        sl_price = z_sl
+                        one_r_dist = max(sl_price - entry_price, 8.0 if is_btc else 0.5)
+                        tp_mult = max(rr, 2.0) if rr > 0 else 2.0
+                        tp_price = entry_price - one_r_dist * tp_mult
+                        active_bt_zone = None
 
                 if signal is not None:
-                    raw_sl_dist = atr * sl_atr
-                    total_sl_dist = raw_sl_dist + sl_buffer
-                    if max_sl_price > 0.0:
-                        total_sl_dist = min(total_sl_dist, max_sl_price)
-                    total_sl_dist = max(total_sl_dist, 8.0 if is_btc else 0.5)
-
-                    entry_price = cur_close
-                    if signal == "BUY":
-                        sl_price = entry_price - total_sl_dist
-                        tp_price = entry_price + (total_sl_dist * (rr if rr > 0 else 1.5))
-                    else:
-                        sl_price = entry_price + total_sl_dist
-                        tp_price = entry_price - (total_sl_dist * (rr if rr > 0 else 1.5))
-
-                    one_r_dist = total_sl_dist
                     be_moved = False
                     out_price = entry_price
                     exit_reason = "Đóng cuối phiên"
@@ -6323,6 +6362,7 @@ class KronosDesktopApp:
                 active_pk = self.active_profile_key
                 symbol = self.symbol_var.get().strip()
                 tf_str = self.tf_var.get().strip()
+                ana_tf_str = self.analysis_tf_var.get().strip() or tf_str
                 with self._mt5_lock:
                     mt5.symbol_select(symbol, True)
                     acc = mt5.account_info()
@@ -6333,15 +6373,16 @@ class KronosDesktopApp:
                 now_str = datetime.now().strftime("%H:%M:%S")
 
                 tf_sec_map = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
-                tf_sec = tf_sec_map.get(tf_str, 300)
+                ana_sec = tf_sec_map.get(ana_tf_str, 300)
 
                 if tick is not None:
                     spread = tick.ask - tick.bid
-                    rem_sec = tf_sec - (int(tick.time) % tf_sec)
+                    rem_sec = ana_sec - (int(tick.time) % ana_sec)
                     mins, secs = divmod(rem_sec, 60)
-                    scan_state = "ĐANG CANH" if self.auto_loop_running else "CHỜ"
+                    scan_state = f"CANH VÙNG {tf_str}" if self.auto_loop_running else "CHỜ"
+                    tf_clock_tag = f"AI {ana_tf_str}" if ana_tf_str != tf_str else f"Nến {tf_str}"
                     self.live_clock_lbl.config(
-                        text=f"{dot} {now_str} | [{active_pk}] Bid:{tick.bid:.2f} Ask:{tick.ask:.2f} (Spr:{spread:.2f}$) | ⏳Nến {tf_str}: {mins:02d}p:{secs:02d}s [{scan_state}]"
+                        text=f"{dot} {now_str} | [{active_pk}] Bid:{tick.bid:.2f} Ask:{tick.ask:.2f} (Spr:{spread:.2f}$) | ⏳{tf_clock_tag}: {mins:02d}p:{secs:02d}s [{scan_state}]"
                     )
 
                 if acc is not None:
@@ -6997,6 +7038,8 @@ class KronosDesktopApp:
             with self._mt5_lock:
                 open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
+                if len(open_positions) >= max_pos:
+                    return
                 for pos in open_positions:
                     is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
                     if ((action == "BUY" and not is_buy_pos) or (action == "SELL" and is_buy_pos)) and pos.profit <= 0:
@@ -7016,6 +7059,15 @@ class KronosDesktopApp:
                     tp_price = round(cur_price + target_tp_dist, 2) if action == "BUY" else round(cur_price - target_tp_dist, 2)
             else:
                 tp_price = round(cur_price + target_tp_dist, 2) if action == "BUY" else round(cur_price - target_tp_dist, 2)
+
+            # Nếu giá đã chạm hoặc vượt luôn mục tiêu TP của chu kỳ AI hiện tại -> Hủy canh vùng vì sóng đã chạy xong
+            if (action == "BUY" and cur_price >= tp_price) or (action == "SELL" and cur_price <= tp_price):
+                self.log(f"ℹ️ [{pk} - Đạt Mục Tiêu TP AI] Giá ({cur_price:.2f}) đã chạm vùng TP ({tp_price:.2f}) trước khi vào lệnh -> Kết thúc canh vùng chu kỳ này.")
+                ctx["pending_pullback_order"] = None
+                if pk == self.active_profile_key:
+                    self.pending_pullback_order = None
+                return
+
             ctx["cached_tp"] = tp_price
             if pk == self.active_profile_key:
                 self.cached_tp = tp_price
@@ -7026,15 +7078,23 @@ class KronosDesktopApp:
                 self.pending_pullback_order = None
 
             ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
-            if ok_ord and ctx.get("last_candle_time") is not None:
-                self._last_order_candle_ts[pk] = ctx.get("last_candle_time")
-            if not ok_ord and "SL hiện tại cách" in ord_msg:
-                # Nếu trong tích tắc gửi lệnh giá giật nhẹ ra ngoài vùng SL tối đa (nhưng chưa phá SL), khôi phục trạng thái canh hồi
-                ctx["pending_pullback_order"] = p
-                if pk == self.active_profile_key:
-                    self.pending_pullback_order = p
+            if ok_ord:
+                if ctx.get("last_candle_time") is not None:
+                    self._last_order_candle_ts[pk] = ctx.get("last_candle_time")
+                self.log(f"[{pk} - Khớp Lệnh Tại Vùng AI (SL <= {max_sl_cap:.2f}$, RR >= 2R)] Giá về vùng {cur_price:.2f} (Cách SL {cur_sl_dist:.2f}$) -> {ord_msg}")
+                # Nếu là chế độ canh vùng liên tục trong chu kỳ AI (zone_watch) và chưa đạt max_pos, duy trì canh vùng cho nhịp hồi tiếp theo (vẫn tuân thủ khóa 1 lệnh/nến M1 và khoảng cách nhồi lệnh)
+                if p.get("zone_watch", False) and not p.get("manual_queued", False):
+                    p_next = dict(p)
+                    ctx["pending_pullback_order"] = p_next
+                    if pk == self.active_profile_key:
+                        self.pending_pullback_order = p_next
+            else:
+                # Nếu chưa khớp được do đang vướng khóa 1 lệnh/nến M1, chưa đủ khoảng cách nhồi lệnh, chưa BE lệnh trước, hoặc giá giật nhẹ -> tiếp tục giữ trạng thái canh vùng
+                if p.get("zone_watch", False) or "SL hiện tại cách" in ord_msg:
+                    ctx["pending_pullback_order"] = p
+                    if pk == self.active_profile_key:
+                        self.pending_pullback_order = p
                 return
-            self.log(f"[{pk} - Khớp Lệnh Chờ Hồi SL <= {max_sl_cap:.2f}$ (RR >= 2R)] Giá đã hồi về {cur_price:.2f} (Cách SL {cur_sl_dist:.2f}$) -> {ord_msg}")
 
     def _update_left_quick_info(self, symbol, tf_str, tick, pos_count, total_profit):
         bid_str = f"{tick.bid:.2f}" if tick else "---"
@@ -7053,7 +7113,8 @@ class KronosDesktopApp:
                     max_sl_p = 5.0
                 lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
                 rr_tag = " (RR>=2R)" if p.get("sl_tightened_for_2r") else ""
-                ai_state = f"Chờ hồi {p['action']}{rr_tag} @ {lim_entry:.2f}"
+                op_sign = "<=" if p["action"] == "BUY" else ">="
+                ai_state = f"Canh vùng {p['action']}{rr_tag} {op_sign} {lim_entry:.2f}"
             else:
                 ai_state = "Đã có dự báo AI"
             trend_str = self.cached_action if self.cached_action else "ĐỨNG NGOÀI (WAIT)"
@@ -8440,7 +8501,9 @@ class KronosDesktopApp:
         cfg = self._get_profile_cfg(pk)
         sym = str(cfg.get("symbol", pk)).strip()
         tf_val = str(cfg.get("tf", "M5")).strip()
-        self.log(f"[{pk} - {sym}] Đã BẬT công tắc AUTO (Canh nến {tf_val} để tự động giao dịch)...")
+        ana_tf_val = str(cfg.get("analysis_tf", tf_val)).strip() or tf_val
+        mode_desc = f"AI phân tích đóng nến {ana_tf_val} -> Python canh vùng giá {tf_val}/Tick" if ana_tf_val != tf_val else f"Canh đóng nến {tf_val} & bám sát vùng giá AI"
+        self.log(f"[{pk} - {sym}] Đã BẬT công tắc AUTO ({mode_desc})...")
         if self.profile_ctx[pk].get("cached_mean_df") is None and not self.profile_ctx[pk].get("is_analyzing", False):
             self.enqueue_ai_scan(profile_key=pk, reason="MANUAL")
         threading.Thread(target=self._auto_loop_worker, args=(pk, worker_token), daemon=True).start()
@@ -8478,8 +8541,20 @@ class KronosDesktopApp:
                 cfg = self._get_profile_cfg(pk)
                 ctx = self.profile_ctx[pk]
                 symbol = str(cfg.get("symbol", "")).strip()
-                tf = str(cfg.get("tf", "M5")).strip()
-                df_check = self.fetch_mt5_candles(symbol, tf, 3, include_forming=False)
+                scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+                ana_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
+
+                # 1. Cập nhật mốc thời gian nến Khung Vào Lệnh (scalp_tf, VD: M1) để quản lý giới hạn tối đa 1 lệnh/nến M1
+                df_scalp_chk = self.fetch_mt5_candles(symbol, scalp_tf, 2, include_forming=False)
+                if len(df_scalp_chk) > 0:
+                    latest_scalp_ts = df_scalp_chk["timestamps"].iloc[-1]
+                    ctx["last_candle_time"] = latest_scalp_ts
+                    if pk == self.active_profile_key:
+                        self.last_candle_time = latest_scalp_ts
+
+                # 2. Chỉ kích hoạt phân tích AI khi đóng nến Khung Phân Tích (ana_tf, VD: M5 — 5 phút/lần)
+                # Trong suốt chu kỳ 5 phút đó, Python giữ cố định vùng Entry/SL/TP của AI và canh giá Tick/M1 để khớp lệnh tức thì!
+                df_check = df_scalp_chk if ana_tf == scalp_tf else self.fetch_mt5_candles(symbol, ana_tf, 3, include_forming=False)
                 if (
                     not self.profile_ctx[pk].get("auto_loop_running", False)
                     or self._auto_worker_token.get(pk, 0) != worker_token
@@ -8490,15 +8565,14 @@ class KronosDesktopApp:
                     conn_err_logged = False
                     self.log(f"🟢 [{pk} - {symbol}] Đã kết nối lại thành công với MT5 Exness! Tiếp tục tự động canh nến.")
 
-                latest_time = df_check["timestamps"].iloc[-1]
-                last_ct = ctx.get("last_candle_time")
+                latest_ana_time = df_check["timestamps"].iloc[-1]
+                last_ana_ct = ctx.get("last_ana_candle_time")
                 is_ana = ctx.get("is_analyzing", False)
-                if last_ct != latest_time and not is_ana:
-                    ctx["last_candle_time"] = latest_time
-                    if pk == self.active_profile_key:
-                        self.last_candle_time = latest_time
-                    self.log(f"🔔 [{pk} - {symbol}] Nến {tf} mới vừa đóng ({latest_time}). Đưa vào hàng đợi phân tích AI...")
-                    self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE", closed_candle_ts=latest_time)
+                if last_ana_ct != latest_ana_time and not is_ana:
+                    ctx["last_ana_candle_time"] = latest_ana_time
+                    tf_msg = f"{ana_tf} (Canh vùng {scalp_tf})" if ana_tf != scalp_tf else ana_tf
+                    self.log(f"🔔 [{pk} - {symbol}] Nến phân tích {tf_msg} mới vừa đóng ({latest_ana_time}). Đưa vào hàng đợi phân tích AI...")
+                    self.enqueue_ai_scan(profile_key=pk, reason="AUTO_CANDLE", closed_candle_ts=latest_ana_time)
             except Exception as e:
                 if not conn_err_logged:
                     conn_err_logged = True
@@ -8600,6 +8674,7 @@ class KronosDesktopApp:
 
                 last_time = df_scalp["timestamps"].iloc[-1]
                 ctx["last_candle_time"] = last_time
+                ctx["last_ana_candle_time"] = df["timestamps"].iloc[-1]
                 if pk == self.active_profile_key:
                     self.last_candle_time = last_time
                 atr_scalp = self.calculate_atr(df_scalp, 14)
@@ -8870,6 +8945,17 @@ class KronosDesktopApp:
 
                 trade_msg = self._get_live_bot_status_text(pk)
                 if action is not None:
+                    # Khởi tạo cấu trúc Vùng Canh Giá AI (Zone Watch) cố định cho suốt chu kỳ nến phân tích (VD: 5 phút của M5)
+                    zone_watch_order = {
+                        "symbol": symbol,
+                        "action": action,
+                        "sl_price": sl_price,
+                        "manual_queued": False,
+                        "zone_watch": True,
+                        "effective_max_sl": effective_max_sl,
+                        "sl_tightened_for_2r": sl_tightened_for_2r,
+                        "target_tp_price": tp_price,
+                    }
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
                         reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
@@ -8880,51 +8966,47 @@ class KronosDesktopApp:
                         trade_msg = self._get_cooldown_remaining_str(pk)
                         self.log(f"[{pk}] {trade_msg}")
                     elif has_losing_opposite_pos:
-                        ctx["pending_pullback_order"] = None
-                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Không mở {action} đè)"
+                        ctx["pending_pullback_order"] = zone_watch_order
+                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {limit_entry_price:.2f})"
                         self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
                     elif effective_max_sl > 0.0 and cur_sl_dist > effective_max_sl + tols["max_sl_tol"]:
-                        ctx["pending_pullback_order"] = {
-                            "symbol": symbol,
-                            "action": action,
-                            "sl_price": sl_price,
-                            "manual_queued": False,
-                            "effective_max_sl": effective_max_sl,
-                            "sl_tightened_for_2r": sl_tightened_for_2r,
-                            "target_tp_price": tp_price,
-                        }
+                        ctx["pending_pullback_order"] = zone_watch_order
                         cond_op = "<=" if action == "BUY" else ">="
                         tight_tag = " [Siết 1/2 Max SL do RR < 2R]" if sl_tightened_for_2r else ""
                         trade_msg = (
-                            f"⏳ SL = {cur_sl_dist:.2f} giá > Max ({effective_max_sl:.2f} giá{tight_tag}) -> "
-                            f"Đang chờ giá hồi về {cond_op} {limit_entry_price:.2f} mới vào {action}"
+                            f"🎯 AI {analysis_tf} đã chốt vùng {action} -> Python đang canh giá về {cond_op} {limit_entry_price:.2f} "
+                            f"(SL: {sl_price:.2f} [Max {effective_max_sl:.2f}${tight_tag}], TP: {tp_price:.2f})"
                         )
                         self.log(
-                            f"⏳ [{pk} - Chờ Giá Hồi <= SL Max{tight_tag}] AI báo {action} (SL AI+{sl_buffer:.1f} = {sl_price:.2f}, cách {cur_sl_dist:.2f} giá > SL Max {effective_max_sl:.2f} giá). "
-                            f"Đang canh giá hồi về {cond_op} {limit_entry_price:.2f} mới vào lệnh!"
+                            f"🎯 [{pk} - Canh Vùng Giá AI {analysis_tf}{tight_tag}] AI báo {action} (SL: {sl_price:.2f}, TP: {tp_price:.2f}, cách SL {cur_sl_dist:.2f}$ > Max {effective_max_sl:.2f}$). "
+                            f"Python đang canh giá {scalp_tf}/Tick về vùng {cond_op} {limit_entry_price:.2f} để tự động vào lệnh!"
                         )
                     elif spread_usd > max_spread:
-                        trade_msg = f"⚠️ Khóa lệnh do Spread cao ({spread_usd:.2f}$ > {max_spread}$)"
+                        ctx["pending_pullback_order"] = zone_watch_order
+                        trade_msg = f"⚠️ Spread hiện tại cao ({spread_usd:.2f}$ > {max_spread}$) — Đang canh Spread hạ trong vùng {action} @ {limit_entry_price:.2f}"
                         self.log(f"[{pk}] {trade_msg}")
                     elif is_auto_on and self._last_order_candle_ts.get(pk) == last_time:
-                        ctx["pending_pullback_order"] = None
-                        trade_msg = f"🛡️ Đã vào lệnh trên nến {last_time} — Chờ cây nến {scalp_tf} tiếp theo"
-                        self.log(f"🛡️ [{pk}] Đã mở lệnh trên cây nến {last_time}, tự động chặn mở thêm lệnh thứ 2 trên cùng một cây nến.")
+                        ctx["pending_pullback_order"] = zone_watch_order
+                        trade_msg = f"🛡️ Đã vào lệnh trên nến {last_time} — Python tiếp tục canh vùng {action} cho nến {scalp_tf} kế tiếp"
+                        self.log(f"🛡️ [{pk}] Đã mở lệnh trên cây nến {last_time}, giữ vùng canh giá {action} cho cây nến {scalp_tf} tiếp theo.")
                     elif is_auto_on:
-                        ctx["pending_pullback_order"] = None
-                        # Nếu khoảng cách SL đã đạt chuẩn nhỏ <= effective_max_sl nhưng TP chưa đạt 2R -> tự động căn chỉnh TP để chắc chắn đạt >= 2R
+                        # Giá hiện tại đã nằm ngay trong vùng Entry hợp lệ (SL <= Max SL & RR >= 2R) -> Khớp lệnh ngay và duy trì canh vùng nếu còn hạn mức max_pos
                         if sl_tightened_for_2r and dist_tp < 2.0 * cur_sl_dist:
                             min_tp_dist = round(cur_sl_dist * 2.0, 2)
                             tp_price = round(entry_ref + min_tp_dist, 2) if action == "BUY" else round(entry_ref - min_tp_dist, 2)
                             dist_tp = min_tp_dist
+                            zone_watch_order["target_tp_price"] = tp_price
+                        ctx["pending_pullback_order"] = None
                         ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
                         if ok_ord:
                             self._last_order_candle_ts[pk] = last_time
+                        # Duy trì vùng canh giá trong suốt chu kỳ AI (VD: 5 phút M5) để nếu có nhịp hồi tiếp theo (và thỏa mãn Risk-Free/DCA + qua nến M1 mới) thì Python tự xử lý mà không cần gọi lại AI
+                        ctx["pending_pullback_order"] = zone_watch_order
                         trade_msg = ord_msg
                         self.log(ord_msg)
                     else:
-                        ctx["pending_pullback_order"] = None
-                        self.log(f"[{pk}] Có tín hiệu {action} {symbol} @ {entry_ref:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Bot tự vào lệnh.")
+                        ctx["pending_pullback_order"] = zone_watch_order
+                        self.log(f"[{pk}] Có vùng tín hiệu {action} {symbol} @ {limit_entry_price:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Python tự canh giá vào lệnh.")
                 else:
                     ctx["pending_pullback_order"] = None
                     if is_high_uncertainty:
@@ -9304,7 +9386,7 @@ class KronosDesktopApp:
                         )
                         self._pos_text_artists.append((t_tp, idx_p))
 
-        # Vẽ đường Chờ Giá Hồi về <= SL Tối Đa (nếu đang có tín hiệu chờ hồi)
+        # Vẽ đường Canh Vùng Giá AI <= SL Tối Đa (nếu đang có vùng canh giá hoạt động)
         if self.pending_pullback_order is not None:
             p = self.pending_pullback_order
             try:
@@ -9312,11 +9394,12 @@ class KronosDesktopApp:
             except (ValueError, TypeError):
                 max_sl_p = 5.0
             lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+            op_sign = "<=" if p["action"] == "BUY" else ">="
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=1.2, alpha=0.9)
             tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
             t_wait = self.ax.text(
                 base_label_x, lim_entry,
-                f" ⏳ Chờ {p['action']}{tight_tag} <= {max_sl_p:.2f} giá (@ {lim_entry:.2f}) ",
+                f" 🎯 Vùng canh {p['action']}{tight_tag} {op_sign} {lim_entry:.2f} (SL≤{max_sl_p:.2f}$) ",
                 color="#000000", backgroundcolor=GOLD_ACCENT,
                 fontsize=7.5, fontweight="bold", va="center", clip_on=True
             )

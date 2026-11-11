@@ -1,6 +1,6 @@
 {
-  "version": "1.1.8",
+  "version": "1.1.9",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.1.8:\n- Khắc phục triệt để lỗi đơ giao diện 'Trading AI PRO.exe is not responding' khi chạy liên tục: Chuyển truy vấn lịch sử MT5 từ N+1 IPC sang Batch Query 1 lần trong RAM, nâng cấp Non-Blocking Lock cho luồng UI và thực thi đóng/sửa SL-TP bất đồng bộ (Async).\n- Tối ưu hóa bộ đệm bản quyền (License Cache 60s, hạn chế ghi đĩa xuống 5 phút/lần) và triệt tiêu lỗi MT5 retcode=10025 (No changes).\n- Lá chắn 4 lớp chống xung đột AI giữa Backtest và Bot Live: Khóa suy luận AI (RLock), tự động nhường quyền ưu tiên tuyệt đối cho Bot Live (Preemption), bộ đệm kết quả AI theo nến và nhả nhịp CPU."
+  "description": "Phiên bản v1.1.9:\n- Nâng cấp cơ chế Đa Khung Thời Gian chuẩn (AI Zone Watch): AI chỉ phân tích khi đóng nến Khung Phân Tích (VD: M5 — 5 phút/lần) để xác lập vùng Entry / SL / TP cố định, nhất quán.\n- Trong suốt chu kỳ 5 phút, Python tự động canh giá Tick/M1 theo thời gian thực để khớp lệnh ngay khi giá về vùng Entry hợp lệ (SL <= SL tối đa & RR >= 2R), giảm 80% tải CPU/GPU và không bị nhấp nháy tín hiệu.\n- Đồng bộ 100% thuật toán Canh Vùng Giá AI giữa Bot Live và trình kiểm thử Backtest (S1 Tick & Nến chuẩn)."
 }
