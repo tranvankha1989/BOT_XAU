@@ -558,7 +558,7 @@ def show_update_modal(parent, updater: AppUpdater, update_info: dict, on_complet
                     messagebox.showinfo(
                         "Cập Nhật Thành Công",
                         f"Đã nâng cấp ứng dụng lên phiên bản v{latest_ver} thành công!\n"
-                        f"Tất cả tính năng mới đã được áp dụng ngay lập tức mà không cần khởi động lại.",
+                        f"Hệ thống đang tự động làm mới giao diện, nạp lại cài đặt mới và yêu cầu Backend AI phân tích lại ngay lập tức.",
                         parent=dialog
                     )
                     dialog.destroy()

@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.2.0:\n- Tinh gọn giao diện hợp nhất (Unified Trading Workspace): Loại bỏ Tab phụ 'BẢNG GIÁ DỰ BÁO AI & NHẬT KÝ', gộp trực tiếp Nhật Ký Hệ Thống & Bảng 6 Nến Dự Báo AI vào ngăn bên phải (Side Drawer có thể Ẩn/Hiện & kéo giãn) ngay trong Tab XAUUSD và BTCUSD.\n- Tích hợp nút '🧠 Dự Báo AI: BẬT/TẮT' ngay trên thanh công cụ biểu đồ để hiển thị đồng thời Lệnh Real-Time cùng 8 kịch bản & 6 nến dự báo AI trên cùng một màn hình.\n- Xác nhận cơ chế AI Zone Watch chuẩn: Khi chọn Phân tích M5 + Vào lệnh M1, đóng nến M1 không gọi lại AI (AI chỉ phân tích mỗi 5 phút khi đóng nến M5, Python canh giá Tick/M1 theo thời gian thực để vào lệnh)."
+  "description": "Phiên bản v1.2.1:\n- Hiển thị trực quan đường & nhãn '🧠 SL AI đề xuất' / '🧠 TP AI đề xuất' trên mọi khung thời gian biểu đồ (M1, M5, M15, H1) và hiển thị song song ngay cả khi đang có lệnh mở, giúp đối chiếu trực tiếp SL/TP đề xuất của AI với lệnh thực tế.\n- Nâng cấp cơ chế Cập Nhật Nóng (OTA Full Backend & Settings Sync): Ngay sau khi cập nhật phiên bản mới, hệ thống tự động dựng lại giao diện mới, nạp lại toàn bộ Cài đặt (Settings), khởi động lại luồng Worker bằng mã nguồn mới và tự động gửi Request cho Backend AI phân tích lại ngay lập tức mà không cần tắt/mở lại ứng dụng."
 }

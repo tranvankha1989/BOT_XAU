@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.2.0"
+            self.app_version = "1.2.1"
             self.updater = None
 
         self._has_new_version = False
@@ -1794,7 +1794,12 @@ class KronosDesktopApp:
             self._build_backtest_tab_ui(self.backtest_tab)
 
     def _on_update_hot_applied(self, success: bool, new_version: str = ""):
-        """Xử lý sau khi gói cập nhật OTA đã được nạp thành công mà không cần restart app."""
+        """
+        Xử lý ngay sau khi gói cập nhật OTA đã tải xong:
+        - Nạp lại mã nguồn & động cơ mới vào RAM.
+        - Tự động làm mới toàn bộ giao diện (UI), nạp lại cài đặt (Settings) và gọi lại Backend (MT5 + AI Scan + Auto Loop)
+          để áp dụng 100% tính năng & thông số mới ngay lập tức mà không cần người dùng tắt/mở lại App thủ công.
+        """
         if not success:
             return
         v_str = str(new_version or self.app_version).strip().lstrip("vV")
@@ -1803,7 +1808,91 @@ class KronosDesktopApp:
         self._latest_update_info = None
         self._stop_version_badge_blink()
 
-        # 1. Cập nhật nhãn phiên bản trên thanh tiêu đề và Header
+        # 1. Lưu lại cài đặt hiện tại và ghi nhớ trạng thái AUTO của từng Tab (XAUUSD / BTCUSD) trước khi làm mới
+        prev_active_pk = getattr(self, "active_profile_key", "XAUUSD")
+        running_profiles = [
+            pk for pk in ("XAUUSD", "BTCUSD")
+            if self.profile_ctx.get(pk, {}).get("auto_loop_running", False)
+            or (pk == prev_active_pk and getattr(self, "auto_loop_running", False))
+        ]
+        try:
+            self.save_user_settings(show_feedback=False)
+        except Exception:
+            pass
+
+        # 2. Hot-Reload toàn bộ module phụ trợ & mã nguồn chính mới vào RAM
+        try:
+            import importlib
+            import importlib.util
+            for sub_mod in ("kronos_license", "kronos_updater"):
+                if sub_mod in sys.modules:
+                    try:
+                        importlib.reload(sys.modules[sub_mod])
+                    except Exception:
+                        pass
+
+            bot_path = os.path.abspath(__file__)
+            if os.path.exists(bot_path):
+                spec = importlib.util.spec_from_file_location("mt5_scalping_bot_reloaded", bot_path)
+                reloaded_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(reloaded_mod)
+
+                # Đồng bộ các hằng số cấu hình mặc định & hướng dẫn mới sang module đang chạy
+                cur_mod = sys.modules.get(__name__)
+                for const_name in (
+                    "DEFAULT_PROFILE_SETTINGS",
+                    "PARAM_HELP_GUIDE",
+                    "PROFILE_STATE_ATTRS",
+                    "AI_MANAGED_STATE_ATTRS",
+                ):
+                    if hasattr(reloaded_mod, const_name):
+                        val_const = getattr(reloaded_mod, const_name)
+                        globals()[const_name] = val_const
+                        if cur_mod is not None:
+                            setattr(cur_mod, const_name, val_const)
+
+                if hasattr(reloaded_mod, "KronosDesktopApp"):
+                    new_cls = reloaded_mod.KronosDesktopApp
+                    for k, v in new_cls.__dict__.items():
+                        if callable(v) or isinstance(v, property):
+                            setattr(KronosDesktopApp, k, v)
+        except Exception as reload_err:
+            self.log(f"⚠️ [OTA HOT-PATCH] Nạp phương thức mới: {reload_err}")
+
+        # 3. Khởi tạo bổ sung các thuộc tính mới (nếu phiên bản mới vừa thêm vào __init__)
+        default_new_attrs = {
+            "show_ai_chart_overlay": True,
+            "pos_tree_by_profile": {},
+            "pos_summary_lbl_by_profile": {},
+            "pred_tree_by_profile": {},
+            "pred_title_by_profile": {},
+            "log_text_by_profile": {},
+            "side_drawer_by_profile": {},
+            "side_paned_by_profile": {},
+            "side_sub_frames_by_profile": {},
+            "side_mode_btns_by_profile": {},
+            "side_toggle_btn_by_profile": {},
+            "chart_view_tf_by_profile": {"XAUUSD": "M5", "BTCUSD": "M5"},
+        }
+        for attr_k, attr_def in default_new_attrs.items():
+            if not hasattr(self, attr_k) or isinstance(attr_def, dict):
+                setattr(self, attr_k, dict(attr_def) if isinstance(attr_def, dict) else attr_def)
+
+        # 4. Dựng lại toàn bộ Giao diện (UI) tại chỗ và nạp lại Cài đặt mới (load_user_settings)
+        try:
+            for child in list(self.root.winfo_children()):
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
+            self._setup_styles()
+            self._build_ui()
+            self.load_user_settings()
+            self._bind_auto_save_settings()
+        except Exception as ui_err:
+            self.log(f"⚠️ [OTA UI REBUILD] Làm mới giao diện: {ui_err}")
+
+        # 5. Cập nhật nhãn phiên bản mới nhất trên Header & Thanh tiêu đề
         if hasattr(self, "version_badge_btn") and self.version_badge_btn.winfo_exists():
             self.version_badge_btn.config(
                 text=f"Phiên bản mới nhất  v{v_str}  ✓",
@@ -1815,31 +1904,39 @@ class KronosDesktopApp:
         except Exception:
             pass
 
-        # 2. Hot-Reload mã nguồn mới vào RAM ngay lập tức mà không đóng cửa sổ hay ngắt kết nối MT5
+        # 6. Tự động Request lại toàn bộ Backend: Kết nối MT5, Bản quyền, Khởi động lại luồng AUTO bằng code mới & Quét lại AI ngay lập tức!
         try:
-            import importlib.util
-            bot_path = os.path.abspath(__file__)
-            if os.path.exists(bot_path):
-                spec = importlib.util.spec_from_file_location("mt5_scalping_bot_reloaded", bot_path)
-                reloaded_mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(reloaded_mod)
-                if hasattr(reloaded_mod, "KronosDesktopApp"):
-                    new_cls = reloaded_mod.KronosDesktopApp
-                    for k, v in new_cls.__dict__.items():
-                        if callable(v):
-                            setattr(KronosDesktopApp, k, v)
-        except Exception as reload_err:
-            self.log(f"⚠️ [OTA HOT-PATCH] Nạp phương thức mới: {reload_err}")
+            if hasattr(self, "updater") and self.updater is not None:
+                self.updater.current_version = v_str
+            self.check_mt5_connection()
+            self._update_license_badge_ui()
 
-        # 3. Đảm bảo Tab Backtest được khởi tạo nếu phiên bản cũ chưa có
-        try:
-            if hasattr(self, "bottom_notebook") and self.bottom_notebook.index("end") < 5:
-                self._setup_backtest_tab()
-        except Exception:
-            pass
+            # Làm mới toàn bộ các luồng Background Worker sang mã nguồn v_str mới
+            for pk in ("XAUUSD", "BTCUSD"):
+                self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
+                if pk in running_profiles:
+                    self.profile_ctx[pk]["auto_loop_running"] = False
+                    self.start_auto_scan(profile_key=pk)
 
-        self.show_toast(f"✓ Đã áp dụng phiên bản v{v_str} trực tiếp! Không cần restart app.", is_error=False, duration_ms=3500)
-        self.log(f"🎉 [CẬP NHẬT TRỰC TIẾP] Phiên bản v{v_str} đã được nạp thành công ngay trong phiên làm việc hiện tại.")
+            # Xóa cache chữ ký biểu đồ cũ và lập tức gửi Request cho Backend AI phân tích lại + vẽ lại biểu đồ mới
+            self._last_drawn_chart_key = None
+            self._last_drawn_pos_sig = None
+            self.trigger_single_scan(profile_key=self.active_profile_key)
+            for pk in running_profiles:
+                if pk != self.active_profile_key:
+                    self.trigger_single_scan(profile_key=pk)
+            self._refresh_realtime_chart(force_full_redraw=True)
+        except Exception as be_err:
+            self.log(f"⚠️ [OTA BACKEND RELOAD] Khởi tạo lại dịch vụ nền: {be_err}")
+
+        self.show_toast(
+            f"✓ Đã nâng cấp v{v_str}, nạp lại Cài đặt & Request Backend AI thành công!",
+            is_error=False,
+            duration_ms=4000
+        )
+        self.log(
+            f"🎉 [CẬP NHẬT & ĐỒNG BỘ BACKEND] Đã nâng cấp lên v{v_str}, tự động nạp lại cài đặt mới và yêu cầu AI phân tích lại ngay lập tức."
+        )
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -5744,10 +5841,11 @@ class KronosDesktopApp:
             lows.append(float(lim_entry))
             highs.append(float(lim_entry))
 
-        # Nếu bật lớp phủ Dự Báo AI, ôm cả kịch bản dự báo AI và mức SL/TP
-        if getattr(self, "show_ai_chart_overlay", True) and self._chart_mean_df is not None and x1 >= n_hist - 1:
-            lows.append(float(self._chart_mean_df["low"].min()))
-            highs.append(float(self._chart_mean_df["high"].max()))
+        # Nếu bật lớp phủ Dự Báo AI, luôn ôm cả mức SL/TP đề xuất của AI và kịch bản dự báo (nếu có) trên mọi khung giờ
+        if getattr(self, "show_ai_chart_overlay", True) and x1 >= n_hist - 2:
+            if self._chart_mean_df is not None:
+                lows.append(float(self._chart_mean_df["low"].min()))
+                highs.append(float(self._chart_mean_df["high"].max()))
             if getattr(self, "cached_sl", None) is not None:
                 lows.append(float(self.cached_sl))
                 highs.append(float(self.cached_sl))
@@ -8139,8 +8237,12 @@ class KronosDesktopApp:
                     (self.pending_pullback_order["action"], round(self.pending_pullback_order["sl_price"], 2))
                     if self.pending_pullback_order is not None else None
                 )
+                ai_sl_tp_sig = (
+                    round(float(self.cached_sl), 2) if getattr(self, "cached_sl", None) is not None else None,
+                    round(float(self.cached_tp), 2) if getattr(self, "cached_tp", None) is not None else None,
+                )
 
-                if cur_key == self._last_drawn_chart_key and (pos_sig, pb_sig) == self._last_drawn_pos_sig:
+                if cur_key == self._last_drawn_chart_key and (pos_sig, pb_sig, ai_sl_tp_sig) == self._last_drawn_pos_sig:
                     idx_last = len(self._chart_hist_df) - 1
                     o = float(last_row["open"])
                     h = float(last_row["high"])
@@ -9541,18 +9643,43 @@ class KronosDesktopApp:
             self.ax.axvline(x=n_hist - 0.5, color=GOLD_ACCENT, linestyle="--", linewidth=1.1, alpha=0.8)
             all_times += list(mean_df["timestamps"].dt.strftime("%H:%M"))
 
-            if not open_positions and sl_price is not None and tp_price is not None:
-                try:
-                    lot_val = float(self.lot_var.get())
-                except ValueError:
-                    lot_val = 0.01
-                with self._mt5_lock:
-                    sym_info = mt5.symbol_info(symbol) if MT5_AVAILABLE else None
-                contract_sz = float(sym_info.trade_contract_size) if (sym_info and sym_info.trade_contract_size > 0) else (1.0 if "BTC" in str(symbol).upper() else 100.0)
-                est_sl_usd = -abs(live_price - sl_price) * lot_val * contract_sz
-                est_tp_usd = abs(tp_price - live_price) * lot_val * contract_sz
-                self.ax.axhline(y=sl_price, color=RED_DOWN, linestyle=":", linewidth=1.3, label=f"SL gợi ý AI: {sl_price:.2f} ({est_sl_usd:+.1f}$)")
-                self.ax.axhline(y=tp_price, color=GREEN_UP, linestyle=":", linewidth=1.3, label=f"TP gợi ý AI: {tp_price:.2f} ({est_tp_usd:+.1f}$)")
+        # Luôn hiển thị đường & nhãn SL/TP Đề Xuất của AI trên mọi khung thời gian (M1/M5/M15/H1) và kể cả khi đang có lệnh mở
+        if show_ai_ov and sl_price is not None and tp_price is not None:
+            try:
+                lot_val = float(self.lot_var.get())
+            except ValueError:
+                lot_val = 0.01
+            with self._mt5_lock:
+                sym_info = mt5.symbol_info(symbol) if MT5_AVAILABLE else None
+            contract_sz = float(sym_info.trade_contract_size) if (sym_info and sym_info.trade_contract_size > 0) else (1.0 if "BTC" in str(symbol).upper() else 100.0)
+            est_sl_usd = -abs(live_price - sl_price) * lot_val * contract_sz
+            est_tp_usd = abs(tp_price - live_price) * lot_val * contract_sz
+            ai_col_idx = max(len(open_positions) if open_positions else 0, 1 if self.pending_pullback_order is not None else 0)
+            ai_label_x = base_label_x + (ai_col_idx * col_step_x)
+
+            self.ax.axhline(
+                y=sl_price, color="#ff5252", linestyle="-.", linewidth=1.35, alpha=0.92, zorder=14,
+                label=f"SL đề xuất AI: {sl_price:.2f} ({est_sl_usd:+.1f}$)"
+            )
+            t_ai_sl = self.ax.text(
+                ai_label_x, sl_price,
+                f" 🧠 SL AI đề xuất: {sl_price:.2f} ({est_sl_usd:+.1f}$) ",
+                color="#ffdce0", backgroundcolor="#5c1622",
+                fontsize=7.5, fontweight="bold", va="center", clip_on=True, zorder=17
+            )
+            self._pos_text_artists.append((t_ai_sl, ai_col_idx))
+
+            self.ax.axhline(
+                y=tp_price, color="#00e676", linestyle="-.", linewidth=1.35, alpha=0.92, zorder=14,
+                label=f"TP đề xuất AI: {tp_price:.2f} ({est_tp_usd:+.1f}$)"
+            )
+            t_ai_tp = self.ax.text(
+                ai_label_x, tp_price,
+                f" 🧠 TP AI đề xuất: {tp_price:.2f} ({est_tp_usd:+.1f}$) ",
+                color="#d0f8ce", backgroundcolor="#0d3b26",
+                fontsize=7.5, fontweight="bold", va="center", clip_on=True, zorder=17
+            )
+            self._pos_text_artists.append((t_ai_tp, ai_col_idx))
 
         self._chart_all_times = all_times
 
@@ -9641,8 +9768,12 @@ class KronosDesktopApp:
             (self.pending_pullback_order["action"], round(self.pending_pullback_order["sl_price"], 2))
             if self.pending_pullback_order is not None else None
         )
+        ai_sl_tp_sig = (
+            round(float(sl_price), 2) if sl_price is not None else None,
+            round(float(tp_price), 2) if tp_price is not None else None,
+        )
         self._last_drawn_chart_key = (symbol, tf, show_ai_ov, hist["timestamps"].iloc[-1])
-        self._last_drawn_pos_sig = (pos_sig, pb_sig)
+        self._last_drawn_pos_sig = (pos_sig, pb_sig, ai_sl_tp_sig)
 
         self.fig.subplots_adjust(left=0.045, right=0.945, top=0.93, bottom=0.07)
         self._request_canvas_redraw()
