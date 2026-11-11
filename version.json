@@ -1,6 +1,6 @@
 {
-  "version": "1.1.9",
+  "version": "1.2.0",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-11",
-  "description": "Phiên bản v1.1.9:\n- Nâng cấp cơ chế Đa Khung Thời Gian chuẩn (AI Zone Watch): AI chỉ phân tích khi đóng nến Khung Phân Tích (VD: M5 — 5 phút/lần) để xác lập vùng Entry / SL / TP cố định, nhất quán.\n- Trong suốt chu kỳ 5 phút, Python tự động canh giá Tick/M1 theo thời gian thực để khớp lệnh ngay khi giá về vùng Entry hợp lệ (SL <= SL tối đa & RR >= 2R), giảm 80% tải CPU/GPU và không bị nhấp nháy tín hiệu.\n- Đồng bộ 100% thuật toán Canh Vùng Giá AI giữa Bot Live và trình kiểm thử Backtest (S1 Tick & Nến chuẩn)."
+  "description": "Phiên bản v1.2.0:\n- Tinh gọn giao diện hợp nhất (Unified Trading Workspace): Loại bỏ Tab phụ 'BẢNG GIÁ DỰ BÁO AI & NHẬT KÝ', gộp trực tiếp Nhật Ký Hệ Thống & Bảng 6 Nến Dự Báo AI vào ngăn bên phải (Side Drawer có thể Ẩn/Hiện & kéo giãn) ngay trong Tab XAUUSD và BTCUSD.\n- Tích hợp nút '🧠 Dự Báo AI: BẬT/TẮT' ngay trên thanh công cụ biểu đồ để hiển thị đồng thời Lệnh Real-Time cùng 8 kịch bản & 6 nến dự báo AI trên cùng một màn hình.\n- Xác nhận cơ chế AI Zone Watch chuẩn: Khi chọn Phân tích M5 + Vào lệnh M1, đóng nến M1 không gọi lại AI (AI chỉ phân tích mỗi 5 phút khi đóng nến M5, Python canh giá Tick/M1 theo thời gian thực để vào lệnh)."
 }

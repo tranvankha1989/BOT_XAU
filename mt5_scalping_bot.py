@@ -743,7 +743,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.1.9"
+            self.app_version = "1.2.0"
             self.updater = None
 
         self._has_new_version = False
@@ -855,6 +855,15 @@ class KronosDesktopApp:
         }
         self.pos_tree_by_profile = {}
         self.pos_summary_lbl_by_profile = {}
+        self.pred_tree_by_profile = {}
+        self.pred_title_by_profile = {}
+        self.log_text_by_profile = {}
+        self.side_drawer_by_profile = {}
+        self.side_paned_by_profile = {}
+        self.side_sub_frames_by_profile = {}
+        self.side_mode_btns_by_profile = {}
+        self.side_toggle_btn_by_profile = {}
+        self.show_ai_chart_overlay = True
         self.cross_vline = None
         self.cross_hline = None
         self.cross_price_annot = None
@@ -1072,23 +1081,27 @@ class KronosDesktopApp:
             self.profile_settings[pk] = {k: v.get() for k, v in smap.items()}
 
     def _update_forecast_tab_header(self):
-        """Cập nhật tiêu đề Tab 3 và thanh tiêu đề Bảng 6 nến dự báo AI để hiển thị rõ đang thuộc về XAUUSD hay BTCUSD."""
+        """Cập nhật thanh tiêu đề Bảng 6 nến dự báo AI tích hợp trong từng Tab (XAUUSD / BTCUSD)."""
+        for pk_i in ("XAUUSD", "BTCUSD"):
+            cfg = self.profile_settings.get(pk_i, DEFAULT_PROFILE_SETTINGS.get(pk_i, {}))
+            sym = str(cfg.get("symbol", pk_i)).strip()
+            ana_tf = str(cfg.get("analysis_tf", cfg.get("tf", "M5"))).strip()
+            scalp_tf = str(cfg.get("tf", "M5")).strip()
+            tf_desc = f"Khung {ana_tf}" if ana_tf == scalp_tf else f"AI {ana_tf} -> Scalp {scalp_tf}"
+            try:
+                lbl = getattr(self, "pred_title_by_profile", {}).get(pk_i)
+                if lbl is not None and lbl.winfo_exists():
+                    lbl.config(
+                        text=f"📌 6 NẾN DỰ BÁO AI: {sym} ({tf_desc})",
+                        fg=GOLD_ACCENT if pk_i == "XAUUSD" else CYAN_LIVE
+                    )
+            except Exception:
+                pass
         pk = self.active_profile_key
-        cfg = self.profile_settings.get(pk, DEFAULT_PROFILE_SETTINGS.get(pk, {}))
-        sym = str(cfg.get("symbol", pk)).strip()
-        ana_tf = str(cfg.get("analysis_tf", cfg.get("tf", "M5"))).strip()
-        scalp_tf = str(cfg.get("tf", "M5")).strip()
-        tf_desc = f"Khung {ana_tf}" if ana_tf == scalp_tf else f"Phân tích {ana_tf} -> Vào lệnh {scalp_tf}"
-        try:
-            if hasattr(self, "bottom_notebook"):
-                self.bottom_notebook.tab(2, text=f"📊 BẢNG GIÁ DỰ BÁO AI [{pk}] & NHẬT KÝ")
-            if hasattr(self, "pred_table_title_lbl"):
-                self.pred_table_title_lbl.config(
-                    text=f"📌 BẢNG 6 NẾN DỰ BÁO AI ĐANG HIỂN THỊ CỦA TAB: {pk} ({sym} — {tf_desc})",
-                    fg=GOLD_ACCENT if pk == "XAUUSD" else CYAN_LIVE
-                )
-        except Exception:
-            pass
+        if pk in getattr(self, "pred_tree_by_profile", {}):
+            self.tree = self.pred_tree_by_profile[pk]
+        if pk in getattr(self, "log_text_by_profile", {}):
+            self.log_text = self.log_text_by_profile[pk]
 
     def _sync_active_ctx_to_self(self):
         """Nạp toàn bộ trạng thái, thông số Menu, công tắc AUTO và bảng lệnh của Tab đang chọn lên giao diện."""
@@ -2441,8 +2454,17 @@ class KronosDesktopApp:
             b.pack(side=tk.LEFT, padx=2)
             self.tf_quick_btns[tf_opt] = b
 
+        self.ai_overlay_btn = tk.Button(
+            chart_toolbar, text="🧠 Dự Báo AI: BẬT",
+            bg=GOLD_ACCENT, fg="#000000",
+            activebackground="#ffd54f", activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=1, cursor="hand2",
+            command=self.toggle_ai_chart_overlay
+        )
+        self.ai_overlay_btn.pack(side=tk.LEFT, padx=(8, 2))
+
         tk.Label(
-            chart_toolbar, text="(Chỉ đổi nến xem, AI giữ nguyên theo Menu Cài đặt)",
+            chart_toolbar, text="(Gộp chung Lệnh Live & Dự báo AI trên cùng biểu đồ)",
             bg="#131822", fg="#64748b", font=("Segoe UI", 7, "italic")
         ).pack(side=tk.LEFT, padx=(6, 0))
 
@@ -2466,15 +2488,16 @@ class KronosDesktopApp:
         self.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
         self.canvas.mpl_connect("resize_event", lambda e: setattr(self, "_chart_bg_bbox", None))
 
-        # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB (XAUUSD | BTCUSD | DỰ BÁO AI & NHẬT KÝ)
+        # KHU VỰC DƯỚI CÙNG: BẢNG ĐIỀU KHIỂN ĐA TAB GỌN GÀNG (XAUUSD | BTCUSD | LỊCH SỬ | BACKTEST)
+        # Đã gộp Bảng 6 Nến Dự Báo AI & Nhật Ký Hệ Thống trực tiếp vào trong từng Tab XAUUSD và BTCUSD!
         self.bottom_notebook = ttk.Notebook(self.right_paned)
 
-        # TAB 0 (Mặc định khi mở App): XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
+        # TAB 0 (Mặc định khi mở App): XAUUSD (BIỂU ĐỒ, LỆNH REAL-TIME, DỰ BÁO AI & NHẬT KÝ)
         pos_tab_xau = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
         self.bottom_notebook.add(pos_tab_xau, text="XAUUSD (BIỂU ĐỒ & LỆNH REAL-TIME)")
         self._build_positions_tab_ui(pos_tab_xau, "XAUUSD")
 
-        # TAB 1 (Tab mới): BTCUSD (BIỂU ĐỒ & LỆNH REAL-TIME)
+        # TAB 1: BTCUSD (BIỂU ĐỒ, LỆNH REAL-TIME, DỰ BÁO AI & NHẬT KÝ)
         pos_tab_btc = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
         self.bottom_notebook.add(pos_tab_btc, text="₿ BTCUSD (BIỂU ĐỒ & LỆNH REAL-TIME)")
         self._build_positions_tab_ui(pos_tab_btc, "BTCUSD")
@@ -2482,75 +2505,16 @@ class KronosDesktopApp:
         # Mặc định khởi tạo trỏ vào Tab XAUUSD
         self.pos_tree = self.pos_tree_by_profile["XAUUSD"]
         self.pos_summary_lbl = self.pos_summary_lbl_by_profile["XAUUSD"]
+        self.tree = self.pred_tree_by_profile["XAUUSD"]
+        self.pred_table_title_lbl = self.pred_title_by_profile["XAUUSD"]
+        self.log_text = self.log_text_by_profile["XAUUSD"]
 
-        # TAB 2: CHI TIẾT 6 CÂY NẾN DỰ BÁO KRONOS AI & NHẬT KÝ LOG
-        pred_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
-        self.bottom_notebook.add(pred_tab, text="BẢNG GIÁ DỰ BÁO AI [XAUUSD] & NHẬT KÝ")
-
-        pred_left = tk.Frame(pred_tab, bg=PANEL_BG)
-        pred_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 4), pady=4)
-
-        self.pred_table_title_lbl = tk.Label(
-            pred_left,
-            text="📌 BẢNG 6 NẾN DỰ BÁO AI ĐANG HIỂN THỊ CỦA TAB: XAUUSD (XAUUSDm — Khung M15)",
-            bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold"), anchor="w", padx=8, pady=3
-        )
-        self.pred_table_title_lbl.pack(fill=tk.X, pady=(0, 3))
-
-        cols = ("timestamps", "open", "high", "low", "close")
-        self.tree = ttk.Treeview(pred_left, columns=cols, show="headings", height=5)
-        headers = {
-            "timestamps": "Thời gian dự báo",
-            "open": "Open",
-            "high": "High (Đỉnh)",
-            "low": "Low (Đáy)",
-            "close": "Close (Đóng)"
-        }
-        for c in cols:
-            self.tree.heading(c, text=headers[c])
-            self.tree.column(c, width=125 if c == "timestamps" else 80, anchor=tk.CENTER)
-        self.tree.pack(fill=tk.BOTH, expand=True)
-        self.tree.bind("<Button-1>", lambda e: "break" if self.tree.identify_region(e.x, e.y) == "heading" else None)
-        self.tree.bind("<Escape>", self._deselect_all_orders_and_reset)
-
-        log_right = tk.Frame(pred_tab, bg=PANEL_BG, width=520)
-        log_right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(0, 4), pady=4)
-        log_right.pack_propagate(False)
-
-        log_header_bar = tk.Frame(log_right, bg="#131822", padx=6, pady=2)
-        log_header_bar.pack(fill=tk.X, pady=(0, 3))
-        tk.Label(
-            log_header_bar, text="📋 NHẬT KÝ HỆ THỐNG & LỖI (TỰ LƯU FILE LOG)",
-            bg="#131822", fg=CYAN_LIVE, font=("Segoe UI", 8, "bold"), anchor="w"
-        ).pack(side=tk.LEFT)
-        tk.Button(
-            log_header_bar, text="⛶ Mở Rộng", bg="#1f293d", fg=TEXT_MAIN,
-            activebackground=GOLD_ACCENT, activeforeground="#000000",
-            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
-            command=self.toggle_bottom_panel_expand
-        ).pack(side=tk.RIGHT, padx=(3, 0))
-        tk.Button(
-            log_header_bar, text="📂 Mở Thư Mục Log", bg="#232d3f", fg=TEXT_MAIN,
-            activebackground=GOLD_ACCENT, activeforeground="#000000",
-            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
-            command=self.open_log_folder
-        ).pack(side=tk.RIGHT, padx=(3, 0))
-        tk.Button(
-            log_header_bar, text="⚠️ Xem Log Lỗi", bg="#5c232d", fg="#ffffff",
-            activebackground=RED_DOWN, activeforeground="#ffffff",
-            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
-            command=self.open_error_log_file
-        ).pack(side=tk.RIGHT)
-
-        self.log_text = tk.Text(log_right, bg="#131822", fg="#b7bdc6", font=("Consolas", 8), relief=tk.FLAT)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-
-        # TAB 3: LỊCH SỬ GIAO DỊCH & XUẤT BÁO CÁO EXCEL
+        # TAB 2: LỊCH SỬ GIAO DỊCH & XUẤT BÁO CÁO EXCEL
         history_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
         self.bottom_notebook.add(history_tab, text="📜 LỊCH SỬ & XUẤT EXCEL")
         self._build_history_tab_ui(history_tab)
 
-        # TAB 4: KIỂM THỬ CHIẾN LƯỢC (BACKTEST TICK-LEVEL ENGINE) - KHÓA QUẢN TRỊ VIÊN
+        # TAB 3: KIỂM THỬ CHIẾN LƯỢC (BACKTEST TICK-LEVEL ENGINE) - KHÓA QUẢN TRỊ VIÊN
         self.backtest_tab = tk.Frame(self.bottom_notebook, bg=PANEL_BG)
         self.bottom_notebook.add(self.backtest_tab, text="🔒 BACKTEST (ADMIN)")
         self._build_backtest_tab_ui(self.backtest_tab)
@@ -2566,7 +2530,7 @@ class KronosDesktopApp:
         self.root.after(150, self._init_right_paned_sash)
 
     def _build_positions_tab_ui(self, pos_tab: tk.Frame, profile_key: str):
-        """Dựng giao diện bảng quản lý lệnh đang mở Real-Time riêng biệt cho từng Tab (XAUUSD / BTCUSD)."""
+        """Dựng giao diện hợp nhất (All-in-One) cho từng Tab (XAUUSD / BTCUSD): Bảng lệnh Real-Time + Bảng 6 Nến Dự Báo AI & Nhật ký Log."""
         pos_top_bar = tk.Frame(pos_tab, bg=PANEL_BG, pady=4, padx=6)
         pos_top_bar.pack(fill=tk.X)
 
@@ -2575,7 +2539,16 @@ class KronosDesktopApp:
             activebackground=GOLD_ACCENT, activeforeground="#000000",
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2, cursor="hand2",
             command=self.toggle_bottom_panel_expand
-        ).pack(side=tk.RIGHT, padx=(6, 2))
+        ).pack(side=tk.RIGHT, padx=(4, 2))
+
+        side_toggle_btn = tk.Button(
+            pos_top_bar, text="📋 Ẩn/Hiện Nhật Ký & AI", bg="#1e2c44", fg=CYAN_LIVE,
+            activebackground=GOLD_ACCENT, activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=2, cursor="hand2",
+            command=lambda pk=profile_key: self._toggle_profile_side_drawer(pk)
+        )
+        side_toggle_btn.pack(side=tk.RIGHT, padx=3)
+        self.side_toggle_btn_by_profile[profile_key] = side_toggle_btn
 
         tk.Button(
             pos_top_bar, text="🔥 ĐÓNG TẤT CẢ (CLOSE ALL)", bg=RED_DOWN, fg="#ffffff",
@@ -2601,6 +2574,16 @@ class KronosDesktopApp:
         )
         summary_lbl.pack(side=tk.LEFT)
 
+        # Bộ chia ngang (Horizontal PanedWindow): Trái = Bảng Lệnh Real-Time | Phải = Nhật Ký Hệ Thống & 6 Nến Dự Báo AI
+        horiz_paned = tk.PanedWindow(
+            pos_tab, orient=tk.HORIZONTAL, bg="#1e293b", bd=0, sashwidth=5, sashrelief=tk.RAISED, opaqueresize=True
+        )
+        horiz_paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        self.side_paned_by_profile[profile_key] = horiz_paned
+
+        # 1. KHUNG BÊN TRÁI: BẢNG QUẢN LÝ LỆNH REAL-TIME & LỆNH ĐÃ CHỐT TRONG NGÀY
+        tree_container = tk.Frame(horiz_paned, bg=PANEL_BG)
+
         pos_cols = ("ticket", "time", "duration", "symbol", "type", "volume", "open_price", "current_price", "sl", "tp", "profit", "status")
         pos_headers = {
             "ticket": "Mã Lệnh (Ticket)",
@@ -2617,12 +2600,9 @@ class KronosDesktopApp:
             "status": "Trạng thái Bảo vệ / Kết quả"
         }
         pos_widths = {
-            "ticket": 85, "time": 95, "duration": 95, "symbol": 70, "type": 50, "volume": 45,
-            "open_price": 85, "current_price": 90, "sl": 75, "tp": 75, "profit": 90, "status": 170
+            "ticket": 80, "time": 90, "duration": 85, "symbol": 65, "type": 45, "volume": 42,
+            "open_price": 80, "current_price": 85, "sl": 70, "tp": 70, "profit": 85, "status": 155
         }
-
-        tree_container = tk.Frame(pos_tab, bg=PANEL_BG)
-        tree_container.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
 
         tree = ttk.Treeview(tree_container, columns=pos_cols, show="headings", height=5)
         scrollbar = ttk.Scrollbar(tree_container, orient="vertical", command=tree.yview)
@@ -2646,6 +2626,129 @@ class KronosDesktopApp:
 
         self.pos_tree_by_profile[profile_key] = tree
         self.pos_summary_lbl_by_profile[profile_key] = summary_lbl
+
+        # 2. KHUNG BÊN PHẢI (TÍCH HỢP CHUNG): NHẬT KÝ HỆ THỐNG & BẢNG 6 NẾN DỰ BÁO AI
+        side_drawer = tk.Frame(horiz_paned, bg="#131822", width=430, highlightthickness=1, highlightbackground="#232d3f")
+        self.side_drawer_by_profile[profile_key] = side_drawer
+
+        side_hdr = tk.Frame(side_drawer, bg="#131822", padx=4, pady=2)
+        side_hdr.pack(fill=tk.X)
+
+        btn_log_mode = tk.Button(
+            side_hdr, text="📋 Nhật Ký Hệ Thống", bg=CYAN_LIVE, fg="#000000",
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
+            command=lambda pk=profile_key: self._switch_profile_side_mode(pk, "LOG")
+        )
+        btn_log_mode.pack(side=tk.LEFT, padx=(0, 3))
+
+        btn_ai_mode = tk.Button(
+            side_hdr, text="📊 6 Nến Dự Báo AI", bg="#222c3c", fg=TEXT_MAIN,
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=6, pady=1, cursor="hand2",
+            command=lambda pk=profile_key: self._switch_profile_side_mode(pk, "AI_TABLE")
+        )
+        btn_ai_mode.pack(side=tk.LEFT, padx=(0, 4))
+        self.side_mode_btns_by_profile[profile_key] = (btn_log_mode, btn_ai_mode)
+
+        tk.Button(
+            side_hdr, text="📂 Thư Mục Log", bg="#232d3f", fg=TEXT_MAIN,
+            activebackground=GOLD_ACCENT, activeforeground="#000000",
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=5, pady=1, cursor="hand2",
+            command=self.open_log_folder
+        ).pack(side=tk.RIGHT, padx=(2, 0))
+        tk.Button(
+            side_hdr, text="⚠️ Log Lỗi", bg="#5c232d", fg="#ffffff",
+            activebackground=RED_DOWN, activeforeground="#ffffff",
+            font=("Segoe UI", 7, "bold"), relief=tk.FLAT, padx=5, pady=1, cursor="hand2",
+            command=self.open_error_log_file
+        ).pack(side=tk.RIGHT)
+
+        side_body = tk.Frame(side_drawer, bg="#131822")
+        side_body.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 3))
+
+        # Khung con A: Nhật ký Log
+        log_sub = tk.Frame(side_body, bg="#131822")
+        log_sub.pack(fill=tk.BOTH, expand=True)
+        log_txt = tk.Text(log_sub, bg="#0f141d", fg="#b7bdc6", font=("Consolas", 8), relief=tk.FLAT)
+        log_txt.pack(fill=tk.BOTH, expand=True)
+        self.log_text_by_profile[profile_key] = log_txt
+
+        # Khung con B: Bảng 6 nến dự báo AI
+        ai_sub = tk.Frame(side_body, bg="#131822")
+        pred_lbl = tk.Label(
+            ai_sub,
+            text=f"📌 6 NẾN DỰ BÁO AI: {profile_key}",
+            bg="#131822", fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), anchor="w", padx=4, pady=1
+        )
+        pred_lbl.pack(fill=tk.X)
+        self.pred_title_by_profile[profile_key] = pred_lbl
+
+        cols_ai = ("timestamps", "open", "high", "low", "close")
+        pred_tree = ttk.Treeview(ai_sub, columns=cols_ai, show="headings", height=5)
+        headers_ai = {
+            "timestamps": "Thời gian",
+            "open": "Open",
+            "high": "High (Đỉnh)",
+            "low": "Low (Đáy)",
+            "close": "Close (Đóng)"
+        }
+        for c_ai in cols_ai:
+            pred_tree.heading(c_ai, text=headers_ai[c_ai])
+            pred_tree.column(c_ai, width=105 if c_ai == "timestamps" else 68, anchor=tk.CENTER)
+        pred_tree.pack(fill=tk.BOTH, expand=True)
+        pred_tree.bind("<Button-1>", lambda e, pt=pred_tree: "break" if pt.identify_region(e.x, e.y) == "heading" else None)
+        pred_tree.bind("<Escape>", self._deselect_all_orders_and_reset)
+        self.pred_tree_by_profile[profile_key] = pred_tree
+
+        self.side_sub_frames_by_profile[profile_key] = (log_sub, ai_sub)
+
+        horiz_paned.add(tree_container, minsize=460, stretch="always")
+        horiz_paned.add(side_drawer, minsize=280, stretch="never")
+
+    def _switch_profile_side_mode(self, profile_key: str, mode: str):
+        """Chuyển đổi giữa xem Nhật Ký Hệ Thống và Bảng 6 Nến Dự Báo AI ngay trong khung phụ của Tab đang mở."""
+        subs = getattr(self, "side_sub_frames_by_profile", {}).get(profile_key)
+        btns = getattr(self, "side_mode_btns_by_profile", {}).get(profile_key)
+        if not subs or not btns:
+            return
+        log_sub, ai_sub = subs
+        btn_log, btn_ai = btns
+        if mode == "AI_TABLE":
+            log_sub.pack_forget()
+            ai_sub.pack(fill=tk.BOTH, expand=True)
+            btn_ai.config(bg=GOLD_ACCENT, fg="#000000")
+            btn_log.config(bg="#222c3c", fg=TEXT_MAIN)
+        else:
+            ai_sub.pack_forget()
+            log_sub.pack(fill=tk.BOTH, expand=True)
+            btn_log.config(bg=CYAN_LIVE, fg="#000000")
+            btn_ai.config(bg="#222c3c", fg=TEXT_MAIN)
+
+    def _toggle_profile_side_drawer(self, profile_key: str):
+        """Ẩn hoặc hiện khung Nhật Ký & 6 Nến Dự Báo AI bên phải bảng lệnh để không gian bảng lệnh rộng tối đa khi cần."""
+        paned = getattr(self, "side_paned_by_profile", {}).get(profile_key)
+        drawer = getattr(self, "side_drawer_by_profile", {}).get(profile_key)
+        if not paned or not drawer:
+            return
+        try:
+            panes = [str(p) for p in paned.panes()]
+            if str(drawer) in panes:
+                paned.forget(drawer)
+            else:
+                paned.add(drawer, minsize=280, stretch="never")
+        except Exception:
+            pass
+
+    def toggle_ai_chart_overlay(self):
+        """Bật/Tắt hiển thị chùm 8 kịch bản & 6 nến dự báo AI ngay trên biểu đồ Real-Time của Tab hiện tại."""
+        self.show_ai_chart_overlay = not getattr(self, "show_ai_chart_overlay", True)
+        if hasattr(self, "ai_overlay_btn") and self.ai_overlay_btn.winfo_exists():
+            if self.show_ai_chart_overlay:
+                self.ai_overlay_btn.config(text="🧠 Dự Báo AI: BẬT", bg=GOLD_ACCENT, fg="#000000")
+            else:
+                self.ai_overlay_btn.config(text="🧠 Dự Báo AI: TẮT", bg="#222c3c", fg=TEXT_MAIN)
+        sym = self.symbol_var.get().strip()
+        tf = self.tf_var.get().strip()
+        self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
 
     def _get_selected_tickets_for_profile(self, profile_key: str = None) -> set:
         """Lấy danh sách mã ticket (int) các lệnh đang được người dùng nhấp chọn trong bảng vị thế."""
@@ -5363,10 +5466,11 @@ class KronosDesktopApp:
         try:
             df_view = self.fetch_mt5_candles(symbol, tf_opt, chart_bars, include_forming=True)
             if df_view is not None:
+                show_fan = (getattr(self, "show_ai_chart_overlay", True) and tf_opt == ana_tf)
                 self._draw_candlestick_chart(
                     df_hist=df_view,
-                    scenarios=self.cached_scenarios if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
-                    mean_df=self.cached_mean_df if (self.chart_mode == "AI_FORECAST" and tf_opt == ana_tf) else None,
+                    scenarios=self.cached_scenarios if show_fan else None,
+                    mean_df=self.cached_mean_df if show_fan else None,
                     action=self.cached_action,
                     sl_price=self.cached_sl,
                     tp_price=self.cached_tp,
@@ -5507,15 +5611,10 @@ class KronosDesktopApp:
             self.chart_mode = "LIVE_POSITIONS"
             self._switch_active_profile("BTCUSD")
         elif selected_idx == 2:
-            self.chart_mode = "AI_FORECAST"
-            self._update_forecast_tab_header()
-            if self.cached_mean_df is None and not self.is_analyzing:
-                self.trigger_single_scan(profile_key=self.active_profile_key)
-        elif selected_idx == 3:
-            # Tab 3: LỊCH SỬ GIAO DỊCH & XUẤT EXCEL
+            # Tab 2: LỊCH SỬ GIAO DỊCH & XUẤT EXCEL
             self._refresh_history_tab()
-        elif selected_idx == 4:
-            # Tab 4: KIỂM THỬ CHIẾN LƯỢC (BACKTEST)
+        elif selected_idx == 3:
+            # Tab 3: KIỂM THỬ CHIẾN LƯỢC (BACKTEST)
             if not getattr(self, "_backtest_unlocked", False):
                 self._focus_backtest_password()
             else:
@@ -5542,7 +5641,7 @@ class KronosDesktopApp:
             active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), active_tf, chart_bars, include_forming=True)
 
         if active_df is not None:
-            show_fan = (self.chart_mode == "AI_FORECAST" and active_tf == ana_tf)
+            show_fan = (getattr(self, "show_ai_chart_overlay", True) and active_tf == ana_tf)
             self._draw_candlestick_chart(
                 active_df,
                 self.cached_scenarios if show_fan else None,
@@ -5576,7 +5675,7 @@ class KronosDesktopApp:
             active_df = self.fetch_mt5_candles(self.symbol_var.get().strip(), active_tf, chart_bars, include_forming=True)
 
         if active_df is not None:
-            show_fan = (self.chart_mode == "AI_FORECAST" and active_tf == ana_tf)
+            show_fan = (getattr(self, "show_ai_chart_overlay", True) and active_tf == ana_tf)
             self._draw_candlestick_chart(
                 active_df,
                 self.cached_scenarios if show_fan else None,
@@ -5645,8 +5744,8 @@ class KronosDesktopApp:
             lows.append(float(lim_entry))
             highs.append(float(lim_entry))
 
-        # Nếu ở chế độ Dự Báo AI, ôm cả kịch bản dự báo AI và mức SL/TP
-        if self.chart_mode == "AI_FORECAST" and self._chart_mean_df is not None and x1 >= n_hist - 1:
+        # Nếu bật lớp phủ Dự Báo AI, ôm cả kịch bản dự báo AI và mức SL/TP
+        if getattr(self, "show_ai_chart_overlay", True) and self._chart_mean_df is not None and x1 >= n_hist - 1:
             lows.append(float(self._chart_mean_df["low"].min()))
             highs.append(float(self._chart_mean_df["high"].max()))
             if getattr(self, "cached_sl", None) is not None:
@@ -5911,7 +6010,7 @@ class KronosDesktopApp:
                     text=f"🕒 {ts_full}  |  O: {o:.2f}   H: {h:.2f}   L: {l:.2f}   C: {c:.2f} ({chg:+.2f}$)",
                     fg=col
                 )
-        elif self.chart_mode == "AI_FORECAST" and mean_df is not None and n_hist <= idx < n_hist + len(mean_df):
+        elif getattr(self, "show_ai_chart_overlay", True) and mean_df is not None and n_hist <= idx < n_hist + len(mean_df):
             r = mean_df.iloc[idx - n_hist]
             ts_full = r["timestamps"].strftime("%d/%m %H:%M")
             o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
@@ -6337,9 +6436,13 @@ class KronosDesktopApp:
 
     def _append_log(self, line: str):
         try:
-            if hasattr(self, "log_text") and self.log_text.winfo_exists():
-                self.log_text.insert("1.0", line)
-                self.log_text.delete("150.0", tk.END)
+            log_widgets = list(getattr(self, "log_text_by_profile", {}).values())
+            if not log_widgets and hasattr(self, "log_text"):
+                log_widgets = [self.log_text]
+            for w in log_widgets:
+                if w is not None and w.winfo_exists():
+                    w.insert("1.0", line)
+                    w.delete("150.0", tk.END)
         except Exception:
             pass
 
@@ -8022,10 +8125,11 @@ class KronosDesktopApp:
                 df_tail = self.fetch_mt5_candles(symbol, active_tf, 2, include_forming=True)
                 last_row = df_tail.iloc[-1]
                 last_ts = last_row["timestamps"]
-                cur_key = (symbol, active_tf, self.chart_mode, last_ts)
+                show_ai_ov = bool(getattr(self, "show_ai_chart_overlay", True))
+                cur_key = (symbol, active_tf, show_ai_ov, last_ts)
 
                 with self._mt5_lock:
-                    open_positions = mt5.positions_get(symbol=symbol) if (self.chart_mode == "LIVE_POSITIONS" and MT5_AVAILABLE) else None
+                    open_positions = mt5.positions_get(symbol=symbol) if MT5_AVAILABLE else None
                 sel_sig = tuple(sorted(self._get_selected_tickets_for_profile(active_pk)))
                 pos_sig = (
                     (tuple((p.ticket, round(p.sl, 2), round(p.tp, 2)) for p in open_positions) if open_positions else ()),
@@ -8113,10 +8217,10 @@ class KronosDesktopApp:
                             self.saved_ylim = (cur_y0 + shift, cur_y1 + shift)
                             self.ax.set_ylim(self.saved_ylim)
 
-                    mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
+                    mode_label = "BIỂU ĐỒ REAL-TIME & DỰ BÁO AI" if show_ai_ov else "BIỂU ĐỒ LỆNH REAL-TIME"
                     zoom_hint = " [Nháy đúp để Reset]" if self.user_zoomed else ""
-                    if self.chart_mode == "AI_FORECAST" and active_tf != ana_tf:
-                        zoom_hint = f" [⚠ Nến dự báo AI thuộc khung {ana_tf} — bấm nút {ana_tf} để xem]"
+                    if show_ai_ov and active_tf != ana_tf:
+                        zoom_hint = f" [💡 Bấm nút {ana_tf} để xem 6 nến dự báo AI]"
                     self.ax.set_title(
                         f"[{mode_label}] {symbol} ({active_tf}) — Giá Live: {c:.2f} ({cd_str}){zoom_hint}",
                         color=GOLD_ACCENT, fontsize=9, fontweight="bold"
@@ -8135,7 +8239,7 @@ class KronosDesktopApp:
             self.cached_df_analysis = df_live
         if active_tf == tf_str:
             self.cached_df_hist = df_live
-        show_fan = (self.chart_mode == "AI_FORECAST" and active_tf == ana_tf)
+        show_fan = (bool(getattr(self, "show_ai_chart_overlay", True)) and active_tf == ana_tf)
         self._draw_candlestick_chart(
             df_hist=df_live,
             scenarios=self.cached_scenarios if show_fan else None,
@@ -9060,6 +9164,18 @@ class KronosDesktopApp:
                 self._ui_after(0, self._finish_scan_progress_anim)
 
     def _update_ui_results(self, profile_key, df_live_scalp, df_live_ana, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, symbol, scalp_tf, analysis_tf):
+        # Luôn cập nhật bảng 6 nến dự báo AI riêng của đúng Tab đó (ngay cả khi đang chạy ngầm)
+        pred_tree = getattr(self, "pred_tree_by_profile", {}).get(profile_key)
+        if pred_tree is not None and mean_df is not None:
+            try:
+                for row in pred_tree.get_children():
+                    pred_tree.delete(row)
+                for _, r in mean_df.iterrows():
+                    ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
+                    pred_tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
+            except Exception:
+                pass
+
         # Chỉ cập nhật lên giao diện chính nếu kết quả thuộc về đúng Tab mà người dùng đang mở!
         if profile_key == self.active_profile_key:
             for attr in (
@@ -9073,12 +9189,6 @@ class KronosDesktopApp:
             self.signal_title_lbl.config(text=sig_title, fg=sig_color)
             self.signal_detail_lbl.config(text=detail_text)
             self._update_bot_status_bar(profile_key)
-
-            for row in self.tree.get_children():
-                self.tree.delete(row)
-            for _, r in mean_df.iterrows():
-                ts_str = r["timestamps"].strftime("%Y-%m-%d %H:%M")
-                self.tree.insert("", tk.END, values=(ts_str, f"{r['open']:.2f}", f"{r['high']:.2f}", f"{r['low']:.2f}", f"{r['close']:.2f}"))
 
             view_tf = getattr(self, "chart_view_tf_by_profile", {}).get(profile_key, scalp_tf)
             if view_tf == scalp_tf:
@@ -9095,7 +9205,7 @@ class KronosDesktopApp:
                 chart_df = self.fetch_mt5_candles(symbol, view_tf, chart_bars, include_forming=True)
                 chart_tf = view_tf
 
-            show_fan = (self.chart_mode == "AI_FORECAST" and chart_tf == analysis_tf)
+            show_fan = (bool(getattr(self, "show_ai_chart_overlay", True)) and chart_tf == analysis_tf)
             self._highlight_active_tf_btn(chart_tf)
             self._draw_candlestick_chart(
                 chart_df,
@@ -9113,7 +9223,7 @@ class KronosDesktopApp:
             self._finish_startup_loading()
 
     # =========================================================================
-    # VẼ BIỂU ĐỒ THEO 2 CHẾ ĐỘ TAB (400 NẾN LỊCH SỬ + CROSSHAIR TRADINGVIEW)
+    # VẼ BIỂU ĐỒ HỢP NHẤT REAL-TIME & DỰ BÁO AI (400 NẾN LỊCH SỬ + CROSSHAIR TRADINGVIEW)
     # =========================================================================
     def _draw_candlestick_chart(self, df_hist, scenarios, mean_df, action, sl_price, tp_price, symbol, tf, has_forming_candle=True):
         self.ax.clear()
@@ -9125,12 +9235,13 @@ class KronosDesktopApp:
         max_hist_bars = 450
         hist = df_hist.iloc[-max_hist_bars:].reset_index(drop=True)
         n_hist = len(hist)
-        # Chỉ tính và vẽ phần nến dự báo AI khi đang ở Tab 2 (AI_FORECAST); ẩn hoàn toàn khi ở Tab 1 (LIVE_POSITIONS)
-        n_pred = (len(mean_df) if mean_df is not None else 0) if self.chart_mode == "AI_FORECAST" else 0
+        show_ai_ov = bool(getattr(self, "show_ai_chart_overlay", True))
+        # Hiển thị phần nến dự báo AI ngay trên biểu đồ hợp nhất khi bật lớp phủ Dự Báo AI và đang ở khung phân tích
+        n_pred = (len(mean_df) if mean_df is not None else 0) if show_ai_ov else 0
         total_x = n_hist + n_pred
 
         self._chart_hist_df = hist
-        self._chart_mean_df = mean_df if self.chart_mode == "AI_FORECAST" else None
+        self._chart_mean_df = mean_df if show_ai_ov else None
         self._chart_n_hist = n_hist
         self._chart_total_x = total_x
 
@@ -9234,9 +9345,9 @@ class KronosDesktopApp:
         base_label_x = view_xlim[0] + span_x * 0.018
         col_step_x = span_x * 0.18
 
-        # 2. Nếu đang ở Tab 1 (LIVE_POSITIONS): Hiển thị nhãn Entry, SL, TP kèm cả Mức Giá & Số Lãi/Lỗ ($)
+        # 2. Luôn hiển thị nhãn Entry, SL, TP kèm cả Mức Giá & Số Lãi/Lỗ ($) của các lệnh đang mở
         open_positions = None
-        if self.chart_mode == "LIVE_POSITIONS" and MT5_AVAILABLE:
+        if MT5_AVAILABLE:
             with self._mt5_lock:
                 open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
@@ -9405,14 +9516,14 @@ class KronosDesktopApp:
             )
             self._pos_text_artists.append((t_wait, 0))
 
-        # 3. Cụm Dự báo Kronos AI (Chỉ hiển thị ở Tab 2 - AI_FORECAST, ẩn ở Tab 1 - Lệnh đang mở Real-Time)
+        # 3. Cụm Dự báo Kronos AI (Hiển thị trực tiếp trên biểu đồ hợp nhất khi bật lớp phủ Dự Báo AI)
         all_times = list(hist["timestamps"].dt.strftime("%H:%M"))
-        if self.chart_mode == "AI_FORECAST" and scenarios is not None and mean_df is not None:
+        if show_ai_ov and scenarios is not None and mean_df is not None:
             anchor_idx = n_hist - 1
             anchor_y = float(hist["close"].iloc[anchor_idx])
             x_pred = np.arange(n_hist, n_hist + n_pred)
 
-            alpha_line = 0.45 if self.chart_mode == "AI_FORECAST" else 0.25
+            alpha_line = 0.42
             for idx, s_df in enumerate(scenarios):
                 xs = np.concatenate([[anchor_idx], x_pred])
                 ys = np.concatenate([[anchor_y], s_df["close"].values])
@@ -9430,7 +9541,7 @@ class KronosDesktopApp:
             self.ax.axvline(x=n_hist - 0.5, color=GOLD_ACCENT, linestyle="--", linewidth=1.1, alpha=0.8)
             all_times += list(mean_df["timestamps"].dt.strftime("%H:%M"))
 
-            if self.chart_mode == "AI_FORECAST" and sl_price is not None and tp_price is not None:
+            if not open_positions and sl_price is not None and tp_price is not None:
                 try:
                     lot_val = float(self.lot_var.get())
                 except ValueError:
@@ -9440,8 +9551,8 @@ class KronosDesktopApp:
                 contract_sz = float(sym_info.trade_contract_size) if (sym_info and sym_info.trade_contract_size > 0) else (1.0 if "BTC" in str(symbol).upper() else 100.0)
                 est_sl_usd = -abs(live_price - sl_price) * lot_val * contract_sz
                 est_tp_usd = abs(tp_price - live_price) * lot_val * contract_sz
-                self.ax.axhline(y=sl_price, color=RED_DOWN, linestyle=":", linewidth=1.3, label=f"SL: {sl_price:.2f} ({est_sl_usd:+.1f}$)")
-                self.ax.axhline(y=tp_price, color=GREEN_UP, linestyle=":", linewidth=1.3, label=f"TP: {tp_price:.2f} ({est_tp_usd:+.1f}$)")
+                self.ax.axhline(y=sl_price, color=RED_DOWN, linestyle=":", linewidth=1.3, label=f"SL gợi ý AI: {sl_price:.2f} ({est_sl_usd:+.1f}$)")
+                self.ax.axhline(y=tp_price, color=GREEN_UP, linestyle=":", linewidth=1.3, label=f"TP gợi ý AI: {tp_price:.2f} ({est_tp_usd:+.1f}$)")
 
         self._chart_all_times = all_times
 
@@ -9481,11 +9592,11 @@ class KronosDesktopApp:
             zorder=25
         )
 
-        mode_label = "BIỂU ĐỒ PHÂN TÍCH AI" if self.chart_mode == "AI_FORECAST" else "BIỂU ĐỒ LỆNH REAL-TIME"
+        mode_label = "BIỂU ĐỒ REAL-TIME & DỰ BÁO AI" if show_ai_ov else "BIỂU ĐỒ LỆNH REAL-TIME"
         zoom_hint = " [Nháy đúp để Reset]" if self.user_zoomed else ""
         ana_tf_hint = self.analysis_tf_var.get().strip()
-        if self.chart_mode == "AI_FORECAST" and tf != ana_tf_hint:
-            zoom_hint = f" [⚠ Nến dự báo AI thuộc khung {ana_tf_hint} — bấm nút {ana_tf_hint} để xem]"
+        if show_ai_ov and tf != ana_tf_hint:
+            zoom_hint = f" [💡 Bấm nút {ana_tf_hint} để xem 6 nến dự báo AI]"
         self.ax.set_title(
             f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f} ({cd_str}){zoom_hint}",
             color=GOLD_ACCENT, fontsize=9, fontweight="bold"
@@ -9530,7 +9641,7 @@ class KronosDesktopApp:
             (self.pending_pullback_order["action"], round(self.pending_pullback_order["sl_price"], 2))
             if self.pending_pullback_order is not None else None
         )
-        self._last_drawn_chart_key = (symbol, tf, self.chart_mode, hist["timestamps"].iloc[-1])
+        self._last_drawn_chart_key = (symbol, tf, show_ai_ov, hist["timestamps"].iloc[-1])
         self._last_drawn_pos_sig = (pos_sig, pb_sig)
 
         self.fig.subplots_adjust(left=0.045, right=0.945, top=0.93, bottom=0.07)
