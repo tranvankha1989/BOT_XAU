@@ -225,6 +225,16 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Chặn không cho bot mở quá 1 lệnh trong cùng một cây nến giao dịch (ví dụ nến M5). Ngăn ngừa việc thị trường giật nảy giá làm kích hoạt nhiều lệnh liên tục.",
         "how_to_set": "- LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
     },
+    "trend_filter": {
+        "title": "Lọc thuận xu hướng EMA (Chặn cản tàu / bắt đáy)",
+        "what_is_it": "Tự động phân tích xu hướng thị trường đa khung (EMA34/89 trên M15 và EMA21/50 trên M5/M1). Nếu thị trường đang trong xu hướng Giảm mạnh (Downtrend), bot sẽ CHẶN 100% mọi tín hiệu BUY bắt đáy cản tàu của AI. Ngược lại nếu thị trường đang Tăng mạnh, bot sẽ CHẶN 100% tín hiệu SELL bắt đỉnh.",
+        "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Giúp tài khoản không bao giờ bị 'cắm đầu BUY' trong các pha thị trường sập giá sâu hoặc 'cắm đầu SELL' khi giá bay dựng đứng.\n- Nếu tắt: Bot sẽ vào lệnh bất kể thị trường đang có xu hướng mạnh ra sao (chỉ nên dùng khi đánh sideway trong biên hẹp)."
+    },
+    "confirm_entry_pa": {
+        "title": "Xác nhận lực nến Price Action (Chống bắt dao rơi)",
+        "what_is_it": "Khi giá chạm vào Vùng Canh Giá của AI, bot không khớp lệnh ngay mù quáng mà sẽ quan sát nến Scalping (M1/M5). Nếu nến đang cắm đầu rơi tự do (thân nến đỏ đặc Marubozu), bot sẽ CHỜ và CHỈ khớp lệnh khi xuất hiện tín hiệu lực cầu đỡ giá (rút râu dưới, nến xanh đảo chiều, hoặc bật nảy từ đáy).",
+        "how_to_set": "- LUÔN BẬT (Mặc định): Loại bỏ hoàn toàn tình trạng 'bắt dao rơi' ngay giữa cây nến đang giảm dốc."
+    },
 
     # ─── MỤC 3: QUẢN LÝ LỆNH & CHỐT LỜI ───
     "auto_be": {
@@ -403,6 +413,8 @@ DEFAULT_PROFILE_SETTINGS = {
         "min_entry_spacing": "1.0",
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "one_order_per_candle": True,
+        "trend_filter": True,
+        "confirm_entry_pa": True,
         "auto_be": True,
         "be_trigger_r": "1.0",
         "auto_trail": True,
@@ -453,6 +465,8 @@ DEFAULT_PROFILE_SETTINGS = {
         "min_entry_spacing": "50.0",
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "one_order_per_candle": True,
+        "trend_filter": True,
+        "confirm_entry_pa": True,
         "auto_be": True,
         "be_trigger_r": "1.0",
         "auto_trail": True,
@@ -774,7 +788,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.3.3"
+            self.app_version = "1.3.4"
             self.updater = None
 
         self._has_new_version = False
@@ -2296,6 +2310,10 @@ class KronosDesktopApp:
         self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0", help_key="min_entry_spacing")
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
+        self.trend_filter_var = tk.BooleanVar(value=True)
+        self._add_checkbutton(sec2.content, "Lọc thuận xu hướng EMA (Chặn cản tàu)", self.trend_filter_var, help_key="trend_filter")
+        self.confirm_entry_pa_var = tk.BooleanVar(value=True)
+        self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
 
         tk.Button(
             sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc Entry & Nhồi lệnh)", bg="#161e2e", fg="#94a3b8",
@@ -4754,6 +4772,8 @@ class KronosDesktopApp:
             "min_entry_spacing": self.min_entry_spacing_var,
             "entry_mode": self.entry_mode_var,
             "one_order_per_candle": self.one_order_per_candle_var,
+            "trend_filter": self.trend_filter_var,
+            "confirm_entry_pa": self.confirm_entry_pa_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
             "auto_trail": self.auto_trail_var,
@@ -4873,6 +4893,7 @@ class KronosDesktopApp:
             str(cfg.get("sl_buffer", "0.5")).strip(),
             str(cfg.get("max_sl_price", "5.0")).strip(),
             str(cfg.get("rr", "2.0")).strip(),
+            str(cfg.get("trend_filter", True)).strip(),
         )
 
     def apply_live_settings_and_rescan(self, profile_key: str = None, source_label: str = "Menu Cài Đặt", force_rescan: bool = False):
@@ -5207,7 +5228,7 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
@@ -7590,6 +7611,86 @@ class KronosDesktopApp:
             )
             return False, last_res, f"Mã lỗi: {code_str} - {comment_str}"
 
+    def _check_price_action_entry_confirmation(self, symbol: str, action: str, scalp_tf: str = "M1") -> tuple:
+        """
+        Kiểm tra lực nến và phản ứng giá (Price Action) trên khung vào lệnh (M1/M5) trước khi khớp lệnh.
+        Chặn 100% việc 'bắt dao rơi' khi nến đang cắm đầu rơi tự do (Marubozu) hoặc tăng dựng đứng.
+        Yêu cầu có tín hiệu hấp thụ: Rút râu nến (Wick Rejection), hoặc Nến đảo chiều, hoặc Bật nảy từ đáy/đỉnh ngắn hạn.
+        """
+        try:
+            df_recent = self.fetch_mt5_candles(symbol, scalp_tf, 5, include_forming=True)
+            if df_recent is None or len(df_recent) < 2:
+                return True, "Dữ liệu nến không đủ -> Cho phép theo mặc định"
+
+            with self._mt5_lock:
+                tick = mt5.symbol_info_tick(symbol) if MT5_AVAILABLE else None
+            if not tick:
+                return True, "Không lấy được tick"
+
+            cur_price = tick.ask if action == "BUY" else tick.bid
+            spread = max(tick.ask - tick.bid, 0.05)
+
+            forming = df_recent.iloc[-1]
+            last_closed = df_recent.iloc[-2]
+
+            o_f, h_f, l_f, c_f = float(forming["open"]), float(forming["high"]), float(forming["low"]), float(forming["close"])
+            rng_f = max(h_f - l_f, 0.05)
+            body_f = abs(c_f - o_f)
+
+            o_c, h_c, l_c, c_c = float(last_closed["open"]), float(last_closed["high"]), float(last_closed["low"]), float(last_closed["close"])
+            rng_c = max(h_c - l_c, 0.05)
+            body_c = abs(c_c - o_c)
+
+            min_low_5 = float(df_recent["low"].min())
+            max_high_5 = float(df_recent["high"].max())
+
+            if action == "BUY":
+                # 1. KIỂM TRA NẾN RƠI TỰ DO (RUNAWAY MARUBOZU):
+                lower_wick_f = min(o_f, c_f) - l_f
+                lower_wick_c = min(o_c, c_c) - l_c
+
+                is_falling_knife_forming = (c_f < o_f) and (body_f >= 0.70 * rng_f) and (lower_wick_f < 0.15 * rng_f) and (c_f <= l_f + 0.15 * rng_f)
+                is_falling_knife_closed = (c_c < o_c) and (body_c >= 0.75 * rng_c) and (lower_wick_c < 0.15 * rng_c) and (c_f < c_c)
+
+                if is_falling_knife_forming or is_falling_knife_closed:
+                    return False, f"Nến {scalp_tf} đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+
+                # 2. XÁC NHẬN LỰC ĐỠ (BUY REJECTION / ABSORPTION):
+                has_wick_rejection = (lower_wick_f >= 0.25 * rng_f and lower_wick_f >= spread * 1.5) or (lower_wick_c >= 0.35 * rng_c)
+                is_bullish_turnaround = (c_f > o_f and c_f > (l_f + rng_f * 0.40)) or (c_c > o_c and c_f >= c_c)
+                min_bounce = max(0.25, spread * 1.5)
+                has_tick_bounce = (cur_price - min_low_5) >= min_bounce
+
+                if has_wick_rejection or is_bullish_turnaround or has_tick_bounce:
+                    reason = "Rút chân dưới" if has_wick_rejection else ("Nến xanh đảo chiều" if is_bullish_turnaround else f"Bật nảy +{cur_price - min_low_5:.2f}$ từ đáy")
+                    return True, f"Xác nhận lực đỡ ({reason})"
+
+                return False, f"Chưa có lực cầu đỡ giá (Đang cách đáy chỉ {cur_price - min_low_5:.2f}$)"
+
+            else:  # SELL
+                upper_wick_f = h_f - max(o_f, c_f)
+                upper_wick_c = h_c - max(o_c, c_c)
+
+                is_rocketing_forming = (c_f > o_f) and (body_f >= 0.70 * rng_f) and (upper_wick_f < 0.15 * rng_f) and (c_f >= h_f - 0.15 * rng_f)
+                is_rocketing_closed = (c_c > o_c) and (body_c >= 0.75 * rng_c) and (upper_wick_c < 0.15 * rng_c) and (c_f > c_c)
+
+                if is_rocketing_forming or is_rocketing_closed:
+                    return False, f"Nến {scalp_tf} đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+
+                has_wick_rejection = (upper_wick_f >= 0.25 * rng_f and upper_wick_f >= spread * 1.5) or (upper_wick_c >= 0.35 * rng_c)
+                is_bearish_turnaround = (c_f < o_f and c_f < (h_f - rng_f * 0.40)) or (c_c < o_c and c_f <= c_c)
+                min_drop = max(0.25, spread * 1.5)
+                has_tick_drop = (max_high_5 - cur_price) >= min_drop
+
+                if has_wick_rejection or is_bearish_turnaround or has_tick_drop:
+                    reason = "Rút râu trên" if has_wick_rejection else ("Nến đỏ đảo chiều" if is_bearish_turnaround else f"Giảm -{max_high_5 - cur_price:.2f}$ từ đỉnh")
+                    return True, f"Xác nhận lực xả ({reason})"
+
+                return False, f"Chưa có lực cung đạp giá (Đang cách đỉnh chỉ {max_high_5 - cur_price:.2f}$)"
+
+        except Exception as e:
+            return True, f"Lỗi PA check ({e}) -> Cho phép theo mặc định"
+
     def _check_pending_pullback_order(self, symbol: str, tick, profile_key: str = None):
         """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa thì khớp lệnh ngay khi đạt (Có khóa chống đúp lệnh)."""
         pk = profile_key or self.active_profile_key
@@ -7675,6 +7776,18 @@ class KronosDesktopApp:
                 if pk == self.active_profile_key:
                     self.pending_pullback_order = None
                 return
+
+            # 3. KIỂM TRA XÁC NHẬN LỰC NẾN PRICE ACTION (CHỐNG BẮT DAO RƠI):
+            confirm_pa_on = bool(cfg.get("confirm_entry_pa", True))
+            scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+            if confirm_pa_on:
+                is_confirmed, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf)
+                if not is_confirmed:
+                    now_ts_pa = time.time()
+                    if (now_ts_pa - getattr(self, f"_last_pa_log_ts_{pk}", 0)) >= 10.0:
+                        setattr(self, f"_last_pa_log_ts_{pk}", now_ts_pa)
+                        self.log(f"⏳ [{pk} - Canh Vùng {action}] Giá ({cur_price:.2f}) đã vào vùng khớp nhưng đang chờ xác nhận Price Action: {pa_msg}")
+                    return
 
             # Thu hồi nguyên tử (Atomic Pop) pending_pullback_order TRƯỚC khi gửi lệnh để tuyệt đối không vào đúp 2 lệnh
             ctx["pending_pullback_order"] = None
@@ -8511,15 +8624,36 @@ class KronosDesktopApp:
         }
         try:
             closes = df_ana["close"].astype(float).values
-            if len(closes) >= 50:
+            if len(closes) >= 35:
                 s_close = pd.Series(closes)
-                ema_fast = float(s_close.ewm(span=34, adjust=False).mean().iloc[-1])
-                ema_slow = float(s_close.ewm(span=89, adjust=False).mean().iloc[-1])
+                span_f = min(34, len(closes) // 2)
+                span_s = min(89, len(closes) - 1)
+                ema_fast = float(s_close.ewm(span=span_f, adjust=False).mean().iloc[-1])
+                ema_slow = float(s_close.ewm(span=span_s, adjust=False).mean().iloc[-1])
                 ema_gap = (ema_fast - ema_slow) / max(atr, 1e-5)
-                if ema_gap >= 0.25 and closes[-1] >= ema_fast:
+                cur_ana_c = closes[-1]
+
+                # Xu hướng khung phân tích chính (Analysis TF):
+                if (ema_gap >= 0.15 and cur_ana_c >= ema_fast) or (cur_ana_c > ema_fast > ema_slow):
                     ctx_info["macro_dir"] = 1
-                elif ema_gap <= -0.25 and closes[-1] <= ema_fast:
+                elif (ema_gap <= -0.15 and cur_ana_c <= ema_fast) or (cur_ana_c < ema_fast < ema_slow):
                     ctx_info["macro_dir"] = -1
+
+            # Phân tích thêm xu hướng đa khung trên Khung Scalping (M1/M5) để bắt kịp tốc độ thị trường
+            if df_scalp is not None and len(df_scalp) >= 25:
+                sc_closes = pd.Series(df_scalp["close"].astype(float).values)
+                sc_ema21 = float(sc_closes.ewm(span=21, adjust=False).mean().iloc[-1])
+                sc_ema50 = float(sc_closes.ewm(span=50, adjust=False).mean().iloc[-1])
+                sc_cur = sc_closes.iloc[-1]
+
+                if sc_cur < sc_ema21 and sc_ema21 <= sc_ema50:
+                    # Khung Scalp dốc xuống mạnh -> Khóa xu hướng Giảm (nếu M15 đang giảm hoặc đi ngang)
+                    if ctx_info["macro_dir"] <= 0:
+                        ctx_info["macro_dir"] = -1
+                elif sc_cur > sc_ema21 and sc_ema21 >= sc_ema50:
+                    # Khung Scalp dốc lên mạnh -> Khóa xu hướng Tăng (nếu M15 đang tăng hoặc đi ngang)
+                    if ctx_info["macro_dir"] >= 0:
+                        ctx_info["macro_dir"] = 1
 
             ref_df = df_scalp if (df_scalp is not None and len(df_scalp) >= 12) else df_ana
             recent = ref_df.iloc[-12:]
@@ -9655,6 +9789,9 @@ class KronosDesktopApp:
                 ai_tp_dist_up = max(ai_pred_high - last_close, abs(expected_move), tols["min_tp_floor"])
                 ai_tp_dist_down = max(last_close - ai_pred_low, abs(expected_move), tols["min_tp_floor"])
 
+                trend_filter_on = bool(cfg.get("trend_filter", True))
+                macro_dir = macro_ctx.get("macro_dir", 0)
+
                 action = None
                 sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                 ref_tag = ""
@@ -9663,6 +9800,15 @@ class KronosDesktopApp:
                         action = None
                         sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
+                    elif trend_filter_on and macro_dir == -1:
+                        action = None
+                        sig_color = "#ff9800"  # Cảnh báo vàng cam: chặn ngược trend
+                        sig_title = f"🛡️ [{pk} - {symbol}] ĐỨNG NGOÀI (CHẶN BẮT ĐÁY NGƯỢC TREND) — AI báo BUY ({bull_pct:.0f}%) nhưng Xu Hướng đang GIẢM (M15/M5 EMA Dốc Xuống). Bảo toàn vốn!"
+                        self.log(
+                            f"🛡️ [{pk} - Chặn Bắt Đáy Ngược Trend] Kịch bản AI có đồng thuận BUY ({bull_pct:.0f}%, {bull_count}/{total}), "
+                            f"nhưng Xu hướng EMA M15/M5 đang GIẢM MẠNH ({macro_ctx.get('summary_tag', 'Trend:Giảm')}). "
+                            f"Trend Filter đã CHẶN mở lệnh BUY để bảo toàn vốn!"
+                        )
                     else:
                         action = "BUY"
                         sig_color = GREEN_UP
@@ -9681,6 +9827,15 @@ class KronosDesktopApp:
                         action = None
                         sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
+                    elif trend_filter_on and macro_dir == 1:
+                        action = None
+                        sig_color = "#ff9800"  # Cảnh báo vàng cam: chặn ngược trend
+                        sig_title = f"🛡️ [{pk} - {symbol}] ĐỨNG NGOÀI (CHẶN BẮT ĐỈNH NGƯỢC TREND) — AI báo SELL ({bear_pct:.0f}%) nhưng Xu Hướng đang TĂNG (M15/M5 EMA Dốc Lên). Bảo toàn vốn!"
+                        self.log(
+                            f"🛡️ [{pk} - Chặn Bắt Đỉnh Ngược Trend] Kịch bản AI có đồng thuận SELL ({bear_pct:.0f}%, {bear_count}/{total}), "
+                            f"nhưng Xu hướng EMA M15/M5 đang TĂNG MẠNH ({macro_ctx.get('summary_tag', 'Trend:Tăng')}). "
+                            f"Trend Filter đã CHẶN mở lệnh SELL để bảo toàn vốn!"
+                        )
                     else:
                         action = "SELL"
                         sig_color = RED_DOWN
@@ -9854,20 +10009,30 @@ class KronosDesktopApp:
                         trade_msg = f"🛡️ Đã vào lệnh trên nến {last_time} — Python tiếp tục canh vùng {action} cho nến {scalp_tf} kế tiếp"
                         self.log(f"🛡️ [{pk}] Đã mở lệnh trên cây nến {last_time}, giữ vùng canh giá {action} cho cây nến {scalp_tf} tiếp theo.")
                     elif is_auto_on:
-                        # Giá hiện tại đã nằm ngay trong vùng Entry hợp lệ (SL <= Max SL & RR >= 2R) -> Khớp lệnh ngay và duy trì canh vùng nếu còn hạn mức max_pos
-                        if sl_tightened_for_2r and dist_tp < 2.0 * cur_sl_dist:
-                            min_tp_dist = round(cur_sl_dist * 2.0, 2)
-                            tp_price = round(entry_ref + min_tp_dist, 2) if action == "BUY" else round(entry_ref - min_tp_dist, 2)
-                            dist_tp = min_tp_dist
-                            zone_watch_order["target_tp_price"] = tp_price
-                        ctx["pending_pullback_order"] = None
-                        ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
-                        if ok_ord:
-                            self._last_order_candle_ts[pk] = last_time
-                        # Duy trì vùng canh giá trong suốt chu kỳ AI (VD: 5 phút M5) để nếu có nhịp hồi tiếp theo (và thỏa mãn Risk-Free/DCA + qua nến M1 mới) thì Python tự xử lý mà không cần gọi lại AI
-                        ctx["pending_pullback_order"] = zone_watch_order
-                        trade_msg = ord_msg
-                        self.log(ord_msg)
+                        confirm_pa_on = bool(cfg.get("confirm_entry_pa", True))
+                        pa_ok = True
+                        pa_msg = ""
+                        if confirm_pa_on:
+                            pa_ok, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf)
+                        if not pa_ok:
+                            ctx["pending_pullback_order"] = zone_watch_order
+                            trade_msg = f"⏳ Giá trong vùng {action} ({last_close:.2f}) -> Đang chờ xác nhận Price Action ({pa_msg})"
+                            self.log(f"⏳ [{pk} - Chờ Xác Nhận PA] Giá đã trong vùng {action} nhưng {pa_msg} -> Chuyển sang Vùng Canh Giá để chờ lực đỡ/lực xả an toàn!")
+                        else:
+                            # Giá hiện tại đã nằm ngay trong vùng Entry hợp lệ (SL <= Max SL & RR >= 2R) và có xác nhận PA -> Khớp lệnh ngay
+                            if sl_tightened_for_2r and dist_tp < 2.0 * cur_sl_dist:
+                                min_tp_dist = round(cur_sl_dist * 2.0, 2)
+                                tp_price = round(entry_ref + min_tp_dist, 2) if action == "BUY" else round(entry_ref - min_tp_dist, 2)
+                                dist_tp = min_tp_dist
+                                zone_watch_order["target_tp_price"] = tp_price
+                            ctx["pending_pullback_order"] = None
+                            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk)
+                            if ok_ord:
+                                self._last_order_candle_ts[pk] = last_time
+                            # Duy trì vùng canh giá trong suốt chu kỳ AI (VD: 5 phút M5) để nếu có nhịp hồi tiếp theo (và thỏa mãn Risk-Free/DCA + qua nến M1 mới) thì Python tự xử lý mà không cần gọi lại AI
+                            ctx["pending_pullback_order"] = zone_watch_order
+                            trade_msg = ord_msg
+                            self.log(ord_msg)
                     else:
                         ctx["pending_pullback_order"] = zone_watch_order
                         self.log(f"[{pk}] Có vùng tín hiệu {action} {symbol} @ {limit_entry_price:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Python tự canh giá vào lệnh.")

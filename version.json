@@ -1,6 +1,6 @@
 {
-  "version": "1.3.3",
+  "version": "1.3.4",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-12",
-  "description": "Phiên bản v1.3.3:\n- Tối ưu tính năng 'Soi Nến Khớp Lệnh & Hậu Kiểm Trực Quan': Tự động thích ứng trục giá Y (ylim) ôm trọn nến lịch sử quanh điểm vào lệnh và các mức giá Entry/Exit/SL/TP, loại bỏ hoàn toàn hiện tượng nến bị kéo lệch theo giá live hoặc bị đẩy khỏi tầm nhìn.\n- Bỏ toàn bộ các khung chú thích to che khuất nến: Thân & râu nến khớp lệnh tô màu vàng nổi bật, nến đóng lệnh đánh dấu x gọn gàng giúp quan sát hành vi giá trực quan và thông thoáng.\n- Nét vẽ đường Entry, SL, TP, Exit thanh mảnh, nhãn giá nền tối tiệp màu biểu đồ, không đè lấp chữ hay nến."
+  "description": "Phiên bản v1.3.4:\n- [NÂNG CẤP LỚN] Bộ Lọc Thuận Xu Hướng Đa Khung (Trend Filter M15/M5/M1): Chặn 100% tình trạng 'bắt đáy cản tàu' khi thị trường sập giá sâu (Downtrend) hoặc 'bắt đỉnh cản tàu' khi thị trường bay dốc đứng. Tự động đồng bộ đường xu hướng EMA34/89 và EMA21/50, bảo toàn vốn tối đa.\n- [LỚP BẢO VỆ 2] Xác Nhận Lực Nến Price Action (Chống bắt dao rơi): Khi giá rơi vào Vùng Canh Giá, bot tự động quan sát lực nến Scalping (M1/M5). Tuyệt đối KHÔNG khớp lệnh khi nến đang cắm đầu rơi tự do (thân đỏ đặc Marubozu); CHỈ khớp lệnh khi xuất hiện lực hấp thụ (rút chân dưới, nến xanh đảo chiều, hoặc bật nảy từ đáy).\n- Đồng bộ hoàn chỉnh trong Menu Cài Đặt Mục 2: Cho phép người dùng tùy chọn Bật/Tắt Lọc thuận xu hướng EMA & Xác nhận Price Action."
 }
