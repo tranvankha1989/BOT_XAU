@@ -1,6 +1,6 @@
 {
-  "version": "1.3.2",
+  "version": "1.3.3",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-12",
-  "description": "Phiên bản v1.3.2:\n- Tính năng 'Soi Nến Khớp Lệnh & Hậu Kiểm Trực Quan': Bấm vào lệnh đã đóng trên bảng trạng thái hoặc nháy đúp lệnh trong Tab Lịch Sử để tự động focus và tô vàng nổi bật cây nến khớp lệnh trên biểu đồ.\n- Hiển thị đầy đủ các đường mức giá trực quan: Điểm vào lệnh (Entry), Cắt lỗ (SL), Chốt lời (TP) và Giá đóng lệnh (Exit) cùng nhãn giá và dấu mốc thời điểm thoát lệnh (Win/Loss).\n- Tự động tải nến lịch sử sâu (lên tới 1.500 nến) giúp soi lại chính xác vị trí nến của các lệnh đã đóng trong quá khứ."
+  "description": "Phiên bản v1.3.3:\n- Tối ưu tính năng 'Soi Nến Khớp Lệnh & Hậu Kiểm Trực Quan': Tự động thích ứng trục giá Y (ylim) ôm trọn nến lịch sử quanh điểm vào lệnh và các mức giá Entry/Exit/SL/TP, loại bỏ hoàn toàn hiện tượng nến bị kéo lệch theo giá live hoặc bị đẩy khỏi tầm nhìn.\n- Bỏ toàn bộ các khung chú thích to che khuất nến: Thân & râu nến khớp lệnh tô màu vàng nổi bật, nến đóng lệnh đánh dấu x gọn gàng giúp quan sát hành vi giá trực quan và thông thoáng.\n- Nét vẽ đường Entry, SL, TP, Exit thanh mảnh, nhãn giá nền tối tiệp màu biểu đồ, không đè lấp chữ hay nến."
 }
