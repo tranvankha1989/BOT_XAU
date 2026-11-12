@@ -11,6 +11,7 @@ if sys.stderr is None:
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 import json
+import re
 import math
 import time
 import queue
@@ -260,6 +261,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khi bật, hệ thống yêu cầu điểm tin cậy tổng hợp của AI (Confidence %, bao gồm đồng thuận AI, độ phân tán kịch bản và cộng điểm ngữ cảnh Macro/OrderFlow/Wick) phải đạt từ ngưỡng Consensus trở lên mới cho phép vào lệnh thay vì chỉ xét đồng thuận kịch bản thuần.",
         "how_to_set": "- TẮT (False - Mặc định): Vào lệnh dựa trên tỷ lệ đồng thuận kịch bản AI (Bull/Bear %).\n- BẬT (True): Chế độ siêu chọn lọc, chỉ vào lệnh khi cả kịch bản AI và các tầng ngữ cảnh (Macro/Order-Flow/Râu nến) cùng đồng thuận cao."
     },
+    "blocked_trading_windows": {
+        "title": "Khung giờ cấm giao dịch (Blocked Trading Windows - UTC+7)",
+        "what_is_it": "Danh sách các khung giờ cấm bot quét tín hiệu và cấm mở lệnh mới (nhằm né tin tức mạnh như CPI, Non-Farm, FOMC, hoặc giờ giao phiên).\nĐịnh dạng:\n- Theo ngày cụ thể: 'YYYY-MM-DD HH:MM-HH:MM' (VD: '2026-11-12 19:25-20:00')\n- Lặp lại hàng tuần: 'THU 19:25-20:00' (hoặc T2..T7, CN, MON..SUN)\n- Lặp lại hàng ngày: 'HH:MM-HH:MM' (VD: '04:00-06:00')\n- Nhiều khung giờ phân tách nhau bằng dấu phẩy ',' hoặc chấm phẩy ';'.\n- Khi đến giờ cấm: Bot hủy vùng đang canh, không mở zone mới nhưng KHÔNG đụng đến các lệnh đã mở.",
+        "how_to_set": "- Nhập ví dụ: 'THU 19:25-20:30, FRI 19:25-21:00' để né tin tức tối thứ 5 và thứ 6.\n- Để trống: Tắt bộ lọc (giao dịch bình thường 24/5)."
+    },
 
     # ─── MỤC 3: QUẢN LÝ LỆNH & CHỐT LỜI ───
     "auto_be": {
@@ -450,6 +456,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "expected_move_k": "3",
         "use_confidence_gate": False,
         "structure_conflict_mode": "neutral",
+        "blocked_trading_windows": "",
         "auto_be": True,
         "be_trigger_r": "1.0",
         "auto_trail": True,
@@ -508,6 +515,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "expected_move_k": "3",
         "use_confidence_gate": False,
         "structure_conflict_mode": "neutral",
+        "blocked_trading_windows": "",
         "auto_be": True,
         "be_trigger_r": "1.0",
         "auto_trail": True,
@@ -806,6 +814,85 @@ class DatePickerDialog:
         if self.on_date_selected:
             self.on_date_selected(date_str)
         self.dialog.destroy()
+
+
+def is_trading_window_blocked(now_utc7=None, cfg: dict = None) -> tuple:
+    """
+    Kiểm tra xem thời điểm hiện tại (múi giờ UTC+7) có nằm trong danh sách khung giờ cấm giao dịch không.
+    Hỗ trợ các định dạng:
+    - Cố định theo ngày: 'YYYY-MM-DD HH:MM-HH:MM' (VD: '2026-11-12 19:25-20:00')
+    - Lặp hàng tuần: 'THU 19:25-20:00' (hoặc T2..T7, CN, MON..SUN)
+    - Lặp hàng ngày: 'HH:MM-HH:MM' (VD: '04:00-06:00')
+    Nhiều khung giờ phân tách nhau bằng dấu phẩy ',', chấm phẩy ';' hoặc xuống dòng.
+    Trả về: (is_blocked: bool, reason: str)
+    """
+    if not cfg or not isinstance(cfg, dict):
+        return False, ""
+    raw_val = str(cfg.get("blocked_trading_windows", "")).strip()
+    if not raw_val:
+        return False, ""
+
+    tz_utc7 = timezone(timedelta(hours=7))
+    if now_utc7 is None:
+        now_dt = datetime.now(tz_utc7)
+    elif isinstance(now_utc7, datetime):
+        if now_utc7.tzinfo is None:
+            now_dt = now_utc7.replace(tzinfo=tz_utc7)
+        else:
+            now_dt = now_utc7.astimezone(tz_utc7)
+    else:
+        now_dt = datetime.now(tz_utc7)
+
+    day_map = {
+        "MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6,
+        "T2": 0, "T3": 1, "T4": 2, "T5": 3, "T6": 4, "T7": 5, "CN": 6,
+    }
+
+    items = [x.strip() for x in re.split(r"[,;\n]+", raw_val) if x.strip()]
+    now_hm = now_dt.strftime("%H:%M")
+    now_weekday = now_dt.weekday()
+
+    for item in items:
+        try:
+            # 1. Định dạng cố định theo ngày: YYYY-MM-DD HH:MM-HH:MM
+            m_date = re.match(r"^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
+            if m_date:
+                d_str, t_start, t_end = m_date.groups()
+                dt_start = datetime.strptime(f"{d_str} {t_start}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_utc7)
+                dt_end = datetime.strptime(f"{d_str} {t_end}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_utc7)
+                if dt_start <= now_dt <= dt_end:
+                    return True, f"Khung giờ cấm giao dịch: {item} (UTC+7)"
+                continue
+
+            # 2. Định dạng lặp hàng tuần: THU 19:25-20:00
+            m_week = re.match(r"^([A-Za-z0-9]{2,3})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
+            if m_week:
+                d_code, t_start, t_end = m_week.groups()
+                d_target = day_map.get(d_code.upper())
+                if d_target is not None and now_weekday == d_target:
+                    if t_start <= t_end:
+                        if t_start <= now_hm <= t_end:
+                            return True, f"Khung giờ cấm lặp hàng tuần: {item} (UTC+7)"
+                    else:
+                        if now_hm >= t_start or now_hm <= t_end:
+                            return True, f"Khung giờ cấm lặp hàng tuần: {item} (UTC+7)"
+                continue
+
+            # 3. Định dạng lặp hàng ngày: HH:MM-HH:MM
+            m_daily = re.match(r"^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
+            if m_daily:
+                t_start, t_end = m_daily.groups()
+                if t_start <= t_end:
+                    if t_start <= now_hm <= t_end:
+                        return True, f"Khung giờ cấm hàng ngày: {item} (UTC+7)"
+                else:
+                    if now_hm >= t_start or now_hm <= t_end:
+                        return True, f"Khung giờ cấm hàng ngày: {item} (UTC+7)"
+                continue
+        except Exception:
+            continue
+
+    return False, ""
 
 
 class KronosDesktopApp:
@@ -2375,6 +2462,9 @@ class KronosDesktopApp:
         )
         self.use_confidence_gate_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
+        self.blocked_trading_windows_var = self._add_labeled_entry(
+            sec2.content, "Khung giờ cấm (UTC+7, phẩy ngăn):", "", help_key="blocked_trading_windows"
+        )
 
         tk.Button(
             sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc Entry & Nhồi lệnh)", bg="#161e2e", fg="#94a3b8",
@@ -4928,6 +5018,7 @@ class KronosDesktopApp:
             "pa_min_confirmations": self.pa_min_confirmations_var,
             "structure_conflict_mode": self.structure_conflict_mode_var,
             "use_confidence_gate": self.use_confidence_gate_var,
+            "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
             "auto_trail": self.auto_trail_var,
@@ -5383,7 +5474,7 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
@@ -7901,6 +7992,17 @@ class KronosDesktopApp:
             return
 
         cfg = self._get_profile_cfg(pk)
+        is_win_blocked, win_block_reason = is_trading_window_blocked(cfg=cfg)
+        if is_win_blocked:
+            ctx["pending_pullback_order"] = None
+            if pk == self.active_profile_key:
+                self.pending_pullback_order = None
+            now_ts = time.time()
+            if (now_ts - getattr(self, f"_last_win_block_log_ts_{pk}", 0)) >= 30.0:
+                setattr(self, f"_last_win_block_log_ts_{pk}", now_ts)
+                self.log(f"⏸️ [{pk} - Hủy Vùng Canh Giá] {win_block_reason} -> Hủy canh lệnh, không vào lệnh mới.")
+            return
+
         try:
             max_sl_price = max(float(cfg.get("max_sl_price", 5.0)), 0.0)
             max_spread = float(cfg.get("max_spread", 0.35))
@@ -9834,6 +9936,21 @@ class KronosDesktopApp:
                 cfg = dict(self._get_profile_cfg(pk))
                 ctx = self.profile_ctx[pk]
                 ctx["_last_ai_scan_config_sig"] = self._get_ai_scan_config_sig(pk)
+
+                # Kiểm tra Khung giờ cấm giao dịch (Trading Window Blocked - UTC+7): Không mở zone mới
+                is_win_blocked, win_block_reason = is_trading_window_blocked(cfg=cfg)
+                if is_win_blocked:
+                    ctx["pending_pullback_order"] = None
+                    if pk == self.active_profile_key:
+                        self.pending_pullback_order = None
+                    self.log(f"⏸️ [{pk}] {win_block_reason} -> Tạm dừng phân tích, không mở zone mới.")
+                    ctx["_sig_title"] = f"⚪ [{pk}] ĐỨNG NGOÀI (GIỜ CẤM GIAO DỊCH) — {win_block_reason}"
+                    ctx["_sig_color"] = "#ffffff"
+                    if pk == self.active_profile_key:
+                        self._sig_title = ctx["_sig_title"]
+                        self._sig_color = ctx["_sig_color"]
+                        self._update_bot_status_bar(pk)
+                    return
                 default_sym = DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "XAUUSDm")
                 symbol = str(cfg.get("symbol", default_sym)).strip() or default_sym
                 scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
