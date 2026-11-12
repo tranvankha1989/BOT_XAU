@@ -255,6 +255,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
         "how_to_set": "- neutral (Khuyên dùng - Mặc định): Trả về Trung Lập để bảo toàn vốn, không chặn oan và không vào lệnh rủi ro.\n- scalp: Ưu tiên khung M5.\n- analysis: Ưu tiên khung M15."
     },
+    "use_confidence_gate": {
+        "title": "Cổng độ tin cậy AI (AI Confidence Gate)",
+        "what_is_it": "Khi bật, hệ thống yêu cầu điểm tin cậy tổng hợp của AI (Confidence %, bao gồm đồng thuận AI, độ phân tán kịch bản và cộng điểm ngữ cảnh Macro/OrderFlow/Wick) phải đạt từ ngưỡng Consensus trở lên mới cho phép vào lệnh thay vì chỉ xét đồng thuận kịch bản thuần.",
+        "how_to_set": "- TẮT (False - Mặc định): Vào lệnh dựa trên tỷ lệ đồng thuận kịch bản AI (Bull/Bear %).\n- BẬT (True): Chế độ siêu chọn lọc, chỉ vào lệnh khi cả kịch bản AI và các tầng ngữ cảnh (Macro/Order-Flow/Râu nến) cùng đồng thuận cao."
+    },
 
     # ─── MỤC 3: QUẢN LÝ LỆNH & CHỐT LỜI ───
     "auto_be": {
@@ -301,6 +306,11 @@ PARAM_HELP_GUIDE = {
         "title": "Giá lãi nhỏ cộng thêm vào Entry (BE+)",
         "what_is_it": "Khoảng giá cộng thêm vào điểm Entry khi dời SL hoặc dời TP về hòa vốn (Break-Even Plus), nhằm bù đắp chi phí hoa hồng (Commission) và trượt giá sàn, giúp lệnh khi thoát vẫn có một chút tiền lãi xanh nhẹ.",
         "how_to_set": "- Vàng XAUUSD: Đặt 0.2$ đến 0.3$ (2 - 3 pip).\n- Đảm bảo thoát lệnh hòa vốn mà không bị âm tiền phí sàn."
+    },
+    "rev_loss_mode": {
+        "title": "Chế độ xử lý lệnh đang lỗ khi AI đảo chiều (Reverse Loss Mode)",
+        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'wait_be' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'close_if_strong': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'tighten_sl': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
+        "how_to_set": "- 'wait_be' (Mặc định - An toàn theo sóng hồi).\n- 'close_if_strong' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'tighten_sl' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
     },
     "basket_tp_usd": {
         "title": "Chốt lời chùm lệnh tổng (Basket TP USD)",
@@ -438,6 +448,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "pa_fail_open": False,
         "pa_min_confirmations": "1",
         "expected_move_k": "3",
+        "use_confidence_gate": False,
         "structure_conflict_mode": "neutral",
         "auto_be": True,
         "be_trigger_r": "1.0",
@@ -448,6 +459,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rev_be_consensus": "90",
         "rev_min_move": "0",
         "be_plus_price": "0.2",
+        "rev_loss_mode": "wait_be",
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
         "max_hold_mins": "0",
@@ -494,6 +506,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "pa_fail_open": False,
         "pa_min_confirmations": "1",
         "expected_move_k": "3",
+        "use_confidence_gate": False,
         "structure_conflict_mode": "neutral",
         "auto_be": True,
         "be_trigger_r": "1.0",
@@ -504,6 +517,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rev_be_consensus": "90",
         "rev_min_move": "0",
         "be_plus_price": "5.0",
+        "rev_loss_mode": "wait_be",
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
         "max_hold_mins": "0",
@@ -2359,6 +2373,8 @@ class KronosDesktopApp:
             "neutral",
             help_key="structure_conflict_mode"
         )
+        self.use_confidence_gate_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
 
         tk.Button(
             sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc Entry & Nhồi lệnh)", bg="#161e2e", fg="#94a3b8",
@@ -2387,6 +2403,12 @@ class KronosDesktopApp:
         self.rev_be_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh đã BE (0=Tắt, %):", "90", help_key="rev_be_consensus")
         self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0", help_key="rev_min_move")
         self.be_plus_price_var = self._add_labeled_entry(sec3.content, "   + Giá lãi nhỏ vào Entry (Giá):", "0.2", help_key="be_plus_price")
+        self.rev_loss_mode_var = self._add_labeled_combo(
+            sec3.content, "   Chế độ xử lý lệnh đang lỗ:",
+            ["wait_be", "close_if_strong", "tighten_sl"],
+            "wait_be",
+            help_key="rev_loss_mode"
+        )
 
         # Phân nhóm: Chốt lời chùm lệnh & Thời gian giữ lệnh
         tk.Label(
@@ -3890,8 +3912,25 @@ class KronosDesktopApp:
             min_effective_move = max(min_move, k_factor * (spread_est + slippage_est))
 
             base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
+
+            dir_pct = max(b_pct, s_pct)
+            disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
+            base_conf = dir_pct * (1.0 - disp_penalty)
+            ai_dom_dir = 1 if b_pct > s_pct else (-1 if s_pct > b_pct else (1 if avg_end_close >= last_c else -1))
+            ctx_bonus = 0.0
+            if macro_ctx.get("macro_dir", 0) != 0:
+                ctx_bonus += 4.0 if macro_ctx.get("macro_dir", 0) == ai_dom_dir else -3.5
+            if macro_ctx.get("orderflow_dir", 0) != 0:
+                ctx_bonus += 3.5 if macro_ctx.get("orderflow_dir", 0) == ai_dom_dir else -2.5
+            if macro_ctx.get("wick_dir", 0) == ai_dom_dir:
+                ctx_bonus += 3.5
+            confidence_pct = max(10.0, min(99.0, base_conf + ctx_bonus))
+            use_confidence_gate = bool(cfg.get("use_confidence_gate", False))
+            is_bull_consensus = (confidence_pct >= min_consensus and b_pct > s_pct) if use_confidence_gate else (b_pct >= min_consensus)
+            is_bear_consensus = (confidence_pct >= min_consensus and s_pct > b_pct) if use_confidence_gate else (s_pct >= min_consensus)
+
             sig_dir = None
-            if b_pct >= min_consensus and exp_m >= min_effective_move:
+            if is_bull_consensus and exp_m >= min_effective_move:
                 # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn BUY nếu Cấu trúc đang Giảm (-1)
                 if bt_use_live_structure and trend_filter_on and macro_dir == -1:
                     sig_dir = None
@@ -3899,7 +3938,7 @@ class KronosDesktopApp:
                     sig_dir = "BUY"
                     raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
                     sl_p = last_c - raw_sl_d
-            elif s_pct >= min_consensus and (-exp_m) >= min_effective_move:
+            elif is_bear_consensus and (-exp_m) >= min_effective_move:
                 # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn SELL nếu Cấu trúc đang Tăng (+1)
                 if bt_use_live_structure and trend_filter_on and macro_dir == 1:
                     sig_dir = None
@@ -4888,6 +4927,7 @@ class KronosDesktopApp:
             "pa_fail_open": self.pa_fail_open_var,
             "pa_min_confirmations": self.pa_min_confirmations_var,
             "structure_conflict_mode": self.structure_conflict_mode_var,
+            "use_confidence_gate": self.use_confidence_gate_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
             "auto_trail": self.auto_trail_var,
@@ -4897,6 +4937,7 @@ class KronosDesktopApp:
             "rev_be_consensus": self.rev_be_consensus_var,
             "rev_min_move": self.rev_min_move_var,
             "be_plus_price": self.be_plus_price_var,
+            "rev_loss_mode": self.rev_loss_mode_var,
             "basket_tp_usd": self.basket_tp_usd_var,
             "basket_cooldown_mins": self.basket_cooldown_mins_var,
             "max_hold_mins": self.max_hold_mins_var,
@@ -5342,8 +5383,8 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate"]),
+            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
         }
@@ -10040,10 +10081,15 @@ class KronosDesktopApp:
                     expected_move_k = 3.0
                 min_effective_move = max(min_move, expected_move_k * (spread_usd + slippage_est))
 
+                use_confidence_gate = bool(cfg.get("use_confidence_gate", False))
+                # Khi bật use_confidence_gate: yêu cầu confidence_pct >= min_consensus thay vì chỉ xét bull_pct / bear_pct
+                is_bull_consensus = (confidence_pct >= min_consensus and bull_pct > bear_pct) if use_confidence_gate else (bull_pct >= min_consensus)
+                is_bear_consensus = (confidence_pct >= min_consensus and bear_pct > bull_pct) if use_confidence_gate else (bear_pct >= min_consensus)
+
                 action = None
                 sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                 ref_tag = ""
-                if bull_pct >= min_consensus and expected_move >= min_effective_move:
+                if is_bull_consensus and expected_move >= min_effective_move:
                     if is_high_uncertainty:
                         action = None
                         sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
@@ -10071,7 +10117,7 @@ class KronosDesktopApp:
                         tp_price = round(eff_entry + (eff_entry - sl_price) * rr, 2)
                     else:
                         tp_price = round(max(ai_pred_high, eff_entry + ai_tp_dist_up), 2)
-                elif bear_pct >= min_consensus and (-expected_move) >= min_effective_move:
+                elif is_bear_consensus and (-expected_move) >= min_effective_move:
                     if is_high_uncertainty:
                         action = None
                         sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
@@ -10102,7 +10148,13 @@ class KronosDesktopApp:
                 else:
                     entry_ref = last_close
                     is_bear_bias = (bear_pct > bull_pct) or (bear_pct == bull_pct and expected_move < 0)
-                    if bull_pct >= min_consensus and expected_move >= min_move and expected_move < min_effective_move:
+                    if use_confidence_gate and (bull_pct > bear_pct and confidence_pct < min_consensus):
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (ĐỘ TIN CẬY AI THẤP) — Tin cậy {confidence_pct:.0f}% < {min_consensus:.0f}% (Đồng thuận: Tăng {bull_pct:.0f}%). Bảo toàn vốn!"
+                        self.log(f"🛡️ [{pk}] Chặn mở lệnh BUY: Độ tin cậy AI tổng hợp ({confidence_pct:.0f}%) chưa đạt ngưỡng tối thiểu ({min_consensus:.0f}%).")
+                    elif use_confidence_gate and (bear_pct > bull_pct and confidence_pct < min_consensus):
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (ĐỘ TIN CẬY AI THẤP) — Tin cậy {confidence_pct:.0f}% < {min_consensus:.0f}% (Đồng thuận: Giảm {bear_pct:.0f}%). Bảo toàn vốn!"
+                        self.log(f"🛡️ [{pk}] Chặn mở lệnh SELL: Độ tin cậy AI tổng hợp ({confidence_pct:.0f}%) chưa đạt ngưỡng tối thiểu ({min_consensus:.0f}%).")
+                    elif bull_pct >= min_consensus and expected_move >= min_move and expected_move < min_effective_move:
                         cost_barrier = expected_move_k * (spread_usd + slippage_est)
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BIÊN ĐỘ BÙ PHÍ THẤP) — AI dự báo +{expected_move:.2f}$ < ngưỡng an toàn ({min_effective_move:.2f}$ = {expected_move_k:g}x chi phí). Tránh rủi ro phí sàn!"
                         self.log(f"🛡️ [{pk}] Biên độ dự báo AI (+{expected_move:.2f}$) không đủ bù chi phí giao dịch (Cần ≥ {min_effective_move:.2f}$ = max(min_move={min_move:.2f}$, k={expected_move_k:g}*(spread={spread_usd:.2f}$+slip={slippage_est:.2f}$))).")
@@ -10182,22 +10234,57 @@ class KronosDesktopApp:
                                 self.pending_be_exit_tickets.discard(pos.ticket)
                                 self.log(f"🔄 [{pk} - Quy tắc 1 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Lệnh #{pos.ticket} đang lãi -> {msg_c}")
                             else:
-                                # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$) -> Chờ hồi về Entry + khoản lãi nhỏ (be_plus_price) để thoát có lãi nhẹ
-                                has_losing_opposite_pos = True
-                                be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
-                                be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
-                                self.pending_be_exit_tickets.add(pos.ticket)
-                                if abs(pos.tp - be_target_price) >= eps_eq:
-                                    if self._modify_position_sltp(pos, pos.sl, be_target_price):
-                                        self.log(
-                                            f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
-                                            f"đã kéo điểm thoát về {be_label_tag} ({be_target_price:.2f}) chờ hồi thoát có lãi nhẹ!"
-                                        )
+                                # QUY TẮC 2 & 3: Lệnh ngược chiều đang ÂM (<= 0$)
+                                rev_loss_mode = str(cfg.get("rev_loss_mode", "wait_be")).strip().lower()
+                                opp_dir = -1 if is_buy_pos else 1
+                                is_opp_choch = (macro_ctx.get("break_type") == "CHOCH" and macro_ctx.get("macro_dir") == opp_dir)
+
+                                if rev_loss_mode == "close_if_strong" and opp_pct >= rev_be_consensus and is_opp_choch:
+                                    ok_c, msg_c = self._close_single_pos(pos)
+                                    self.pending_be_exit_tickets.discard(pos.ticket)
+                                    self.log(
+                                        f"✂️ [{pk} - Cắt Lỗ Chủ Động (close_if_strong)] Lệnh #{pos.ticket} ({pos.profit:+.2f}$) gặp đảo chiều mạnh "
+                                        f"(Đồng thuận {opp_pct:.0f}% ≥ {rev_be_consensus:g}% + CHoCH {opp_action}) -> {msg_c}"
+                                    )
+                                elif rev_loss_mode == "tighten_sl":
+                                    has_losing_opposite_pos = True
+                                    cur_p = (tick.bid if is_buy_pos else tick.ask) if tick else float(pos.price_current)
+                                    curr_sl = float(pos.sl) if pos.sl > 0 else (pos.price_open - (atr * sl_atr) if is_buy_pos else pos.price_open + (atr * sl_atr))
+                                    cur_sl_dist = abs(cur_p - curr_sl)
+                                    min_step = tols.get("trail_step", 0.40)
+                                    new_sl = round(cur_p - (cur_sl_dist * 0.5), digits) if is_buy_pos else round(cur_p + (cur_sl_dist * 0.5), digits)
+                                    # Đảm bảo new_sl siết chặt hơn SL cũ
+                                    is_tighter = (new_sl > curr_sl) if is_buy_pos else (new_sl < curr_sl)
+                                    be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
+                                    be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
+                                    self.pending_be_exit_tickets.add(pos.ticket)
+                                    if is_tighter and abs(new_sl - curr_sl) >= min_step:
+                                        if self._modify_position_sltp(pos, new_sl, be_target_price):
+                                            self.log(
+                                                f"🛡️ [{pk} - Siết Cắt Lỗ 50% (tighten_sl)] Lệnh #{pos.ticket} ({pos.profit:+.2f}$) gặp đảo chiều {opp_action} ({rev_tag}) "
+                                                f"-> Đã kéo SL từ {curr_sl:.2f} về {new_sl:.2f} (giảm 50% rủi ro) & TP về {be_label_tag} ({be_target_price:.2f})!"
+                                            )
+                                        else:
+                                            self._modify_position_sltp(pos, pos.sl, be_target_price)
                                     else:
-                                        self.log(
-                                            f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
-                                            f"tự động thoát ngay khi giá hồi về {be_label_tag} ({be_target_price:.2f})!"
-                                        )
+                                        self._modify_position_sltp(pos, pos.sl, be_target_price)
+                                else:
+                                    # "wait_be" (mặc định, giữ như cũ): Chờ hồi về Entry + khoản lãi nhỏ (be_plus_price) để thoát có lãi nhẹ
+                                    has_losing_opposite_pos = True
+                                    be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
+                                    be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
+                                    self.pending_be_exit_tickets.add(pos.ticket)
+                                    if abs(pos.tp - be_target_price) >= eps_eq:
+                                        if self._modify_position_sltp(pos, pos.sl, be_target_price):
+                                            self.log(
+                                                f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Giữ lệnh #{pos.ticket} ({pos.profit:+.2f}$), "
+                                                f"đã kéo điểm thoát về {be_label_tag} ({be_target_price:.2f}) chờ hồi thoát có lãi nhẹ!"
+                                            )
+                                        else:
+                                            self.log(
+                                                f"⏳ [{pk} - Quy tắc 2 & 3 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Đã đánh dấu lệnh #{pos.ticket} ({pos.profit:+.2f}$) "
+                                                f"tự động thoát ngay khi giá hồi về {be_label_tag} ({be_target_price:.2f})!"
+                                            )
 
                 # KIỂM TRA ĐIỀU KIỆN KHOẢNG CÁCH TỐI ĐA SL & TỶ LỆ REWARD/RISK >= 2R
                 cur_sl_dist = abs(entry_ref - sl_price)
