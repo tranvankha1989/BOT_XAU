@@ -831,6 +831,7 @@ class KronosDesktopApp:
         self.saved_xlim = None
         self.saved_ylim = None
         self._selected_deal_ticket_focus = None
+        self._active_viewing_closed_deal = None
         self._closed_deals_by_ticket = {}
         self._drag_start_px = None
         self._drag_start_xlim = None
@@ -2980,9 +2981,11 @@ class KronosDesktopApp:
                     cd = self._get_closed_deal_info(t)
                     if cd is not None:
                         self._selected_deal_ticket_focus = t
+                        self.saved_ylim = None
                         break
             else:
                 self._selected_deal_ticket_focus = None
+                self._active_viewing_closed_deal = None
             sym = self.symbol_var.get().strip() or DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "BTCUSDm" if pk == "BTCUSD" else "XAUUSDm")
             tf = self.tf_var.get().strip() or "M1"
             self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
@@ -3191,6 +3194,7 @@ class KronosDesktopApp:
                             tree.see(item)
                             break
             self._selected_deal_ticket_focus = ticket
+            self.saved_ylim = None
             self._refresh_realtime_chart(force_full_redraw=True)
             self.show_toast("Soi Nến Khớp Lệnh", f"🔍 Đang xem lại nến khớp lệnh #{ticket} trên biểu đồ {target_pk}")
         except Exception as e:
@@ -6057,6 +6061,7 @@ class KronosDesktopApp:
         self.saved_xlim = None
         self.saved_ylim = None
         self._selected_deal_ticket_focus = None
+        self._active_viewing_closed_deal = None
         self._chart_visible_bars = 170
         pk = self.active_profile_key
         ana_tf = self.analysis_tf_var.get().strip()
@@ -6124,17 +6129,26 @@ class KronosDesktopApp:
         lows = [float(sub["low"].min())]
         highs = [float(sub["high"].max())]
 
-        # Luôn ôm cả giá đóng cửa Live và nến cuối cùng
-        last_row = hist.iloc[-1]
-        live_p = float(last_row["close"])
-        lows.append(live_p)
-        highs.append(live_p)
-        if x1 >= n_hist - 2:
+        # CHỈ ôm giá đóng cửa Live và nến cuối cùng khi vùng nhìn đang hiển thị phần đuôi live (x1 >= n_hist - 5)
+        if x1 >= n_hist - 5:
+            last_row = hist.iloc[-1]
+            live_p = float(last_row["close"])
+            lows.append(live_p)
+            highs.append(live_p)
             lows.append(float(last_row["low"]))
             highs.append(float(last_row["high"]))
 
-        # Nếu có đường Chờ giá hồi (pending pullback), ôm cả mức giá chờ vào lệnh
-        if getattr(self, "pending_pullback_order", None) is not None:
+        # Nếu đang soi nến của lệnh đã đóng, luôn ôm trọn các mức giá Entry/Exit/SL/TP của lệnh đó
+        sel_cd = getattr(self, "_active_viewing_closed_deal", None)
+        if sel_cd is not None:
+            for k_p in ("open_price", "close_price", "sl", "tp"):
+                v_p = float(sel_cd.get(k_p) or 0.0)
+                if v_p > 0:
+                    lows.append(v_p)
+                    highs.append(v_p)
+
+        # Nếu có đường Chờ giá hồi (pending pullback), ôm cả mức giá chờ vào lệnh (khi đang ở vùng live)
+        if getattr(self, "pending_pullback_order", None) is not None and x1 >= n_hist - 5:
             p = self.pending_pullback_order
             try:
                 max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
@@ -6144,8 +6158,8 @@ class KronosDesktopApp:
             lows.append(float(lim_entry))
             highs.append(float(lim_entry))
 
-        # Nếu bật lớp phủ Dự Báo AI, luôn ôm cả mức SL/TP đề xuất của AI và kịch bản dự báo (nếu có) trên mọi khung giờ
-        if getattr(self, "show_ai_chart_overlay", True) and x1 >= n_hist - 2:
+        # Nếu bật lớp phủ Dự Báo AI, luôn ôm cả mức SL/TP đề xuất của AI và kịch bản dự báo (chỉ khi ở vùng live x1 >= n_hist - 5)
+        if getattr(self, "show_ai_chart_overlay", True) and x1 >= n_hist - 5:
             if self._chart_mean_df is not None:
                 lows.append(float(self._chart_mean_df["low"].min()))
                 highs.append(float(self._chart_mean_df["high"].max()))
@@ -8867,16 +8881,19 @@ class KronosDesktopApp:
                     cur_y0, cur_y1 = self.ax.get_ylim()
                     span_y = max(cur_y1 - cur_y0, 1.0)
                     margin_edge = span_y * 0.04  # Vùng an toàn 4% biên trên/dưới
+                    x_lim = self.ax.get_xlim()
+                    n_hist = len(self._chart_hist_df) if self._chart_hist_df is not None else getattr(self, "_chart_n_hist", 0)
+                    is_viewing_live_tail = (x_lim[1] >= (n_hist - 5))
 
                     if not self.user_zoomed:
                         # Chế độ tự động: nếu giá/râu nến chạm sát hoặc vượt biên thì tự động ôm khít lại
                         if l < cur_y0 + margin_edge or h > cur_y1 - margin_edge or c < cur_y0 + margin_edge or c > cur_y1 - margin_edge:
-                            x_lim = self.ax.get_xlim()
                             new_ylim = self._compute_visible_ylim(x_lim[0], x_lim[1])
                             if new_ylim is not None:
+                                self.saved_ylim = new_ylim
                                 self.ax.set_ylim(new_ylim)
-                    else:
-                        # Chế độ thu phóng thủ công: nếu giá đâm xuyên qua thì tự động tịnh tiến (pan) kéo trục Y theo giá
+                    elif is_viewing_live_tail:
+                        # Chế độ thu phóng thủ công ở vùng Live: nếu giá đâm xuyên qua thì tự động tịnh tiến kéo trục Y theo giá
                         if l < cur_y0 + margin_edge:
                             shift = (cur_y0 + margin_edge) - l + (span_y * 0.06)
                             self.saved_ylim = (cur_y0 - shift, cur_y1 - shift)
@@ -10254,6 +10271,8 @@ class KronosDesktopApp:
                     sel_closed_deal = cd_cand
                     break
 
+        self._active_viewing_closed_deal = sel_closed_deal
+
         if sel_closed_deal is not None:
             cd = sel_closed_deal
             open_ts = int(cd.get("open_ts") or 0)
@@ -10294,7 +10313,13 @@ class KronosDesktopApp:
                 col_step_x = span_x * 0.18
                 self._selected_deal_ticket_focus = None
 
-            # 2. Tô màu VÀNG thanh mảnh cây nến khớp lệnh
+                # Tự động tính toán lại trục Y ôm trọn các nến quanh lệnh đã đóng và các mức Entry/SL/TP/Exit
+                auto_y = self._compute_visible_ylim(new_xlim[0], new_xlim[1])
+                if auto_y is not None:
+                    self.saved_ylim = auto_y
+                    self.ax.set_ylim(auto_y)
+
+            # 2. Tô màu VÀNG cây nến khớp lệnh & Đánh dấu X cây nến đóng lệnh (Không vẽ khung chú thích che nến)
             if 0 <= k_match < n_hist:
                 o_m = float(opens[k_match])
                 h_m = float(highs[k_match])
@@ -10312,24 +10337,7 @@ class KronosDesktopApp:
                 )
                 self.ax.add_patch(gold_rect)
 
-                # Mũi tên và nhãn chỉ vào cây nến khớp lệnh (nhỏ gọn, nền tối, không che nến)
-                arrow_y = l_m if is_buy else h_m
-                offset_y = -20 if is_buy else 20
-                va_txt = "top" if is_buy else "bottom"
-                self.ax.annotate(
-                    f" ⭐ Khớp #{cd['ticket']}: {open_p:.2f} ({cmd_type}) ",
-                    xy=(k_match, arrow_y),
-                    xytext=(0, offset_y),
-                    textcoords="offset points",
-                    ha="center", va=va_txt,
-                    fontsize=7.2, fontweight="bold",
-                    color="#ffd700",
-                    bbox=dict(boxstyle="round,pad=0.2", facecolor="#131722", edgecolor="#ffd700", lw=0.8, alpha=0.92),
-                    arrowprops=dict(arrowstyle="->", color="#ffd700", lw=1.0),
-                    zorder=40
-                )
-
-                # Đánh dấu cây nến đóng lệnh (nhỏ gọn, mảnh)
+                # Đánh dấu cây nến đóng lệnh bằng dấu x (chỉ vẽ dấu x, không vẽ khung chú thích)
                 close_ts = int(cd.get("close_ts") or 0)
                 k_close = -1
                 if close_ts > 0 and n_hist > 0:
@@ -10339,19 +10347,7 @@ class KronosDesktopApp:
                             break
                 if 0 <= k_close < n_hist and close_p > 0:
                     exit_col = "#ff1744" if net_pnl < 0 else "#00e676"
-                    self.ax.plot(k_close, close_p, marker="x", markersize=6, color=exit_col, markeredgewidth=1.1, zorder=40)
-                    self.ax.annotate(
-                        f" 🚪 Đóng: {close_p:.2f} ({net_pnl:+.2f}$) ",
-                        xy=(k_close, close_p),
-                        xytext=(0, 16 if is_buy else -16),
-                        textcoords="offset points",
-                        ha="center", va="bottom" if is_buy else "top",
-                        fontsize=7.0,
-                        color="#ffffff",
-                        bbox=dict(boxstyle="round,pad=0.18", facecolor="#131722", edgecolor=exit_col, lw=0.8, alpha=0.9),
-                        arrowprops=dict(arrowstyle="->", color=exit_col, lw=0.9),
-                        zorder=40
-                    )
+                    self.ax.plot(k_close, close_p, marker="x", markersize=8, color=exit_col, markeredgewidth=1.6, zorder=40)
 
             # 3. Vẽ 3 đường mức giá Entry, SL, TP của lệnh đã đóng (Nét mảnh thanh thoát, nhãn tối viền mảnh không che chữ)
             # Đường Entry
@@ -10542,27 +10538,34 @@ class KronosDesktopApp:
         if handles and any(bool(lbl and not lbl.startswith("_")) for lbl in labels):
             self.ax.legend(loc="upper left", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8, framealpha=0.85)
 
-        if self.user_zoomed and self.saved_xlim is not None and self.saved_ylim is not None:
-            # Nếu người dùng đang zoom nhưng giá hoặc râu nến mới đâm xuyên ra ngoài thì tự động kéo trục Y theo
-            cur_y0, cur_y1 = self.saved_ylim
-            span_y = max(cur_y1 - cur_y0, 1.0)
-            margin_y = span_y * 0.04
-            last_l = float(hist["low"].iloc[-1])
-            last_h = float(hist["high"].iloc[-1])
-            if last_l < cur_y0 + margin_y:
-                shift = (cur_y0 + margin_y) - last_l + (span_y * 0.06)
-                self.saved_ylim = (cur_y0 - shift, cur_y1 - shift)
-            elif last_h > cur_y1 - margin_y:
-                shift = last_h - (cur_y1 - margin_y) + (span_y * 0.06)
-                self.saved_ylim = (cur_y0 + shift, cur_y1 + shift)
+        if self.user_zoomed and self.saved_xlim is not None:
+            if self.saved_ylim is None:
+                self.saved_ylim = self._compute_visible_ylim(self.saved_xlim[0], self.saved_xlim[1])
+
+            # Nếu người dùng đang zoom nhưng giá hoặc râu nến mới đâm xuyên ra ngoài thì tự động kéo trục Y theo (CHỈ khi đang ở vùng đuôi Live)
+            is_viewing_live_tail = (self.saved_xlim[1] >= (n_hist - 5))
+            if is_viewing_live_tail and self.saved_ylim is not None:
+                cur_y0, cur_y1 = self.saved_ylim
+                span_y = max(cur_y1 - cur_y0, 1.0)
+                margin_y = span_y * 0.04
+                last_l = float(hist["low"].iloc[-1])
+                last_h = float(hist["high"].iloc[-1])
+                if last_l < cur_y0 + margin_y:
+                    shift = (cur_y0 + margin_y) - last_l + (span_y * 0.06)
+                    self.saved_ylim = (cur_y0 - shift, cur_y1 - shift)
+                elif last_h > cur_y1 - margin_y:
+                    shift = last_h - (cur_y1 - margin_y) + (span_y * 0.06)
+                    self.saved_ylim = (cur_y0 + shift, cur_y1 + shift)
 
             self.ax.set_xlim(self.saved_xlim)
-            self.ax.set_ylim(self.saved_ylim)
+            if self.saved_ylim is not None:
+                self.ax.set_ylim(self.saved_ylim)
             self._sync_xlim_dependents(self.saved_xlim)
         else:
             self.ax.set_xlim(view_xlim)
             auto_ylim = self._compute_visible_ylim(view_xlim[0], view_xlim[1])
             if auto_ylim is not None:
+                self.saved_ylim = auto_ylim
                 self.ax.set_ylim(auto_ylim)
             self._sync_xlim_dependents(view_xlim)
 
