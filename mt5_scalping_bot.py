@@ -185,6 +185,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khoảng cách giá tối thiểu (USD) mà AI dự báo giá sẽ di chuyển tới đỉnh/đáy tiếp theo. Nếu AI dự báo giá chỉ nhích một đoạn quá ngắn, bot sẽ bỏ qua vì lợi nhuận không đủ bù phí giao dịch.",
         "how_to_set": "- Vàng XAUUSD: Cài đặt từ 1.2$ đến 1.5$ (tương đương 12 - 15 pip).\n- Không nên để < 0.8$ vì biên độ quá hẹp dễ bị nuốt bởi Spread và trượt giá."
     },
+    "expected_move_k": {
+        "title": "Hệ số k biên độ AI bù chi phí (k x (Spread + Slippage))",
+        "what_is_it": "Hệ số an toàn nhân với chi phí giao dịch ước lượng (Spread + Slippage). Bot yêu cầu biên độ dự báo của AI phải lớn hơn hoặc bằng max(min_move, k * (spread + slippage_est)) để đảm bảo lợi nhuận kỳ vọng luôn vượt trội chi phí sàn.",
+        "how_to_set": "- Mặc định: 3.0 (Biên độ kỳ vọng phải tối thiểu gấp 3 lần chi phí spread + trượt giá).\n- Đánh thận trọng / Giờ biến động: 3.5 - 4.0.\n- Đánh tài khoản siêu rẻ (Zero/Raw Spread): 2.0 - 2.5."
+    },
     "max_spread": {
         "title": "Spread tối đa cho phép (Max Spread)",
         "what_is_it": "Mức chênh lệch tối đa giữa giá Mua (Ask) và giá Bán (Bid) tính bằng USD. Nếu Spread thực tế của sàn vượt quá giá trị này, bot sẽ chặn không cho mở lệnh.",
@@ -234,6 +239,16 @@ PARAM_HELP_GUIDE = {
         "title": "Xác nhận lực nến Price Action (Chống bắt dao rơi)",
         "what_is_it": "Khi giá chạm vào Vùng Canh Giá của AI, bot không khớp lệnh ngay mù quáng mà sẽ quan sát nến Scalping (M1/M5). Nếu nến đang cắm đầu rơi tự do (thân nến đỏ đặc Marubozu), bot sẽ CHỜ và CHỈ khớp lệnh khi xuất hiện tín hiệu lực cầu đỡ giá (rút râu dưới, nến xanh đảo chiều, hoặc bật nảy từ đáy).",
         "how_to_set": "- LUÔN BẬT (Mặc định): Loại bỏ hoàn toàn tình trạng 'bắt dao rơi' ngay giữa cây nến đang giảm dốc."
+    },
+    "pa_fail_open": {
+        "title": "PA Fail-Open (Chấp nhận vào lệnh khi thiếu dữ liệu/lỗi)",
+        "what_is_it": "Chính sách an toàn khi kiểm tra Price Action. Khi tắt (False - Mặc định), nếu thiếu nến, không lấy được tick hoặc có lỗi ngoại lệ, bot sẽ từ chối vào lệnh để phòng ngừa rủi ro. Khi bật (True), bot sẽ bỏ qua lỗi và cho phép vào lệnh.",
+        "how_to_set": "- TẮT (False - Khuyên dùng): Chế độ an toàn Fail-Safe, bảo vệ tài khoản khi đường truyền mạng hoặc MT5 không ổn định.\n- BẬT (True): Chỉ dùng khi mạng gián đoạn nhưng vẫn muốn bot tận dụng tối đa tín hiệu."
+    },
+    "pa_min_confirmations": {
+        "title": "Số điều kiện Price Action tối thiểu (1-3)",
+        "what_is_it": "Số lượng điều kiện nến PA cần thỏa mãn đồng thời trong 3 tín hiệu:\n1) Rút râu nến (Wick rejection).\n2) Nến đảo chiều (Bullish/Bearish turnaround candle).\n3) Giá bật nảy từ đỉnh/đáy (Tick bounce).\n- Đặt 1: Chỉ cần 1 trong 3 điều kiện (logic OR cũ).\n- Đặt 2: Cần ít nhất 2 điều kiện kết hợp (chắc chắn hơn).\n- Đặt 3: Cần cả 3 điều kiện đồng thời (siêu chọn lọc).",
+        "how_to_set": "- 1 (Mặc định): Giữ nguyên độ nhạy cao của bản chuẩn.\n- 2: Khuyên dùng cho giao dịch đảo chiều để lọc nhiễu tốt hơn.\n- 3: Rất ít lệnh, chỉ vào khi nến có phản ứng cực kỳ mạnh."
     },
     "structure_conflict_mode": {
         "title": "Xử lý xung đột Cấu Trúc Đa Khung (M5 vs M15)",
@@ -420,6 +435,9 @@ DEFAULT_PROFILE_SETTINGS = {
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
+        "pa_fail_open": False,
+        "pa_min_confirmations": "1",
+        "expected_move_k": "3",
         "structure_conflict_mode": "neutral",
         "auto_be": True,
         "be_trigger_r": "1.0",
@@ -473,6 +491,9 @@ DEFAULT_PROFILE_SETTINGS = {
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
+        "pa_fail_open": False,
+        "pa_min_confirmations": "1",
+        "expected_move_k": "3",
         "structure_conflict_mode": "neutral",
         "auto_be": True,
         "be_trigger_r": "1.0",
@@ -2293,6 +2314,7 @@ class KronosDesktopApp:
         self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75", help_key="consensus")
         self.max_dispersion_var = self._add_labeled_entry(sec2.content, "Độ phân tán tối đa (x ATR, 0=Tắt):", "2.5", help_key="max_dispersion")
         self.min_move_var = self._add_labeled_entry(sec2.content, "Biên độ tối thiểu (Giá):", "1.2", help_key="min_move")
+        self.expected_move_k_var = self._add_labeled_entry(sec2.content, "Hệ số k biên độ bù phí (k*Spread):", "3", help_key="expected_move_k")
         self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35", help_key="max_spread")
         self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5", help_key="sl_atr")
         self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5", help_key="sl_buffer")
@@ -2321,6 +2343,15 @@ class KronosDesktopApp:
         self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (Zero-Lag)", self.trend_filter_var, help_key="trend_filter")
         self.confirm_entry_pa_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
+        self.pa_fail_open_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "PA Fail-Open (Cho phép khi mất tick/nến)", self.pa_fail_open_var, help_key="pa_fail_open")
+        self.pa_min_confirmations_var = self._add_labeled_combo(
+            sec2.content,
+            "Số điều kiện PA tối thiểu (1-3):",
+            ["1", "2", "3"],
+            "1",
+            help_key="pa_min_confirmations"
+        )
         self.structure_conflict_mode_var = self._add_labeled_combo(
             sec2.content,
             "Xử lý xung đột Cấu Trúc (M5 vs M15):",
@@ -3850,9 +3881,17 @@ class KronosDesktopApp:
             pred_hi = float(mean_df["high"].max())
             pred_lo = float(mean_df["low"].min())
 
+            spread_est = float(cfg.get("max_spread", def_cfg.get("max_spread", 30.0 if is_btc else 0.35))) * 0.5
+            slippage_est = max(spread_est * 0.5, 1.0 if is_btc else 0.05)
+            try:
+                k_factor = float(cfg.get("expected_move_k", def_cfg.get("expected_move_k", 3.0)))
+            except (ValueError, TypeError):
+                k_factor = 3.0
+            min_effective_move = max(min_move, k_factor * (spread_est + slippage_est))
+
             base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
             sig_dir = None
-            if b_pct >= min_consensus and exp_m >= min_move:
+            if b_pct >= min_consensus and exp_m >= min_effective_move:
                 # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn BUY nếu Cấu trúc đang Giảm (-1)
                 if bt_use_live_structure and trend_filter_on and macro_dir == -1:
                     sig_dir = None
@@ -3860,7 +3899,7 @@ class KronosDesktopApp:
                     sig_dir = "BUY"
                     raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
                     sl_p = last_c - raw_sl_d
-            elif s_pct >= min_consensus and (-exp_m) >= min_move:
+            elif s_pct >= min_consensus and (-exp_m) >= min_effective_move:
                 # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn SELL nếu Cấu trúc đang Tăng (+1)
                 if bt_use_live_structure and trend_filter_on and macro_dir == 1:
                     sig_dir = None
@@ -4835,6 +4874,7 @@ class KronosDesktopApp:
             "consensus": self.consensus_var,
             "max_dispersion": self.max_dispersion_var,
             "min_move": self.min_move_var,
+            "expected_move_k": self.expected_move_k_var,
             "max_spread": self.max_spread_var,
             "sl_atr": self.sl_atr_var,
             "sl_buffer": self.sl_buffer_var,
@@ -4845,6 +4885,8 @@ class KronosDesktopApp:
             "one_order_per_candle": self.one_order_per_candle_var,
             "trend_filter": self.trend_filter_var,
             "confirm_entry_pa": self.confirm_entry_pa_var,
+            "pa_fail_open": self.pa_fail_open_var,
+            "pa_min_confirmations": self.pa_min_confirmations_var,
             "structure_conflict_mode": self.structure_conflict_mode_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
@@ -5300,7 +5342,7 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "structure_conflict_mode"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
@@ -7683,21 +7725,35 @@ class KronosDesktopApp:
             )
             return False, last_res, f"Mã lỗi: {code_str} - {comment_str}"
 
-    def _check_price_action_entry_confirmation(self, symbol: str, action: str, scalp_tf: str = "M1") -> tuple:
+    def _check_price_action_entry_confirmation(
+        self, symbol: str, action: str, scalp_tf: str = "M1", atr: float = 0.0, profile_key: str = None
+    ) -> tuple:
         """
         Kiểm tra lực nến và phản ứng giá (Price Action) trên khung vào lệnh (M1/M5) trước khi khớp lệnh.
         Chặn 100% việc 'bắt dao rơi' khi nến đang cắm đầu rơi tự do (Marubozu) hoặc tăng dựng đứng.
         Yêu cầu có tín hiệu hấp thụ: Rút râu nến (Wick Rejection), hoặc Nến đảo chiều, hoặc Bật nảy từ đáy/đỉnh ngắn hạn.
         """
+        pk = profile_key or ("BTCUSD" if "BTC" in str(symbol or "").upper() else "XAUUSD")
+        cfg = self._get_profile_cfg(pk)
+        pa_fail_open = bool(cfg.get("pa_fail_open", False))
+        try:
+            req_conf = max(1, min(3, int(cfg.get("pa_min_confirmations", 1))))
+        except (ValueError, TypeError):
+            req_conf = 1
+
         try:
             df_recent = self.fetch_mt5_candles(symbol, scalp_tf, 5, include_forming=True)
             if df_recent is None or len(df_recent) < 2:
-                return True, "Dữ liệu nến không đủ -> Cho phép theo mặc định"
+                if pa_fail_open:
+                    return True, "Dữ liệu nến không đủ -> Cho phép theo pa_fail_open"
+                return False, "Thiếu dữ liệu nến PA trên khung vào lệnh"
 
             with self._mt5_lock:
                 tick = mt5.symbol_info_tick(symbol) if MT5_AVAILABLE else None
             if not tick:
-                return True, "Không lấy được tick"
+                if pa_fail_open:
+                    return True, "Không lấy được tick -> Cho phép theo pa_fail_open"
+                return False, "Không lấy được tick giá hiện tại từ MT5"
 
             cur_price = tick.ask if action == "BUY" else tick.bid
             spread = max(tick.ask - tick.bid, 0.05)
@@ -7716,6 +7772,10 @@ class KronosDesktopApp:
             min_low_5 = float(df_recent["low"].min())
             max_high_5 = float(df_recent["high"].max())
 
+            eff_atr = float(atr) if (atr is not None and float(atr) > 0.0) else max(rng_c, 1.5)
+            min_bounce = max(0.25, spread * 1.5, 0.15 * eff_atr)
+            min_drop = max(0.25, spread * 1.5, 0.15 * eff_atr)
+
             if action == "BUY":
                 # 1. KIỂM TRA NẾN RƠI TỰ DO (RUNAWAY MARUBOZU):
                 lower_wick_f = min(o_f, c_f) - l_f
@@ -7730,14 +7790,22 @@ class KronosDesktopApp:
                 # 2. XÁC NHẬN LỰC ĐỠ (BUY REJECTION / ABSORPTION):
                 has_wick_rejection = (lower_wick_f >= 0.25 * rng_f and lower_wick_f >= spread * 1.5) or (lower_wick_c >= 0.35 * rng_c)
                 is_bullish_turnaround = (c_f > o_f and c_f > (l_f + rng_f * 0.40)) or (c_c > o_c and c_f >= c_c)
-                min_bounce = max(0.25, spread * 1.5)
                 has_tick_bounce = (cur_price - min_low_5) >= min_bounce
 
-                if has_wick_rejection or is_bullish_turnaround or has_tick_bounce:
-                    reason = "Rút chân dưới" if has_wick_rejection else ("Nến xanh đảo chiều" if is_bullish_turnaround else f"Bật nảy +{cur_price - min_low_5:.2f}$ từ đáy")
+                confirmations = []
+                if has_wick_rejection:
+                    confirmations.append("Rút râu dưới")
+                if is_bullish_turnaround:
+                    confirmations.append("Nến xanh đảo chiều")
+                if has_tick_bounce:
+                    confirmations.append(f"Bật nảy +{cur_price - min_low_5:.2f}$ từ đáy")
+
+                if len(confirmations) >= req_conf:
+                    reason = " + ".join(confirmations)
                     return True, f"Xác nhận lực đỡ ({reason})"
 
-                return False, f"Chưa có lực cầu đỡ giá (Đang cách đáy chỉ {cur_price - min_low_5:.2f}$)"
+                detail = " + ".join(confirmations) if confirmations else f"Đang cách đáy chỉ {cur_price - min_low_5:.2f}$"
+                return False, f"Chưa đủ {req_conf} điều kiện PA (Đạt {len(confirmations)}/{req_conf}: {detail})"
 
             else:  # SELL
                 upper_wick_f = h_f - max(o_f, c_f)
@@ -7751,17 +7819,27 @@ class KronosDesktopApp:
 
                 has_wick_rejection = (upper_wick_f >= 0.25 * rng_f and upper_wick_f >= spread * 1.5) or (upper_wick_c >= 0.35 * rng_c)
                 is_bearish_turnaround = (c_f < o_f and c_f < (h_f - rng_f * 0.40)) or (c_c < o_c and c_f <= c_c)
-                min_drop = max(0.25, spread * 1.5)
                 has_tick_drop = (max_high_5 - cur_price) >= min_drop
 
-                if has_wick_rejection or is_bearish_turnaround or has_tick_drop:
-                    reason = "Rút râu trên" if has_wick_rejection else ("Nến đỏ đảo chiều" if is_bearish_turnaround else f"Giảm -{max_high_5 - cur_price:.2f}$ từ đỉnh")
+                confirmations = []
+                if has_wick_rejection:
+                    confirmations.append("Rút râu trên")
+                if is_bearish_turnaround:
+                    confirmations.append("Nến đỏ đảo chiều")
+                if has_tick_drop:
+                    confirmations.append(f"Giảm -{max_high_5 - cur_price:.2f}$ từ đỉnh")
+
+                if len(confirmations) >= req_conf:
+                    reason = " + ".join(confirmations)
                     return True, f"Xác nhận lực xả ({reason})"
 
-                return False, f"Chưa có lực cung đạp giá (Đang cách đỉnh chỉ {max_high_5 - cur_price:.2f}$)"
+                detail = " + ".join(confirmations) if confirmations else f"Đang cách đỉnh chỉ {max_high_5 - cur_price:.2f}$"
+                return False, f"Chưa đủ {req_conf} điều kiện PA (Đạt {len(confirmations)}/{req_conf}: {detail})"
 
         except Exception as e:
-            return True, f"Lỗi PA check ({e}) -> Cho phép theo mặc định"
+            if pa_fail_open:
+                return True, f"Lỗi PA check ({e}) -> Cho phép theo pa_fail_open"
+            return False, f"Lỗi kiểm tra Price Action ({e})"
 
     def _check_pending_pullback_order(self, symbol: str, tick, profile_key: str = None):
         """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa thì khớp lệnh ngay khi đạt (Có khóa chống đúp lệnh)."""
@@ -7853,7 +7931,8 @@ class KronosDesktopApp:
             confirm_pa_on = bool(cfg.get("confirm_entry_pa", True))
             scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
             if confirm_pa_on:
-                is_confirmed, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf)
+                p_atr = float(p.get("atr", 1.5))
+                is_confirmed, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf, atr=p_atr, profile_key=pk)
                 if not is_confirmed:
                     now_ts_pa = time.time()
                     if (now_ts_pa - getattr(self, f"_last_pa_log_ts_{pk}", 0)) >= 10.0:
@@ -9953,10 +10032,18 @@ class KronosDesktopApp:
                 trend_filter_on = bool(cfg.get("trend_filter", True))
                 macro_dir = macro_ctx.get("macro_dir", 0)
 
+                is_btc_sym = tols.get("is_btc", False)
+                slippage_est = max(spread_usd * 0.5, 1.0 if is_btc_sym else 0.05)
+                try:
+                    expected_move_k = float(cfg.get("expected_move_k", 3.0))
+                except (ValueError, TypeError):
+                    expected_move_k = 3.0
+                min_effective_move = max(min_move, expected_move_k * (spread_usd + slippage_est))
+
                 action = None
                 sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
                 ref_tag = ""
-                if bull_pct >= min_consensus and expected_move >= min_move:
+                if bull_pct >= min_consensus and expected_move >= min_effective_move:
                     if is_high_uncertainty:
                         action = None
                         sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
@@ -9984,7 +10071,7 @@ class KronosDesktopApp:
                         tp_price = round(eff_entry + (eff_entry - sl_price) * rr, 2)
                     else:
                         tp_price = round(max(ai_pred_high, eff_entry + ai_tp_dist_up), 2)
-                elif bear_pct >= min_consensus and (-expected_move) >= min_move:
+                elif bear_pct >= min_consensus and (-expected_move) >= min_effective_move:
                     if is_high_uncertainty:
                         action = None
                         sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
@@ -10015,7 +10102,15 @@ class KronosDesktopApp:
                 else:
                     entry_ref = last_close
                     is_bear_bias = (bear_pct > bull_pct) or (bear_pct == bull_pct and expected_move < 0)
-                    if is_bear_bias:
+                    if bull_pct >= min_consensus and expected_move >= min_move and expected_move < min_effective_move:
+                        cost_barrier = expected_move_k * (spread_usd + slippage_est)
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BIÊN ĐỘ BÙ PHÍ THẤP) — AI dự báo +{expected_move:.2f}$ < ngưỡng an toàn ({min_effective_move:.2f}$ = {expected_move_k:g}x chi phí). Tránh rủi ro phí sàn!"
+                        self.log(f"🛡️ [{pk}] Biên độ dự báo AI (+{expected_move:.2f}$) không đủ bù chi phí giao dịch (Cần ≥ {min_effective_move:.2f}$ = max(min_move={min_move:.2f}$, k={expected_move_k:g}*(spread={spread_usd:.2f}$+slip={slippage_est:.2f}$))).")
+                    elif bear_pct >= min_consensus and (-expected_move) >= min_move and (-expected_move) < min_effective_move:
+                        cost_barrier = expected_move_k * (spread_usd + slippage_est)
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BIÊN ĐỘ BÙ PHÍ THẤP) — AI dự báo {expected_move:.2f}$ < ngưỡng an toàn ({min_effective_move:.2f}$ = {expected_move_k:g}x chi phí). Tránh rủi ro phí sàn!"
+                        self.log(f"🛡️ [{pk}] Biên độ dự báo AI ({expected_move:.2f}$) không đủ bù chi phí giao dịch (Cần ≥ {min_effective_move:.2f}$ = max(min_move={min_move:.2f}$, k={expected_move_k:g}*(spread={spread_usd:.2f}$+slip={slippage_est:.2f}$))).")
+                    elif is_bear_bias:
                         ref_tag = " (Tham khảo SELL)"
                         sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
                         total_sl_dist = sl_ai_raw_dist + sl_buffer
@@ -10137,6 +10232,7 @@ class KronosDesktopApp:
                         "effective_max_sl": effective_max_sl,
                         "sl_tightened_for_2r": sl_tightened_for_2r,
                         "target_tp_price": tp_price,
+                        "atr": atr,
                     }
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
@@ -10176,7 +10272,7 @@ class KronosDesktopApp:
                         pa_ok = True
                         pa_msg = ""
                         if confirm_pa_on:
-                            pa_ok, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf)
+                            pa_ok, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf, atr=atr, profile_key=pk)
                         if not pa_ok:
                             ctx["pending_pullback_order"] = zone_watch_order
                             trade_msg = f"⏳ Giá trong vùng {action} ({last_close:.2f}) -> Đang chờ xác nhận Price Action ({pa_msg})"
