@@ -228,7 +228,7 @@ PARAM_HELP_GUIDE = {
     "trend_filter": {
         "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (Zero-Lag - Không Độ Trễ)",
         "what_is_it": "Loại bỏ hoàn toàn các đường MA trễ nải (như EMA34/89). Thay vào đó, bot phân tích trực tiếp Cấu Trúc Đỉnh/Đáy thực tế (Market Structure - Swing Highs/Lows), Phá vỡ cấu trúc (BOS) và Đảo chiều cấu trúc (CHoCH) theo chuẩn Price Action/SMC trên M15 và M5/M1. Khi thị trường đang phá đáy rơi tự do (Bearish BOS), bot sẽ CHẶN 100% tín hiệu BUY cản tàu. Ngược lại khi thị trường đang phá đỉnh tăng mạnh (Bullish BOS), bot sẽ CHẶN 100% tín hiệu SELL cản tàu. Khi có CHoCH đảo chiều hoặc thị trường tích lũy, bot lập tức unblock để vào lệnh không trễ 1 nhịp nến nào.",
-        "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Phản ứng tức thì theo thời gian thực (0ms độ trễ), bảo vệ tài khoản tối đa."
+        "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Phản ứng tức thì theo giá thực (Zero Indicator Lag, không bị trễ nến như MA), bảo vệ tài khoản tối đa."
     },
     "confirm_entry_pa": {
         "title": "Xác nhận lực nến Price Action (Chống bắt dao rơi)",
@@ -3715,7 +3715,21 @@ class KronosDesktopApp:
 
         return s1_bars
 
-    def _evaluate_bt_ai_candle(self, predictor, df_rates_ana: pd.DataFrame, idx_ana: int, cfg: dict, def_cfg: dict, ana_tf_str: str, is_btc: bool, atr: float) -> Optional[dict]:
+    def _evaluate_bt_ai_candle(
+        self,
+        predictor,
+        df_rates_ana: pd.DataFrame,
+        idx_ana: int,
+        cfg: dict,
+        def_cfg: dict,
+        ana_tf_str: str,
+        is_btc: bool,
+        atr: float,
+        df_rates_scalp: Optional[pd.DataFrame] = None,
+        idx_scalp: int = 0,
+        scalp_tf_str: str = "M5",
+        cur_sec: Optional[int] = None,
+    ) -> Optional[dict]:
         """
         Đánh giá tín hiệu AI trong Backtest chuẩn xác 100% đồng nhất với Não Live:
         - Sử dụng đúng số nến lookback cài đặt (mặc định 450 nến).
@@ -3723,6 +3737,10 @@ class KronosDesktopApp:
         - Tự động điều chỉnh nhiệt độ thích ứng (Dynamic Temperature & Top-P theo khung M1/M5).
         - Chấm điểm xác suất Transformer (Bayesian Log-Likelihood) + Đồng thuận quỹ đạo đa bước.
         - Lọc bẫy giá phân tán kịch bản (max_dispersion).
+        - Đồng bộ 100% Cấu Trúc Thị Trường Zero-Lag (BOS/CHoCH) từ live:
+          + Lấy 60 nến scalp đã đóng hoàn toàn (không nhìn trước tương lai).
+          + Tính ATR chuẩn: max(atr_scalp, atr_ana * 0.65).
+          + Áp dụng trend_filter: macro_dir == -1 chặn BUY, macro_dir == 1 chặn SELL.
         """
         try:
             lookback = min(max(int(cfg.get("lookback", def_cfg.get("lookback", 450))), 50), 450)
@@ -3732,10 +3750,26 @@ class KronosDesktopApp:
             max_dispersion = float(cfg.get("max_dispersion", def_cfg.get("max_dispersion", 2.5)))
             sl_atr = float(cfg.get("sl_atr", def_cfg.get("sl_atr", 1.5)))
             sl_buffer = float(cfg.get("sl_buffer", def_cfg.get("sl_buffer", 20.0 if is_btc else 0.5)))
+            bt_use_live_structure = bool(cfg.get("bt_use_live_structure", True))
+            trend_filter_on = bool(cfg.get("trend_filter", def_cfg.get("trend_filter", True)))
 
             sub_df = df_rates_ana.iloc[max(0, idx_ana - lookback):idx_ana].copy().reset_index(drop=True)
             if len(sub_df) < 30:
                 return None
+
+            sub_scalp_df = None
+            if df_rates_scalp is not None and idx_scalp > 0:
+                sub_scalp_df = df_rates_scalp.iloc[max(0, idx_scalp - 60):idx_scalp].copy().reset_index(drop=True)
+
+            # Đồng bộ công thức ATR và trích xuất Cấu Trúc Zero-Lag y hệt bản Live
+            macro_dir = 0
+            macro_ctx = {"macro_dir": 0, "structure_reason": "Cân bằng / Tích lũy"}
+            if bt_use_live_structure and sub_scalp_df is not None and len(sub_scalp_df) >= 15:
+                atr_scalp = self.calculate_atr(sub_scalp_df, 14)
+                atr_ana = self.calculate_atr(sub_df, 14) if ana_tf_str != scalp_tf_str else atr_scalp
+                atr = max(atr_scalp, atr_ana * 0.65)
+                macro_ctx = self._analyze_scalping_micro_macro_context(sub_df, sub_scalp_df, atr)
+                macro_dir = macro_ctx.get("macro_dir", 0)
 
             x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
             dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
@@ -3805,16 +3839,31 @@ class KronosDesktopApp:
             base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
             sig_dir = None
             if b_pct >= min_consensus and exp_m >= min_move:
-                sig_dir = "BUY"
-                raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
-                sl_p = last_c - raw_sl_d
+                # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn BUY nếu Cấu trúc đang Giảm (-1)
+                if bt_use_live_structure and trend_filter_on and macro_dir == -1:
+                    sig_dir = None
+                else:
+                    sig_dir = "BUY"
+                    raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
+                    sl_p = last_c - raw_sl_d
             elif s_pct >= min_consensus and (-exp_m) >= min_move:
-                sig_dir = "SELL"
-                raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
-                sl_p = last_c + raw_sl_d
+                # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn SELL nếu Cấu trúc đang Tăng (+1)
+                if bt_use_live_structure and trend_filter_on and macro_dir == 1:
+                    sig_dir = None
+                else:
+                    sig_dir = "SELL"
+                    raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
+                    sl_p = last_c + raw_sl_d
 
             if sig_dir is not None:
-                return {"signal": sig_dir, "sl_price": sl_p, "atr": atr, "mean_df": mean_df}
+                return {
+                    "signal": sig_dir,
+                    "sl_price": sl_p,
+                    "atr": atr,
+                    "mean_df": mean_df,
+                    "macro_dir": macro_dir,
+                    "structure_reason": macro_ctx.get("structure_reason", "Cân bằng")
+                }
         except Exception:
             pass
         return None
@@ -3989,7 +4038,10 @@ class KronosDesktopApp:
                             ) and not self._bt_cancel_flag:
                                 time.sleep(0.05)
 
-                            active_bt_zone = self._evaluate_bt_ai_candle(predictor, df_rates_ana, idx_ana, cfg, def_cfg, ana_tf_str, is_btc, atr)
+                            active_bt_zone = self._evaluate_bt_ai_candle(
+                                predictor, df_rates_ana, idx_ana, cfg, def_cfg, ana_tf_str, is_btc, atr,
+                                df_rates_scalp=df_rates_scalp, idx_scalp=idx_scalp, scalp_tf_str=scalp_tf_str, cur_sec=cur_sec
+                            )
                             bt_ai_cache[idx_ana] = dict(active_bt_zone) if active_bt_zone else None
                             time.sleep(0.005)
                     elif not use_ai:
@@ -4177,7 +4229,10 @@ class KronosDesktopApp:
                             ) and not self._bt_cancel_flag:
                                 time.sleep(0.05)
 
-                            active_bt_zone = self._evaluate_bt_ai_candle(predictor, df_rates_ana, idx_ana, cfg, def_cfg, ana_tf_str, is_btc, atr)
+                            active_bt_zone = self._evaluate_bt_ai_candle(
+                                predictor, df_rates_ana, idx_ana, cfg, def_cfg, ana_tf_str, is_btc, atr,
+                                df_rates_scalp=df_rates_scalp, idx_scalp=bar_idx, scalp_tf_str=scalp_tf_str, cur_sec=cur_sec
+                            )
                             bt_ai_cache[idx_ana] = dict(active_bt_zone) if active_bt_zone else None
                             time.sleep(0.005)
                     elif not use_ai:
@@ -8686,7 +8741,7 @@ class KronosDesktopApp:
             s_dir, s_reas = _extract_structure(df_scalp)
             a_dir, a_reas = _extract_structure(df_ana)
 
-            # Ưu tiên khung Scalping vì phản ứng tức thì (0ms độ trễ)
+            # Ưu tiên khung Scalping vì bám sát biến động nến thực tế (không dùng hàm làm mượt gây trễ nến)
             if s_dir != 0:
                 ctx_info["macro_dir"] = s_dir
                 ctx_info["structure_reason"] = s_reas
