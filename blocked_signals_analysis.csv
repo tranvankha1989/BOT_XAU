@@ -1,0 +1,80 @@
+﻿thoi_gian,huong,break_reason_cat,structure_reason,can_enter,entry,SL,TP,PnL,R_dat_duoc,ket_qua,result_type
+2026-11-10 00:45,BUY,a_fractal_bos,BOS Giảm (Giá 4103.51 < Đáy 4104.91),True,4102.75,4097.75,4112.75,6.81,0.68,Hòa vốn (BE+),WIN
+2026-11-10 01:30,SELL,c_scalp_conflict,BOS/CHoCH Tăng (Giá 4106.28 > Đỉnh 4105.83),True,4107.94,4111.01,4101.8,4.71,0.77,Hòa vốn (BE+),WIN
+2026-11-10 02:00,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4102.88 > 4100.36),True,4104.13,4109.13,4094.13,-10.4,-1.04,Cắt lỗ (SL),LOSS
+2026-11-10 06:00,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4101.05 > 4100.36),False,4135.95,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 06:15,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4144.54 > Đỉnh 4142.49),False,4143.67,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 07:00,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4133.90 > 4101.05),False,4136.09,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 08:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4128.41 < 4139.16),False,4132.08,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 08:30,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4139.84 > Đỉnh 4138.00),False,4131.34,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 08:45,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4128.39 > 4121.60),False,4126.64,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 12:45,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4125.86 > Đỉnh 4124.09),False,4121.84,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 13:15,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4115.91 > 4110.72),True,4124.67,4129.67,4114.67,8.88,0.89,Hòa vốn (BE+),WIN
+2026-11-10 15:00,BUY,b_momentum_10bar,Đổ đèo tự do (7/10 nến đỏ sát đáy 4112.14),False,4116.62,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 16:15,BUY,a_fractal_bos,BOS Giảm (Giá 4095.53 < Đáy 4114.46),False,4094.47,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 17:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4088.87 < 4098.67),False,4080.65,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 18:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4078.69 < 4088.87),True,4073.33,4068.33,4083.33,7.37,0.74,Hòa vốn (BE+),WIN
+2026-11-10 18:45,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4121.40 < 4127.01),True,4071.4,4067.88,4078.44,9.06,1.29,Hòa vốn (BE+),WIN
+2026-11-10 20:45,BUY,a_fractal_bos,BOS Giảm (Giá 4056.30 < Đáy 4069.32),False,4057.8,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 21:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4063.53 < 4080.72),False,4056.62,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 21:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4080.72 < 4121.40),False,4053.91,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 21:30,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4080.72 < 4121.40),False,4046.8,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 21:45,BUY,a_fractal_bos,BOS Giảm (Giá 4044.61 < Đáy 4049.15),True,4034.55,4032.26,4039.14,8.94,1.95,Hòa vốn (BE+),WIN
+2026-11-10 22:00,BUY,a_fractal_bos,BOS Giảm (Giá 4038.96 < Đáy 4049.15),False,4050.69,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 22:30,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4052.39 < 4059.93),False,4050.57,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 22:45,BUY,a_fractal_bos,BOS Giảm (Giá 4045.78 < Đáy 4045.91),False,4042.68,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 23:00,BUY,a_fractal_bos,BOS Giảm (Giá 4042.40 < Đáy 4045.91),False,4044.07,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 23:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4045.64 < 4054.19),True,4033.92,4028.92,4043.92,-10.4,-1.04,Cắt lỗ (SL),LOSS
+2026-11-10 23:30,BUY,b_momentum_10bar,Đổ đèo tự do (8/10 nến đỏ sát đáy 4022.75),False,4022.16,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-10 23:45,BUY,a_fractal_bos,BOS Giảm (Giá 4021.34 < Đáy 4034.10),True,4016.03,4011.62,4024.86,9.4,1.07,Hòa vốn (BE+),WIN
+2026-11-11 00:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4045.64 < 4054.19),False,4022.5,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 00:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4045.64 < 4054.19),False,4023.49,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 00:30,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4024.63 < 4045.64),False,4019.38,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 00:45,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4024.63 < 4045.64),False,4020.61,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 01:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4054.19 < 4080.72),True,4017.31,4012.69,4026.54,6.88,0.75,Hòa vốn (BE+),WIN
+2026-11-11 03:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4032.52 < 4033.40),True,4027.16,4024.54,4032.38,7.92,1.52,Hòa vốn (BE+),WIN
+2026-11-11 09:30,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4026.58 > 4026.38),False,4046.21,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 10:00,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4039.47 > 4026.58),True,4047.78,4049.63,4044.07,-4.11,-1.11,Cắt lỗ (SL),LOSS
+2026-11-11 10:15,SELL,b_momentum_10bar,Tăng dốc đứng (7/10 nến xanh sát đỉnh 4049.06),True,4049.58,4054.58,4039.58,7.23,0.72,Hòa vốn (BE+),WIN
+2026-11-11 10:30,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4039.58 > 4039.47),False,4045.54,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 12:00,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4046.22 > Đỉnh 4045.10),True,4049.95,4051.27,4047.29,-3.05,-1.15,Cắt lỗ (SL),LOSS
+2026-11-11 12:15,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4053.06 > Đỉnh 4045.10),True,4055.09,4057.95,4049.37,-6.12,-1.07,Cắt lỗ (SL),LOSS
+2026-11-11 12:30,SELL,b_momentum_10bar,Tăng dốc đứng (10/10 nến xanh sát đỉnh 4059.01),False,4061.2,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 12:45,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4060.80 > Đỉnh 4049.94),True,4062.16,4066.66,4053.15,6.03,0.67,Hòa vốn (BE+),WIN
+2026-11-11 13:00,SELL,a_fractal_bos,BOS/CHoCH Tăng (Giá 4058.61 > Đỉnh 4049.94),False,4055.52,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 13:15,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4054.17 > 4040.51),True,4057.81,4062.81,4047.81,-10.4,-1.04,Cắt lỗ (SL),LOSS
+2026-11-11 14:15,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4053.83 > 4040.51),True,4063.8,4066.45,4058.51,-5.69,-1.08,Cắt lỗ (SL),LOSS
+2026-11-11 14:30,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4053.83 > 4040.51),False,4064.01,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 15:15,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4053.83 > 4040.51),True,4059.19,4064.19,4049.19,8.15,0.82,Hòa vốn (BE+),WIN
+2026-11-11 18:40,SELL,a_fractal_bos,Cấu trúc Tăng HH+HL (Đáy 4048.47 > 4046.54),False,4047.67,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 21:15,BUY,a_fractal_bos,BOS Giảm (Giá 4030.68 < Đáy 4031.87),True,4028.71,4023.71,4038.71,-10.4,-1.04,Cắt lỗ (SL),LOSS
+2026-11-11 21:45,BUY,a_fractal_bos,BOS Giảm (Giá 4016.17 < Đáy 4028.21),True,4012.55,4007.55,4022.55,8.49,0.85,Hòa vốn (BE+),WIN
+2026-11-11 22:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4046.82 < 4056.01),True,4013.77,4009.97,4021.37,-8.0,-1.05,Cắt lỗ (SL),LOSS
+2026-11-11 22:30,BUY,a_fractal_bos,BOS Giảm (Giá 4006.56 < Đáy 4012.63),True,4002.29,3997.29,4012.29,11.56,1.16,Hòa vốn (BE+),WIN
+2026-11-11 22:45,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4018.60 < 4038.28),True,4002.2,3997.2,4012.2,7.22,0.72,Hòa vốn (BE+),WIN
+2026-11-11 23:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4010.03 < 4018.60),False,4004.71,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 23:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4007.12 < 4010.03),False,4006.16,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-11 23:30,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4046.82 < 4056.01),True,4001.32,3996.32,4011.32,7.42,0.74,Hòa vốn (BE+),WIN
+2026-11-11 23:45,BUY,a_fractal_bos,BOS Giảm (Giá 4000.06 < Đáy 4000.60),True,3999.27,3994.27,4009.27,11.52,1.15,Hòa vốn (BE+),WIN
+2026-11-12 00:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4005.83 < 4007.76),True,4000.05,3995.52,4009.11,10.28,1.13,Hòa vốn (BE+),WIN
+2026-11-12 00:55,BUY,a_fractal_bos,BOS Giảm (Giá 3997.32 < Đáy 3998.24),False,3993.2,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 01:00,BUY,b_momentum_10bar,Đổ đèo tự do (7/10 nến đỏ sát đáy 3992.98),True,3988.64,3987.69,3990.53,6.54,3.46,Hòa vốn (BE+),WIN
+2026-11-12 01:30,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 3994.39 < 4006.98),False,3993.97,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 01:45,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 4006.98 < 4007.76),True,3987.78,3984.4,3994.55,-7.17,-1.06,Cắt lỗ (SL),LOSS
+2026-11-12 02:00,BUY,b_momentum_10bar,Đổ đèo tự do (7/10 nến đỏ sát đáy 3986.57),True,3986.51,3981.92,3995.69,13.28,1.45,Hòa vốn (BE+),WIN
+2026-11-12 02:15,BUY,a_fractal_bos,BOS Giảm (Giá 3986.13 < Đáy 3987.15),True,3983.83,3981.79,3987.91,9.21,2.26,Hòa vốn (BE+),WIN
+2026-11-12 02:45,BUY,a_fractal_bos,BOS Giảm (Giá 3986.98 < Đáy 3987.15),True,3986.52,3982.59,3994.36,-8.25,-1.05,Cắt lỗ (SL),LOSS
+2026-11-12 03:00,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 3995.09 < 4006.98),True,3984.7,3982.01,3990.07,5.01,0.93,Hòa vốn (BE+),WIN
+2026-11-12 06:30,SELL,a_fractal_bos,BOS Giảm (Giá 3982.11 < Đáy 3985.60),True,3982.58,3987.58,3972.58,13.24,1.32,Hòa vốn (BE+),WIN
+2026-11-12 10:45,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 3989.94 < 4000.59),False,3983.36,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 11:30,BUY,a_fractal_bos,BOS Giảm (Giá 3975.74 < Đáy 3977.54),True,3973.64,3969.94,3981.04,8.18,1.11,Hòa vốn (BE+),WIN
+2026-11-12 13:00,SELL,c_scalp_conflict,BOS/CHoCH Tăng (Giá 3979.47 > Đỉnh 3979.18),False,3980.03,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 14:15,BUY,a_fractal_bos,BOS Giảm (Giá 3961.03 < Đáy 3962.33),False,3964.61,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 15:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 3966.38 < 3972.43),False,3956.54,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 15:30,BUY,a_fractal_bos,BOS Giảm (Giá 3946.14 < Đáy 3954.77),False,3952.36,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 15:45,BUY,b_momentum_10bar,Đổ đèo tự do (8/10 nến đỏ sát đáy 3940.59),True,3937.84,3933.06,3947.38,-9.94,-1.04,Cắt lỗ (SL),LOSS
+2026-11-12 16:00,BUY,b_momentum_10bar,Đổ đèo tự do (9/10 nến đỏ sát đáy 3927.83),True,3924.61,3919.61,3934.61,11.94,1.19,Hòa vốn (BE+),WIN
+2026-11-12 16:15,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 3966.38 < 3972.43),False,3929.6,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 16:30,BUY,a_fractal_bos,BOS Giảm (Giá 3937.85 < Đáy 3954.77),False,3937.76,0.0,0.0,0.0,0.0,SL chạm trước khi vào / ngoài vùng,SKIPPED_INVALID
+2026-11-12 19:25,BUY,a_fractal_bos,Cấu trúc Giảm LH+LL (Đỉnh 3955.71 < 3983.28),True,3940.25,3937.62,3945.51,-5.66,-1.08,Cắt lỗ (SL),LOSS
+2026-11-12 19:30,BUY,a_fractal_bos,BOS Giảm (Giá 3940.25 < Đáy 3942.89),True,3936.93,3933.83,3943.12,-6.59,-1.06,Cắt lỗ (SL),LOSS

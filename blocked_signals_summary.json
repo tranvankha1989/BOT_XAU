@@ -1,0 +1,41 @@
+{
+  "blocked_group_overall": {
+    "total_blocked_signals": 79,
+    "entered_simulated": 39,
+    "wins": 25,
+    "losses": 14,
+    "bes": 0,
+    "winrate_pct": 64.1,
+    "total_pnl_usd": 109.09,
+    "profit_factor": 2.03
+  },
+  "breakdown_by_category": {
+    "(a) BOS/CHoCH theo fractal": {
+      "total_trades": 33,
+      "wins": 20,
+      "losses": 13,
+      "bes": 0,
+      "winrate_pct": 60.61,
+      "total_pnl_usd": 75.33,
+      "profit_factor": 1.78
+    },
+    "(b) Khối '7/10 nến' đổ đèo/dựng cột ghi đè": {
+      "total_trades": 5,
+      "wins": 4,
+      "losses": 1,
+      "bes": 0,
+      "winrate_pct": 80.0,
+      "total_pnl_usd": 29.05,
+      "profit_factor": 3.92
+    },
+    "(c) Ưu tiên khung scalp khi M5 và M15 ngược chiều": {
+      "total_trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "bes": 0,
+      "winrate_pct": 100.0,
+      "total_pnl_usd": 4.71,
+      "profit_factor": 99.0
+    }
+  }
+}

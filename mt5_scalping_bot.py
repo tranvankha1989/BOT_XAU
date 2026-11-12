@@ -3862,6 +3862,8 @@ class KronosDesktopApp:
                     "atr": atr,
                     "mean_df": mean_df,
                     "macro_dir": macro_dir,
+                    "break_type": macro_ctx.get("break_type", "none"),
+                    "timeframe_conflict": macro_ctx.get("timeframe_conflict", False),
                     "structure_reason": macro_ctx.get("structure_reason", "Cân bằng")
                 }
         except Exception:
@@ -8678,11 +8680,15 @@ class KronosDesktopApp:
             "wick_dir": 0,        # +1: Rút chân dưới (Buy Sweep), -1: Rút chân trên (Sell Sweep)
             "summary_tag": "Cân bằng",
             "structure_reason": "Cân bằng / Tích lũy",
+            "break_type": "none", # "fractal_bos" (a), "momentum_10bar" (b), "scalp_conflict" (c)
+            "timeframe_conflict": False,
+            "scalp_dir": 0,
+            "ana_dir": 0,
         }
         try:
             def _extract_structure(df_in):
                 if df_in is None or len(df_in) < 15:
-                    return 0, "Cân bằng"
+                    return 0, "Cân bằng", "none"
                 h_v = df_in["high"].astype(float).values
                 l_v = df_in["low"].astype(float).values
                 c_v = df_in["close"].astype(float).values
@@ -8700,6 +8706,7 @@ class KronosDesktopApp:
                 cur_c = c_v[-1]
                 dir_val = 0
                 reas = "Cân bằng"
+                b_type = "none"
 
                 if len(p_h) >= 2 and len(p_l) >= 2:
                     lh = p_h[-1] < p_h[-2]
@@ -8710,15 +8717,19 @@ class KronosDesktopApp:
                     if cur_c > p_h[-1]:
                         dir_val = 1
                         reas = f"BOS/CHoCH Tăng (Giá {cur_c:.2f} > Đỉnh {p_h[-1]:.2f})"
+                        b_type = "fractal_bos"
                     elif cur_c < p_l[-1]:
                         dir_val = -1
                         reas = f"BOS Giảm (Giá {cur_c:.2f} < Đáy {p_l[-1]:.2f})"
+                        b_type = "fractal_bos"
                     elif lh and ll:
                         dir_val = -1
                         reas = f"Cấu trúc Giảm LH+LL (Đỉnh {p_h[-1]:.2f} < {p_h[-2]:.2f})"
+                        b_type = "fractal_bos"
                     elif hh and hl:
                         dir_val = 1
                         reas = f"Cấu trúc Tăng HH+HL (Đáy {p_l[-1]:.2f} > {p_l[-2]:.2f})"
+                        b_type = "fractal_bos"
 
                 # Xung lực 10 nến gần nhất: Kiểm tra hiện tượng rơi tự do hoặc tăng dốc đứng
                 recent_c = c_v[-10:]
@@ -8731,15 +8742,30 @@ class KronosDesktopApp:
                 if red_c >= 7 and cur_c <= local_min + (atr * 0.25):
                     dir_val = -1
                     reas = f"Đổ đèo tự do ({red_c}/10 nến đỏ sát đáy {local_min:.2f})"
+                    b_type = "momentum_10bar"
                 elif green_c >= 7 and cur_c >= local_max - (atr * 0.25):
                     dir_val = 1
                     reas = f"Tăng dốc đứng ({green_c}/10 nến xanh sát đỉnh {local_max:.2f})"
+                    b_type = "momentum_10bar"
 
-                return dir_val, reas
+                return dir_val, reas, b_type
 
             # 1. Trích xuất cấu trúc không độ trễ trên cả 2 khung Scalping (M1/M5) và Phân tích (M15)
-            s_dir, s_reas = _extract_structure(df_scalp)
-            a_dir, a_reas = _extract_structure(df_ana)
+            s_dir, s_reas, s_type = _extract_structure(df_scalp)
+            a_dir, a_reas, a_type = _extract_structure(df_ana)
+            ctx_info["scalp_dir"] = s_dir
+            ctx_info["ana_dir"] = a_dir
+
+            # Phân loại lý do chặn: (a) Fractal BOS, (b) 7/10 nến Momentum, (c) Xung đột khung M5 vs M15
+            if s_dir != 0 and a_dir != 0 and s_dir != a_dir:
+                ctx_info["timeframe_conflict"] = True
+                ctx_info["break_type"] = "scalp_conflict"
+            elif s_dir != 0:
+                ctx_info["break_type"] = s_type
+            elif a_dir != 0:
+                ctx_info["break_type"] = a_type
+            else:
+                ctx_info["break_type"] = "none"
 
             # Ưu tiên khung Scalping vì bám sát biến động nến thực tế (không dùng hàm làm mượt gây trễ nến)
             if s_dir != 0:
