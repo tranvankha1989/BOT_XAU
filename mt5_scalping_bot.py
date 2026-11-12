@@ -774,7 +774,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.3.1"
+            self.app_version = "1.3.2"
             self.updater = None
 
         self._has_new_version = False
@@ -830,6 +830,8 @@ class KronosDesktopApp:
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
+        self._selected_deal_ticket_focus = None
+        self._closed_deals_by_ticket = {}
         self._drag_start_px = None
         self._drag_start_xlim = None
         self._drag_start_ylim = None
@@ -2971,6 +2973,16 @@ class KronosDesktopApp:
         """Xử lý sự kiện khi người dùng chọn lệnh trong danh sách phía dưới: làm nổi bật lệnh tương ứng trên biểu đồ."""
         pk = profile_key or self.active_profile_key
         if pk == self.active_profile_key:
+            sel_tickets = self._get_selected_tickets_for_profile(pk)
+            if sel_tickets:
+                # Nếu có ticket lệnh đã đóng được chọn -> kích hoạt auto-focus vào cây nến khớp lệnh
+                for t in sel_tickets:
+                    cd = self._get_closed_deal_info(t)
+                    if cd is not None:
+                        self._selected_deal_ticket_focus = t
+                        break
+            else:
+                self._selected_deal_ticket_focus = None
             sym = self.symbol_var.get().strip() or DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "BTCUSDm" if pk == "BTCUSD" else "XAUUSDm")
             tf = self.tf_var.get().strip() or "M1"
             self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
@@ -3012,9 +3024,8 @@ class KronosDesktopApp:
                     if p_key == pk:
                         cleared = True
 
-        sym = self.symbol_var.get().strip() or DEFAULT_PROFILE_SETTINGS.get(pk, {}).get("symbol", "BTCUSDm" if pk == "BTCUSD" else "XAUUSDm")
-        tf = self.tf_var.get().strip() or "M1"
-        self._refresh_realtime_chart(sym, tf, force_full_redraw=True)
+        self._selected_deal_ticket_focus = None
+        self.reset_chart_view()
 
     def _build_history_tab_ui(self, hist_tab: tk.Frame):
         """Dựng giao diện Lịch Sử Giao Dịch: Lọc theo Hôm nay / Khoảng ngày qua Lịch Pop-up & Xuất Excel."""
@@ -3153,6 +3164,37 @@ class KronosDesktopApp:
         self.hist_tree.tag_configure("tag_be", foreground=GOLD_ACCENT)
 
         self.hist_tree.bind("<Button-1>", lambda e: "break" if self.hist_tree.identify_region(e.x, e.y) == "heading" else None)
+        self.hist_tree.bind("<Double-1>", self._on_hist_tree_double_click)
+
+    def _on_hist_tree_double_click(self, event=None):
+        """Khi người dùng nháy đúp vào một lệnh trong Tab Lịch Sử: Chuyển sang Tab biểu đồ tương ứng và soi nến khớp lệnh."""
+        try:
+            sel = self.hist_tree.selection()
+            if not sel:
+                return
+            vals = self.hist_tree.item(sel[0], "values")
+            if not vals:
+                return
+            ticket = int(str(vals[0]).replace("#", "").strip())
+            sym = str(vals[3]).strip()
+            target_pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
+            target_tab_idx = 0 if target_pk == "XAUUSD" else 1
+            self.bottom_notebook.select(target_tab_idx)
+            self._switch_active_profile(target_pk)
+            tree = self.pos_tree_by_profile.get(target_pk)
+            if tree and tree.winfo_exists():
+                for item in tree.get_children():
+                    row_vals = tree.item(item, "values")
+                    if row_vals and str(row_vals[0]).replace("#", "").strip().isdigit():
+                        if int(str(row_vals[0]).replace("#", "").strip()) == ticket:
+                            tree.selection_set(item)
+                            tree.see(item)
+                            break
+            self._selected_deal_ticket_focus = ticket
+            self._refresh_realtime_chart(force_full_redraw=True)
+            self.show_toast("Soi Nến Khớp Lệnh", f"🔍 Đang xem lại nến khớp lệnh #{ticket} trên biểu đồ {target_pk}")
+        except Exception as e:
+            self.log_error("HIST_TREE_DOUBLE_CLICK", e, show_in_ui=False)
 
     def _open_calendar_popup(self, target_var: tk.StringVar):
         """Mở cửa sổ Pop-up Lịch chọn ngày và cập nhật vào biến StringVar đích."""
@@ -6014,6 +6056,7 @@ class KronosDesktopApp:
         self.user_zoomed = False
         self.saved_xlim = None
         self.saved_ylim = None
+        self._selected_deal_ticket_focus = None
         self._chart_visible_bars = 170
         pk = self.active_profile_key
         ana_tf = self.analysis_tf_var.get().strip()
@@ -7060,9 +7103,13 @@ class KronosDesktopApp:
                     else:
                         status = f"THOÁT BẢO TOÀN VỐN ({close_t})"
 
-                closed_items.append({
+                if not hasattr(self, "_closed_deals_by_ticket"):
+                    self._closed_deals_by_ticket = {}
+
+                cd_item = {
                     "ticket": d.position_id,
                     "date": date_close_str,
+                    "open_ts": int(ed.time) if ed else int(d.time),
                     "open_time": open_t,
                     "close_time": close_t,
                     "close_ts": int(d.time),
@@ -7083,13 +7130,85 @@ class KronosDesktopApp:
                     "r_ratio_str": r_ratio_str,
                     "category": category,
                     "status": status,
-                })
+                }
+                closed_items.append(cd_item)
+                self._closed_deals_by_ticket[int(d.position_id)] = cd_item
 
             self._cached_closed_deals_map[range_key] = (now_mono, closed_items)
             return closed_items
         except Exception as e:
             self.log_error("GET_CLOSED_DEALS", e, show_in_ui=False)
             return []
+
+    def _get_closed_deal_info(self, ticket: int, symbol: str = None) -> dict:
+        """Lấy thông tin chi tiết của một lệnh đã đóng theo mã ticket để hiển thị soi nến trên biểu đồ."""
+        if not hasattr(self, "_closed_deals_by_ticket"):
+            self._closed_deals_by_ticket = {}
+        try:
+            t_int = int(ticket)
+        except (ValueError, TypeError):
+            return None
+
+        cd = self._closed_deals_by_ticket.get(t_int)
+        if cd is not None:
+            return cd
+
+        # 1. Quét tìm trong danh sách hôm nay
+        today_deals = self._get_today_closed_deals(symbol=symbol)
+        for d in today_deals:
+            if int(d.get("ticket", 0)) == t_int:
+                self._closed_deals_by_ticket[t_int] = d
+                return d
+
+        # 2. Fallback: Truy vấn trực tiếp từ MT5 trong 7 ngày gần nhất nếu là lệnh cũ
+        if MT5_AVAILABLE:
+            try:
+                now_ts = int(time.time())
+                start_q = datetime.fromtimestamp(now_ts - 86400 * 7)
+                end_q = datetime.fromtimestamp(now_ts + 86400)
+                with self._mt5_lock:
+                    d_list = mt5.history_deals_get(start_q, end_q, position=t_int)
+                    o_list = mt5.history_orders_get(start_q, end_q, position=t_int)
+                if d_list:
+                    ed = next((x for x in d_list if x.entry == mt5.DEAL_ENTRY_IN), None)
+                    xd = next((x for x in d_list if x.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT, getattr(mt5, "DEAL_ENTRY_OUT_BY", 3))), None)
+                    if ed and xd:
+                        orig_type = "BUY" if ed.type == mt5.DEAL_TYPE_BUY else "SELL"
+                        first_ord = o_list[0] if o_list else None
+                        sl_p = float(first_ord.sl) if first_ord else 0.0
+                        tp_p = float(first_ord.tp) if first_ord else 0.0
+                        net_p = float(xd.profit + xd.swap + xd.commission + getattr(xd, "fee", 0.0))
+                        cmt = str(xd.comment or "").lower()
+                        d_vn_dt = datetime.fromtimestamp(int(xd.time), tz=VN_TZ)
+                        close_t = d_vn_dt.strftime("%H:%M:%S")
+                        open_t = datetime.fromtimestamp(ed.time, tz=VN_TZ).strftime("%H:%M:%S")
+                        dur_sec = max(0, int(xd.time) - int(ed.time))
+                        status = "ĐÃ CẮT LỖ SL" if "[sl" in cmt else ("ĐÃ CHỐT TP" if "[tp" in cmt else ("LÃI" if net_p > 0 else "LỖ"))
+                        cd = {
+                            "ticket": t_int,
+                            "date": d_vn_dt.strftime("%Y-%m-%d"),
+                            "open_ts": int(ed.time),
+                            "close_ts": int(xd.time),
+                            "open_time": open_t,
+                            "close_time": close_t,
+                            "time_display": f"{open_t} → {close_t}",
+                            "duration": self._format_duration(dur_sec),
+                            "duration_sec": dur_sec,
+                            "symbol": ed.symbol,
+                            "type": orig_type,
+                            "volume": float(ed.volume),
+                            "open_price": float(ed.price),
+                            "close_price": float(xd.price),
+                            "sl": sl_p,
+                            "tp": tp_p,
+                            "net_pnl": net_p,
+                            "status": f"{status} ({close_t})",
+                        }
+                        self._closed_deals_by_ticket[t_int] = cd
+                        return cd
+            except Exception:
+                pass
+        return None
 
     def _get_today_closed_deals(self, symbol: str = None) -> list:
         """Lấy danh sách các lệnh đã đóng hôm nay (theo giờ VN GMT+7)."""
@@ -8784,6 +8903,18 @@ class KronosDesktopApp:
             chart_bars = min(max(int(self.lookback_var.get() or 450), 400), 500)
         except ValueError:
             chart_bars = 450
+
+        # Nếu đang soi nến của một lệnh đã đóng, đảm bảo số nến tải về đủ dài để bao quát nến khớp lệnh
+        sel_f_ticket = getattr(self, "_selected_deal_ticket_focus", None)
+        if sel_f_ticket:
+            cd_focus = self._get_closed_deal_info(sel_f_ticket, symbol=symbol)
+            if cd_focus and cd_focus.get("open_ts"):
+                tf_sec_m = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
+                t_sec = tf_sec_m.get(active_tf, 300)
+                bars_needed = int((time.time() - cd_focus["open_ts"]) / t_sec) + 40
+                if bars_needed > chart_bars:
+                    chart_bars = min(1500, max(chart_bars, bars_needed))
+
         df_live = self.fetch_mt5_candles(symbol, active_tf, chart_bars, include_forming=True)
         if active_tf == ana_tf:
             self.cached_df_analysis = df_live
@@ -9964,12 +10095,12 @@ class KronosDesktopApp:
 
         # 2. Luôn hiển thị nhãn Entry, SL, TP kèm cả Mức Giá & Số Lãi/Lỗ ($) của các lệnh đang mở
         open_positions = None
+        sel_tickets = self._get_selected_tickets_for_profile(self.active_profile_key)
+        has_sel = len(sel_tickets) > 0
         if MT5_AVAILABLE:
             with self._mt5_lock:
                 open_positions = mt5.positions_get(symbol=symbol)
             if open_positions:
-                sel_tickets = self._get_selected_tickets_for_profile(self.active_profile_key)
-                has_sel = len(sel_tickets) > 0
                 eps_eq = self._get_symbol_tolerances(symbol)["eps_equal"]
                 cfg_chart = self._get_profile_cfg(self.active_profile_key)
                 def_be_p = 5.0 if self.active_profile_key == "BTCUSD" else 0.2
@@ -10114,6 +10245,166 @@ class KronosDesktopApp:
                         )
                         self._pos_text_artists.append((t_tp, idx_p))
 
+        # 2b. Hiển thị Lệnh Đã Đóng & Tô Màu Vàng Cây Nến Khớp Lệnh khi người dùng nhấp chọn trong bảng Lịch Sử
+        sel_closed_deal = None
+        if sel_tickets:
+            for t_sel in sel_tickets:
+                cd_cand = self._get_closed_deal_info(t_sel, symbol=symbol)
+                if cd_cand is not None:
+                    sel_closed_deal = cd_cand
+                    break
+
+        if sel_closed_deal is not None:
+            cd = sel_closed_deal
+            open_ts = int(cd.get("open_ts") or 0)
+            open_p = float(cd.get("open_price") or 0.0)
+            sl_p = float(cd.get("sl") or 0.0)
+            tp_p = float(cd.get("tp") or 0.0)
+            close_p = float(cd.get("close_price") or 0.0)
+            net_pnl = float(cd.get("net_pnl") or 0.0)
+            cmd_type = str(cd.get("type", "BUY")).upper()
+            is_buy = (cmd_type == "BUY")
+            status_str = str(cd.get("status", "")).strip()
+
+            # 1. Tìm cây nến khớp lệnh chính xác trên biểu đồ
+            tf_sec_map = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}
+            tf_sec = tf_sec_map.get(tf, 300)
+            k_match = -1
+            ts_vals = [int(pd.to_datetime(t).timestamp()) for t in hist["timestamps"]] if n_hist > 0 else []
+            if open_ts > 0 and n_hist > 0:
+                for idx_k, c_ts in enumerate(ts_vals):
+                    if c_ts <= open_ts < (c_ts + tf_sec):
+                        k_match = idx_k
+                        break
+                if k_match < 0:
+                    diffs = [abs(c_ts - open_ts) for c_ts in ts_vals]
+                    min_diff_idx = int(np.argmin(diffs))
+                    if diffs[min_diff_idx] <= tf_sec * 2:
+                        k_match = min_diff_idx
+
+            # Tự động trượt tầm nhìn về cây nến khớp lệnh (Auto-focus) nếu vừa nhấp chọn
+            if getattr(self, "_selected_deal_ticket_focus", None) == cd["ticket"] and k_match >= 0:
+                new_xlim = (max(-1.5, k_match - 35), min(total_x + 5.0, k_match + 35))
+                self.saved_xlim = new_xlim
+                self.user_zoomed = True
+                self.ax.set_xlim(new_xlim)
+                view_xlim = new_xlim
+                span_x = max(view_xlim[1] - view_xlim[0], 10.0)
+                base_label_x = view_xlim[0] + span_x * 0.018
+                col_step_x = span_x * 0.18
+                self._selected_deal_ticket_focus = None
+
+            # 2. Tô màu VÀNG rực rỡ cây nến khớp lệnh
+            if 0 <= k_match < n_hist:
+                o_m = float(opens[k_match])
+                h_m = float(highs[k_match])
+                l_m = float(lows[k_match])
+                c_m = float(closes[k_match])
+
+                # Râu nến vàng nổi bật
+                self.ax.plot([k_match, k_match], [l_m, h_m], color="#ffd700", linewidth=3.5, zorder=25)
+                # Thân nến vàng rực rỡ với viền trắng
+                bot_m = min(o_m, c_m)
+                hgt_m = max(abs(c_m - o_m), 0.06)
+                gold_rect = Rectangle(
+                    (k_match - 0.38, bot_m), 0.76, hgt_m,
+                    facecolor="#ffd700", edgecolor="#ffffff", linewidth=1.5, zorder=26
+                )
+                self.ax.add_patch(gold_rect)
+                # Viền phát sáng hào quang
+                glow_rect = Rectangle(
+                    (k_match - 0.44, bot_m - 0.12), 0.88, hgt_m + 0.24,
+                    facecolor="none", edgecolor="#ffea00", linewidth=1.8, linestyle="--", zorder=27, alpha=0.9
+                )
+                self.ax.add_patch(glow_rect)
+
+                # Mũi tên và nhãn chỉ vào cây nến khớp lệnh
+                arrow_y = l_m if is_buy else h_m
+                offset_y = -35 if is_buy else 35
+                va_txt = "top" if is_buy else "bottom"
+                self.ax.annotate(
+                    f" ⭐ NẾN KHỚP LỆNH #{cd['ticket']}\n {cmd_type} {cd.get('volume', 0.02):.2f} lot @ {open_p:.2f} ({cd.get('open_time', '')}) ",
+                    xy=(k_match, arrow_y),
+                    xytext=(0, offset_y),
+                    textcoords="offset points",
+                    ha="center", va=va_txt,
+                    fontsize=8.5, fontweight="bold",
+                    color="#000000",
+                    bbox=dict(boxstyle="round,pad=0.35", facecolor="#ffd700", edgecolor="#ffffff", lw=1.2),
+                    arrowprops=dict(arrowstyle="->", color="#ffd700", lw=2.2),
+                    zorder=40
+                )
+
+                # Đánh dấu cây nến đóng lệnh (nếu nằm trên biểu đồ)
+                close_ts = int(cd.get("close_ts") or 0)
+                k_close = -1
+                if close_ts > 0 and n_hist > 0:
+                    for idx_k, c_ts in enumerate(ts_vals):
+                        if c_ts <= close_ts < (c_ts + tf_sec):
+                            k_close = idx_k
+                            break
+                if 0 <= k_close < n_hist and close_p > 0:
+                    exit_col = "#ff1744" if net_pnl < 0 else "#00e676"
+                    self.ax.plot(k_close, close_p, marker="X", markersize=10, color=exit_col, markeredgecolor="#ffffff", markeredgewidth=1.4, zorder=40)
+                    self.ax.annotate(
+                        f" 🚪 Đóng @ {close_p:.2f}\n ({net_pnl:+.2f}$) ",
+                        xy=(k_close, close_p),
+                        xytext=(0, 25 if is_buy else -25),
+                        textcoords="offset points",
+                        ha="center", va="bottom" if is_buy else "top",
+                        fontsize=8.0, fontweight="bold",
+                        color="#ffffff",
+                        bbox=dict(boxstyle="round,pad=0.25", facecolor="#131722", edgecolor=exit_col, lw=1.2),
+                        arrowprops=dict(arrowstyle="->", color=exit_col, lw=1.8),
+                        zorder=40
+                    )
+
+            # 3. Vẽ 3 đường mức giá Entry, SL, TP của lệnh đã đóng
+            # Đường Entry
+            self.ax.axhline(y=open_p, color="#ffd700", linestyle="-", linewidth=2.0, alpha=0.95, zorder=28)
+            t_closed_ent = self.ax.text(
+                base_label_x, open_p,
+                f" 👉 [LỆNH #{cd['ticket']} ĐÃ ĐÓNG] Entry: {open_p:.2f} ({cmd_type} {cd.get('volume', 0.02):.2f} lot) | PnL: {net_pnl:+.2f}$ ",
+                color="#000000", backgroundcolor="#ffd700",
+                fontsize=8.5, fontweight="bold", va="center", clip_on=True, zorder=35
+            )
+            self._pos_text_artists.append((t_closed_ent, -1))
+
+            # Đường SL
+            if sl_p > 0:
+                sl_dist = abs(open_p - sl_p)
+                self.ax.axhline(y=sl_p, color="#ff1744", linestyle="--", linewidth=1.8, alpha=0.9, zorder=28)
+                t_closed_sl = self.ax.text(
+                    base_label_x, sl_p,
+                    f" 🛑 [#{cd['ticket']}] SL: {sl_p:.2f} (-{sl_dist:.2f} giá) ",
+                    color="#ffffff", backgroundcolor="#ff1744",
+                    fontsize=8.0, fontweight="bold", va="center", clip_on=True, zorder=35
+                )
+                self._pos_text_artists.append((t_closed_sl, -1))
+
+            # Đường TP
+            if tp_p > 0:
+                tp_dist = abs(tp_p - open_p)
+                self.ax.axhline(y=tp_p, color="#00e676", linestyle="--", linewidth=1.8, alpha=0.9, zorder=28)
+                t_closed_tp = self.ax.text(
+                    base_label_x, tp_p,
+                    f" 🎯 [#{cd['ticket']}] TP: {tp_p:.2f} (+{tp_dist:.2f} giá) ",
+                    color="#000000", backgroundcolor="#00e676",
+                    fontsize=8.0, fontweight="bold", va="center", clip_on=True, zorder=35
+                )
+                self._pos_text_artists.append((t_closed_tp, -1))
+
+            # Đường Exit nếu khác SL và TP
+            if close_p > 0 and (sl_p == 0 or abs(close_p - sl_p) > 0.05) and (tp_p == 0 or abs(close_p - tp_p) > 0.05):
+                self.ax.axhline(y=close_p, color="#ff9100", linestyle="-.", linewidth=1.4, alpha=0.85, zorder=27)
+                t_closed_exit = self.ax.text(
+                    base_label_x + col_step_x, close_p,
+                    f" 🚪 [#{cd['ticket']}] Giá đóng: {close_p:.2f} ({status_str}) ",
+                    color="#000000", backgroundcolor="#ff9100",
+                    fontsize=8.0, fontweight="bold", va="center", clip_on=True, zorder=34
+                )
+                self._pos_text_artists.append((t_closed_exit, -1))
+
         # Vẽ đường Canh Vùng Giá AI <= SL Tối Đa (nếu đang có vùng canh giá hoạt động)
         if self.pending_pullback_order is not None:
             p = self.pending_pullback_order
@@ -10234,10 +10525,20 @@ class KronosDesktopApp:
         ana_tf_hint = self.analysis_tf_var.get().strip()
         if show_ai_ov and tf != ana_tf_hint:
             zoom_hint = f" [💡 Bấm nút {ana_tf_hint} để xem 6 nến dự báo AI]"
-        self.ax.set_title(
-            f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f} ({cd_str}){zoom_hint}",
-            color=GOLD_ACCENT, fontsize=9, fontweight="bold"
-        )
+        if sel_closed_deal is not None:
+            cd = sel_closed_deal
+            open_p_str = f"{float(cd.get('open_price') or 0.0):.2f}"
+            close_p_str = f"{float(cd.get('close_price') or 0.0):.2f}"
+            pnl_str = f"{float(cd.get('net_pnl') or 0.0):+.2f}$"
+            self.ax.set_title(
+                f"🔍 [SOI NẾN LỆNH #{cd['ticket']}] {cd.get('type')} @ {open_p_str} ➔ Đóng @ {close_p_str} | PnL: {pnl_str} ({status_str}) — {symbol} ({tf}){zoom_hint}",
+                color=GOLD_ACCENT, fontsize=8.8, fontweight="bold"
+            )
+        else:
+            self.ax.set_title(
+                f"[{mode_label}] {symbol} ({tf}) — Giá Live: {live_price:.2f} ({cd_str}){zoom_hint}",
+                color=GOLD_ACCENT, fontsize=9, fontweight="bold"
+            )
         handles, labels = self.ax.get_legend_handles_labels()
         if handles and any(bool(lbl and not lbl.startswith("_")) for lbl in labels):
             self.ax.legend(loc="upper left", facecolor=PANEL_BG, edgecolor="#2b3548", labelcolor=TEXT_MAIN, fontsize=8, framealpha=0.85)
