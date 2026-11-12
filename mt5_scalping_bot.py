@@ -235,6 +235,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khi giá chạm vào Vùng Canh Giá của AI, bot không khớp lệnh ngay mù quáng mà sẽ quan sát nến Scalping (M1/M5). Nếu nến đang cắm đầu rơi tự do (thân nến đỏ đặc Marubozu), bot sẽ CHỜ và CHỈ khớp lệnh khi xuất hiện tín hiệu lực cầu đỡ giá (rút râu dưới, nến xanh đảo chiều, hoặc bật nảy từ đáy).",
         "how_to_set": "- LUÔN BẬT (Mặc định): Loại bỏ hoàn toàn tình trạng 'bắt dao rơi' ngay giữa cây nến đang giảm dốc."
     },
+    "structure_conflict_mode": {
+        "title": "Xử lý xung đột Cấu Trúc Đa Khung (M5 vs M15)",
+        "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
+        "how_to_set": "- neutral (Khuyên dùng - Mặc định): Trả về Trung Lập để bảo toàn vốn, không chặn oan và không vào lệnh rủi ro.\n- scalp: Ưu tiên khung M5.\n- analysis: Ưu tiên khung M15."
+    },
 
     # ─── MỤC 3: QUẢN LÝ LỆNH & CHỐT LỜI ───
     "auto_be": {
@@ -415,6 +420,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
+        "structure_conflict_mode": "neutral",
         "auto_be": True,
         "be_trigger_r": "1.0",
         "auto_trail": True,
@@ -467,6 +473,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
+        "structure_conflict_mode": "neutral",
         "auto_be": True,
         "be_trigger_r": "1.0",
         "auto_trail": True,
@@ -2314,6 +2321,13 @@ class KronosDesktopApp:
         self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (Zero-Lag)", self.trend_filter_var, help_key="trend_filter")
         self.confirm_entry_pa_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
+        self.structure_conflict_mode_var = self._add_labeled_combo(
+            sec2.content,
+            "Xử lý xung đột Cấu Trúc (M5 vs M15):",
+            ["neutral", "scalp", "analysis"],
+            "neutral",
+            help_key="structure_conflict_mode"
+        )
 
         tk.Button(
             sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc Entry & Nhồi lệnh)", bg="#161e2e", fg="#94a3b8",
@@ -4831,6 +4845,7 @@ class KronosDesktopApp:
             "one_order_per_candle": self.one_order_per_candle_var,
             "trend_filter": self.trend_filter_var,
             "confirm_entry_pa": self.confirm_entry_pa_var,
+            "structure_conflict_mode": self.structure_conflict_mode_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
             "auto_trail": self.auto_trail_var,
@@ -5285,7 +5300,7 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "structure_conflict_mode"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
@@ -8675,20 +8690,28 @@ class KronosDesktopApp:
         Tuyệt đối KHÔNG phụ thuộc vào các đường MA trễ nải (như EMA34/89) để loại bỏ 100% độ trễ.
         """
         ctx_info = {
-            "macro_dir": 0,       # +1: Cấu trúc Tăng (BOS/HH+HL), -1: Cấu trúc Giảm (BOS/LH+LL), 0: Đi ngang/Tích lũy
+            "macro_dir": 0,       # +1: Cấu trúc Tăng, -1: Cấu trúc Giảm, 0: Đi ngang/Tích lũy/Xung đột
             "orderflow_dir": 0,   # +1: Mua chủ động, -1: Bán chủ động
             "wick_dir": 0,        # +1: Rút chân dưới (Buy Sweep), -1: Rút chân trên (Sell Sweep)
             "summary_tag": "Cân bằng",
             "structure_reason": "Cân bằng / Tích lũy",
-            "break_type": "none", # "fractal_bos" (a), "momentum_10bar" (b), "scalp_conflict" (c)
+            "break_type": "NONE", # "BOS" | "CHOCH" | "SWING" | "NONE"
             "timeframe_conflict": False,
             "scalp_dir": 0,
             "ana_dir": 0,
         }
         try:
+            conflict_mode = "neutral"
+            try:
+                pk = getattr(self, "active_profile_key", "XAUUSD")
+                cfg = self._get_profile_cfg(pk) if hasattr(self, "_get_profile_cfg") else {}
+                conflict_mode = str(cfg.get("structure_conflict_mode", "neutral")).strip().lower()
+            except Exception:
+                conflict_mode = "neutral"
+
             def _extract_structure(df_in):
                 if df_in is None or len(df_in) < 15:
-                    return 0, "Cân bằng", "none"
+                    return 0, "Cân bằng", "NONE"
                 h_v = df_in["high"].astype(float).values
                 l_v = df_in["low"].astype(float).values
                 c_v = df_in["close"].astype(float).values
@@ -8706,7 +8729,7 @@ class KronosDesktopApp:
                 cur_c = c_v[-1]
                 dir_val = 0
                 reas = "Cân bằng"
-                b_type = "none"
+                b_type = "NONE"
 
                 if len(p_h) >= 2 and len(p_l) >= 2:
                     lh = p_h[-1] < p_h[-2]
@@ -8714,24 +8737,27 @@ class KronosDesktopApp:
                     hh = p_h[-1] > p_h[-2]
                     hl = p_l[-1] > p_l[-2]
 
+                    prev_trend = -1 if (lh and ll) else (1 if (hh and hl) else 0)
+
                     if cur_c > p_h[-1]:
                         dir_val = 1
-                        reas = f"BOS/CHoCH Tăng (Giá {cur_c:.2f} > Đỉnh {p_h[-1]:.2f})"
-                        b_type = "fractal_bos"
+                        b_type = "CHOCH" if prev_trend == -1 else "BOS"
+                        reas = f"{b_type} Tăng (Giá {cur_c:.2f} > Đỉnh {p_h[-1]:.2f})"
                     elif cur_c < p_l[-1]:
                         dir_val = -1
-                        reas = f"BOS Giảm (Giá {cur_c:.2f} < Đáy {p_l[-1]:.2f})"
-                        b_type = "fractal_bos"
+                        b_type = "CHOCH" if prev_trend == 1 else "BOS"
+                        reas = f"{b_type} Giảm (Giá {cur_c:.2f} < Đáy {p_l[-1]:.2f})"
                     elif lh and ll:
                         dir_val = -1
+                        b_type = "SWING"
                         reas = f"Cấu trúc Giảm LH+LL (Đỉnh {p_h[-1]:.2f} < {p_h[-2]:.2f})"
-                        b_type = "fractal_bos"
                     elif hh and hl:
                         dir_val = 1
+                        b_type = "SWING"
                         reas = f"Cấu trúc Tăng HH+HL (Đáy {p_l[-1]:.2f} > {p_l[-2]:.2f})"
-                        b_type = "fractal_bos"
 
-                # Xung lực 10 nến gần nhất: Kiểm tra hiện tượng rơi tự do hoặc tăng dốc đứng
+                # Xung lực 10 nến gần nhất: KHÔNG được ghi đè BOS/CHoCH vô điều kiện
+                # Chỉ dùng khi dir_val == 0 (chưa rõ cấu trúc) hoặc khi cùng chiều với cấu trúc
                 recent_c = c_v[-10:]
                 recent_o = o_v[-10:]
                 red_c = int(np.sum(recent_c < recent_o))
@@ -8740,13 +8766,17 @@ class KronosDesktopApp:
                 local_max = float(np.max(h_v[-10:]))
 
                 if red_c >= 7 and cur_c <= local_min + (atr * 0.25):
-                    dir_val = -1
-                    reas = f"Đổ đèo tự do ({red_c}/10 nến đỏ sát đáy {local_min:.2f})"
-                    b_type = "momentum_10bar"
+                    if dir_val == 0 or dir_val == -1:
+                        dir_val = -1
+                        reas = f"Đổ đèo tự do ({red_c}/10 nến đỏ sát đáy {local_min:.2f})"
+                        if b_type == "NONE":
+                            b_type = "SWING"
                 elif green_c >= 7 and cur_c >= local_max - (atr * 0.25):
-                    dir_val = 1
-                    reas = f"Tăng dốc đứng ({green_c}/10 nến xanh sát đỉnh {local_max:.2f})"
-                    b_type = "momentum_10bar"
+                    if dir_val == 0 or dir_val == 1:
+                        dir_val = 1
+                        reas = f"Tăng dốc đứng ({green_c}/10 nến xanh sát đỉnh {local_max:.2f})"
+                        if b_type == "NONE":
+                            b_type = "SWING"
 
                 return dir_val, reas, b_type
 
@@ -8756,27 +8786,35 @@ class KronosDesktopApp:
             ctx_info["scalp_dir"] = s_dir
             ctx_info["ana_dir"] = a_dir
 
-            # Phân loại lý do chặn: (a) Fractal BOS, (b) 7/10 nến Momentum, (c) Xung đột khung M5 vs M15
-            if s_dir != 0 and a_dir != 0 and s_dir != a_dir:
+            # 2. Xử lý xung đột khung Scalp vs Phân tích M15 theo cấu hình structure_conflict_mode
+            if s_dir != 0 and a_dir != 0 and (s_dir * a_dir == -1):
                 ctx_info["timeframe_conflict"] = True
-                ctx_info["break_type"] = "scalp_conflict"
-            elif s_dir != 0:
-                ctx_info["break_type"] = s_type
-            elif a_dir != 0:
-                ctx_info["break_type"] = a_type
+                if conflict_mode == "neutral":
+                    ctx_info["macro_dir"] = 0
+                    ctx_info["break_type"] = "NONE"
+                    ctx_info["structure_reason"] = f"Xung đột đa khung (Scalp {s_dir:+d} vs Phân tích {a_dir:+d}) -> Trung lập"
+                elif conflict_mode == "analysis":
+                    ctx_info["macro_dir"] = a_dir
+                    ctx_info["break_type"] = a_type
+                    ctx_info["structure_reason"] = f"Xung đột đa khung (Ưu tiên Phân tích: {a_reas})"
+                else:  # "scalp"
+                    ctx_info["macro_dir"] = s_dir
+                    ctx_info["break_type"] = s_type
+                    ctx_info["structure_reason"] = f"Xung đột đa khung (Ưu tiên Scalp: {s_reas})"
             else:
-                ctx_info["break_type"] = "none"
-
-            # Ưu tiên khung Scalping vì bám sát biến động nến thực tế (không dùng hàm làm mượt gây trễ nến)
-            if s_dir != 0:
-                ctx_info["macro_dir"] = s_dir
-                ctx_info["structure_reason"] = s_reas
-            elif a_dir != 0:
-                ctx_info["macro_dir"] = a_dir
-                ctx_info["structure_reason"] = a_reas
-            else:
-                ctx_info["macro_dir"] = 0
-                ctx_info["structure_reason"] = "Cân bằng / Tích lũy"
+                ctx_info["timeframe_conflict"] = False
+                if s_dir != 0:
+                    ctx_info["macro_dir"] = s_dir
+                    ctx_info["break_type"] = s_type
+                    ctx_info["structure_reason"] = s_reas
+                elif a_dir != 0:
+                    ctx_info["macro_dir"] = a_dir
+                    ctx_info["break_type"] = a_type
+                    ctx_info["structure_reason"] = a_reas
+                else:
+                    ctx_info["macro_dir"] = 0
+                    ctx_info["break_type"] = "NONE"
+                    ctx_info["structure_reason"] = "Cân bằng / Tích lũy"
 
             ref_df = df_scalp if (df_scalp is not None and len(df_scalp) >= 12) else df_ana
             recent = ref_df.iloc[-12:]
