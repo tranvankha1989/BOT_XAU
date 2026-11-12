@@ -10129,92 +10129,92 @@ class KronosDesktopApp:
 
                     # Tùy biến màu sắc, độ dày nét và nhãn khi người dùng chọn lệnh trong danh sách
                     if is_sel:
-                        # 1. LỆNH ĐƯỢC CHỌN TRONG BẢNG: NỔI BẬT ĐẶC BIỆT (Cyan rực rỡ, nét dày, icon & số ticket)
+                        # 1. LỆNH ĐƯỢC CHỌN TRONG BẢNG: Nổi bật vừa phải, đường kẻ thanh mảnh
                         entry_col = "#00e5ff"  # Neon Cyan
-                        entry_w = 2.4
+                        entry_w = 1.15
                         entry_ls = "-"
-                        entry_alpha = 1.0
+                        entry_alpha = 0.95
                         entry_bg = "#00e5ff"
                         entry_fg = "#000000"
-                        entry_txt = f" 👉 [LỆNH #{pos.ticket}] Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
-                        entry_fs = 8.5
+                        entry_txt = f" 👉 [#{pos.ticket}] Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
+                        entry_fs = 7.5
                         z_line, z_badge = 28, 32
 
                         sl_col = "#ffea00" if is_profit_sl else "#ff1744"  # Neon Amber nếu khóa lãi, Neon Red nếu cắt lỗ
-                        sl_w = 2.2
+                        sl_w = 1.0
                         sl_ls = "--"
-                        sl_alpha = 1.0
+                        sl_alpha = 0.95
                         sl_bg = "#ffea00" if is_profit_sl else "#ff1744"
                         sl_fg = "#000000" if is_profit_sl else "#ffffff"
                         sl_txt = f" 👉 [#{pos.ticket}] SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) "
-                        sl_fs = 8.0
+                        sl_fs = 7.2
 
                         tp_col = "#00e676"  # Neon Green
-                        tp_w = 2.2
+                        tp_w = 1.0
                         tp_ls = "--"
-                        tp_alpha = 1.0
+                        tp_alpha = 0.95
                         tp_bg = "#00e676"
                         tp_fg = "#000000"
                         tp_txt = f" 👉 [#{pos.ticket}] TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) "
-                        tp_fs = 8.0
+                        tp_fs = 7.2
                     elif has_sel:
                         # 2. CÁC LỆNH KHÁC KHI ĐANG CÓ LỆNH ĐƯỢC CHỌN: Làm mờ nhẹ để mắt người dùng tập trung vào lệnh chọn
                         entry_col = "#00e676" if is_buy else "#ff5252"
-                        entry_w = 0.9
+                        entry_w = 0.8
                         entry_ls = ":"
                         entry_alpha = 0.40
                         entry_bg = "#0f3923" if is_buy else "#451a1a"
                         entry_fg = "#7ec89e" if is_buy else "#c87e7e"
                         entry_txt = f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
-                        entry_fs = 7.0
+                        entry_fs = 6.8
                         z_line, z_badge = 10, 12
 
                         sl_col = "#cca000" if is_profit_sl else "#8a2a35"
-                        sl_w = 0.8
+                        sl_w = 0.75
                         sl_ls = ":"
                         sl_alpha = 0.35
                         sl_bg = "#3a2c10" if is_profit_sl else "#301317"
                         sl_fg = "#b39860" if is_profit_sl else "#9c6068"
                         sl_txt = f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) "
-                        sl_fs = 7.0
+                        sl_fs = 6.8
 
                         tp_col = "#2a6644"
-                        tp_w = 0.8
+                        tp_w = 0.75
                         tp_ls = ":"
                         tp_alpha = 0.35
                         tp_bg = "#112e1e"
                         tp_fg = "#699e7d"
                         tp_txt = f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) "
-                        tp_fs = 7.0
+                        tp_fs = 6.8
                     else:
                         # 3. KHÔNG CÓ LỆNH NÀO ĐƯỢC CHỌN: Hiển thị giao diện tiêu chuẩn cân bằng
                         entry_col = "#00e676" if is_buy else "#ff5252"
-                        entry_w = 1.2
+                        entry_w = 0.9
                         entry_ls = "--"
-                        entry_alpha = 0.90
+                        entry_alpha = 0.85
                         entry_bg = "#00e676" if is_buy else "#ff5252"
                         entry_fg = "#000000" if is_buy else "#ffffff"
                         entry_txt = f" Entry: {pos.price_open:.2f} ({pos.profit:+.1f}$){be_tag} "
-                        entry_fs = 7.5
+                        entry_fs = 7.2
                         z_line, z_badge = 15, 18
 
                         sl_col = GOLD_ACCENT if is_profit_sl else "#ff5252"
-                        sl_w = 1.1
+                        sl_w = 0.85
                         sl_ls = ":"
-                        sl_alpha = 0.85
+                        sl_alpha = 0.80
                         sl_bg = GOLD_ACCENT if is_profit_sl else "#6e1b26"
                         sl_fg = "#000000" if is_profit_sl else "#ffffff"
                         sl_txt = f" SL: {pos.sl:.2f} ({sl_pnl:+.1f}$) "
-                        sl_fs = 7.5
+                        sl_fs = 7.0
 
                         tp_col = "#69f0ae"
-                        tp_w = 1.1
+                        tp_w = 0.85
                         tp_ls = ":"
-                        tp_alpha = 0.85
+                        tp_alpha = 0.80
                         tp_bg = "#69f0ae"
                         tp_fg = "#000000"
                         tp_txt = f" TP: {pos.tp:.2f} ({tp_pnl:+.1f}$) "
-                        tp_fs = 7.5
+                        tp_fs = 7.0
 
                     # Đường Entry kèm mức giá & số lãi/lỗ hiện tại
                     self.ax.axhline(y=pos.price_open, color=entry_col, linestyle=entry_ls, linewidth=entry_w, alpha=entry_alpha, zorder=z_line)
@@ -10294,48 +10294,42 @@ class KronosDesktopApp:
                 col_step_x = span_x * 0.18
                 self._selected_deal_ticket_focus = None
 
-            # 2. Tô màu VÀNG rực rỡ cây nến khớp lệnh
+            # 2. Tô màu VÀNG thanh mảnh cây nến khớp lệnh
             if 0 <= k_match < n_hist:
                 o_m = float(opens[k_match])
                 h_m = float(highs[k_match])
                 l_m = float(lows[k_match])
                 c_m = float(closes[k_match])
 
-                # Râu nến vàng nổi bật
-                self.ax.plot([k_match, k_match], [l_m, h_m], color="#ffd700", linewidth=3.5, zorder=25)
-                # Thân nến vàng rực rỡ với viền trắng
+                # Râu nến vàng thanh mảnh
+                self.ax.plot([k_match, k_match], [l_m, h_m], color="#ffd700", linewidth=1.8, zorder=25)
+                # Thân nến vàng gọn gàng với viền mảnh
                 bot_m = min(o_m, c_m)
                 hgt_m = max(abs(c_m - o_m), 0.06)
                 gold_rect = Rectangle(
-                    (k_match - 0.38, bot_m), 0.76, hgt_m,
-                    facecolor="#ffd700", edgecolor="#ffffff", linewidth=1.5, zorder=26
+                    (k_match - 0.36, bot_m), 0.72, hgt_m,
+                    facecolor="#ffd700", edgecolor="#ffffff", linewidth=0.8, alpha=0.92, zorder=26
                 )
                 self.ax.add_patch(gold_rect)
-                # Viền phát sáng hào quang
-                glow_rect = Rectangle(
-                    (k_match - 0.44, bot_m - 0.12), 0.88, hgt_m + 0.24,
-                    facecolor="none", edgecolor="#ffea00", linewidth=1.8, linestyle="--", zorder=27, alpha=0.9
-                )
-                self.ax.add_patch(glow_rect)
 
-                # Mũi tên và nhãn chỉ vào cây nến khớp lệnh
+                # Mũi tên và nhãn chỉ vào cây nến khớp lệnh (nhỏ gọn, nền tối, không che nến)
                 arrow_y = l_m if is_buy else h_m
-                offset_y = -35 if is_buy else 35
+                offset_y = -20 if is_buy else 20
                 va_txt = "top" if is_buy else "bottom"
                 self.ax.annotate(
-                    f" ⭐ NẾN KHỚP LỆNH #{cd['ticket']}\n {cmd_type} {cd.get('volume', 0.02):.2f} lot @ {open_p:.2f} ({cd.get('open_time', '')}) ",
+                    f" ⭐ Khớp #{cd['ticket']}: {open_p:.2f} ({cmd_type}) ",
                     xy=(k_match, arrow_y),
                     xytext=(0, offset_y),
                     textcoords="offset points",
                     ha="center", va=va_txt,
-                    fontsize=8.5, fontweight="bold",
-                    color="#000000",
-                    bbox=dict(boxstyle="round,pad=0.35", facecolor="#ffd700", edgecolor="#ffffff", lw=1.2),
-                    arrowprops=dict(arrowstyle="->", color="#ffd700", lw=2.2),
+                    fontsize=7.2, fontweight="bold",
+                    color="#ffd700",
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="#131722", edgecolor="#ffd700", lw=0.8, alpha=0.92),
+                    arrowprops=dict(arrowstyle="->", color="#ffd700", lw=1.0),
                     zorder=40
                 )
 
-                # Đánh dấu cây nến đóng lệnh (nếu nằm trên biểu đồ)
+                # Đánh dấu cây nến đóng lệnh (nhỏ gọn, mảnh)
                 close_ts = int(cd.get("close_ts") or 0)
                 k_close = -1
                 if close_ts > 0 and n_hist > 0:
@@ -10345,65 +10339,69 @@ class KronosDesktopApp:
                             break
                 if 0 <= k_close < n_hist and close_p > 0:
                     exit_col = "#ff1744" if net_pnl < 0 else "#00e676"
-                    self.ax.plot(k_close, close_p, marker="X", markersize=10, color=exit_col, markeredgecolor="#ffffff", markeredgewidth=1.4, zorder=40)
+                    self.ax.plot(k_close, close_p, marker="x", markersize=6, color=exit_col, markeredgewidth=1.1, zorder=40)
                     self.ax.annotate(
-                        f" 🚪 Đóng @ {close_p:.2f}\n ({net_pnl:+.2f}$) ",
+                        f" 🚪 Đóng: {close_p:.2f} ({net_pnl:+.2f}$) ",
                         xy=(k_close, close_p),
-                        xytext=(0, 25 if is_buy else -25),
+                        xytext=(0, 16 if is_buy else -16),
                         textcoords="offset points",
                         ha="center", va="bottom" if is_buy else "top",
-                        fontsize=8.0, fontweight="bold",
+                        fontsize=7.0,
                         color="#ffffff",
-                        bbox=dict(boxstyle="round,pad=0.25", facecolor="#131722", edgecolor=exit_col, lw=1.2),
-                        arrowprops=dict(arrowstyle="->", color=exit_col, lw=1.8),
+                        bbox=dict(boxstyle="round,pad=0.18", facecolor="#131722", edgecolor=exit_col, lw=0.8, alpha=0.9),
+                        arrowprops=dict(arrowstyle="->", color=exit_col, lw=0.9),
                         zorder=40
                     )
 
-            # 3. Vẽ 3 đường mức giá Entry, SL, TP của lệnh đã đóng
+            # 3. Vẽ 3 đường mức giá Entry, SL, TP của lệnh đã đóng (Nét mảnh thanh thoát, nhãn tối viền mảnh không che chữ)
             # Đường Entry
-            self.ax.axhline(y=open_p, color="#ffd700", linestyle="-", linewidth=2.0, alpha=0.95, zorder=28)
+            self.ax.axhline(y=open_p, color="#ffd700", linestyle="--", linewidth=0.9, alpha=0.80, zorder=28)
             t_closed_ent = self.ax.text(
                 base_label_x, open_p,
-                f" 👉 [LỆNH #{cd['ticket']} ĐÃ ĐÓNG] Entry: {open_p:.2f} ({cmd_type} {cd.get('volume', 0.02):.2f} lot) | PnL: {net_pnl:+.2f}$ ",
-                color="#000000", backgroundcolor="#ffd700",
-                fontsize=8.5, fontweight="bold", va="center", clip_on=True, zorder=35
+                f" [#{cd['ticket']}] Entry: {open_p:.2f} | PnL: {net_pnl:+.2f}$ ",
+                color="#ffd700",
+                bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor="#ffd700", lw=0.8, alpha=0.88),
+                fontsize=7.2, fontweight="bold", va="center", clip_on=True, zorder=35
             )
-            self._pos_text_artists.append((t_closed_ent, -1))
+            self._pos_text_artists.append((t_closed_ent, 0))
 
             # Đường SL
             if sl_p > 0:
                 sl_dist = abs(open_p - sl_p)
-                self.ax.axhline(y=sl_p, color="#ff1744", linestyle="--", linewidth=1.8, alpha=0.9, zorder=28)
+                self.ax.axhline(y=sl_p, color="#ff5252", linestyle=":", linewidth=0.85, alpha=0.75, zorder=28)
                 t_closed_sl = self.ax.text(
                     base_label_x, sl_p,
-                    f" 🛑 [#{cd['ticket']}] SL: {sl_p:.2f} (-{sl_dist:.2f} giá) ",
-                    color="#ffffff", backgroundcolor="#ff1744",
-                    fontsize=8.0, fontweight="bold", va="center", clip_on=True, zorder=35
+                    f" [#{cd['ticket']}] SL: {sl_p:.2f} (-{sl_dist:.2f}) ",
+                    color="#ff8a80",
+                    bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor="#ff5252", lw=0.8, alpha=0.88),
+                    fontsize=7.0, va="center", clip_on=True, zorder=35
                 )
-                self._pos_text_artists.append((t_closed_sl, -1))
+                self._pos_text_artists.append((t_closed_sl, 0))
 
             # Đường TP
             if tp_p > 0:
                 tp_dist = abs(tp_p - open_p)
-                self.ax.axhline(y=tp_p, color="#00e676", linestyle="--", linewidth=1.8, alpha=0.9, zorder=28)
+                self.ax.axhline(y=tp_p, color="#69f0ae", linestyle=":", linewidth=0.85, alpha=0.75, zorder=28)
                 t_closed_tp = self.ax.text(
                     base_label_x, tp_p,
-                    f" 🎯 [#{cd['ticket']}] TP: {tp_p:.2f} (+{tp_dist:.2f} giá) ",
-                    color="#000000", backgroundcolor="#00e676",
-                    fontsize=8.0, fontweight="bold", va="center", clip_on=True, zorder=35
+                    f" [#{cd['ticket']}] TP: {tp_p:.2f} (+{tp_dist:.2f}) ",
+                    color="#69f0ae",
+                    bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor="#69f0ae", lw=0.8, alpha=0.88),
+                    fontsize=7.0, va="center", clip_on=True, zorder=35
                 )
-                self._pos_text_artists.append((t_closed_tp, -1))
+                self._pos_text_artists.append((t_closed_tp, 0))
 
             # Đường Exit nếu khác SL và TP
             if close_p > 0 and (sl_p == 0 or abs(close_p - sl_p) > 0.05) and (tp_p == 0 or abs(close_p - tp_p) > 0.05):
-                self.ax.axhline(y=close_p, color="#ff9100", linestyle="-.", linewidth=1.4, alpha=0.85, zorder=27)
+                self.ax.axhline(y=close_p, color="#ffb74d", linestyle=":", linewidth=0.8, alpha=0.70, zorder=27)
                 t_closed_exit = self.ax.text(
                     base_label_x + col_step_x, close_p,
-                    f" 🚪 [#{cd['ticket']}] Giá đóng: {close_p:.2f} ({status_str}) ",
-                    color="#000000", backgroundcolor="#ff9100",
-                    fontsize=8.0, fontweight="bold", va="center", clip_on=True, zorder=34
+                    f" [#{cd['ticket']}] Đóng: {close_p:.2f} ",
+                    color="#ffb74d",
+                    bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor="#ffb74d", lw=0.8, alpha=0.88),
+                    fontsize=7.0, va="center", clip_on=True, zorder=34
                 )
-                self._pos_text_artists.append((t_closed_exit, -1))
+                self._pos_text_artists.append((t_closed_exit, 1))
 
         # Vẽ đường Canh Vùng Giá AI <= SL Tối Đa (nếu đang có vùng canh giá hoạt động)
         if self.pending_pullback_order is not None:
@@ -10414,13 +10412,14 @@ class KronosDesktopApp:
                 max_sl_p = 5.0
             lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
             op_sign = "<=" if p["action"] == "BUY" else ">="
-            self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=1.2, alpha=0.9)
+            self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=0.85, alpha=0.80)
             tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
             t_wait = self.ax.text(
                 base_label_x, lim_entry,
                 f" 🎯 Vùng canh {p['action']}{tight_tag} {op_sign} {lim_entry:.2f} (SL≤{max_sl_p:.2f}$) ",
-                color="#000000", backgroundcolor=GOLD_ACCENT,
-                fontsize=7.5, fontweight="bold", va="center", clip_on=True
+                color=GOLD_ACCENT,
+                bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor=GOLD_ACCENT, lw=0.8, alpha=0.88),
+                fontsize=7.2, fontweight="bold", va="center", clip_on=True
             )
             self._pos_text_artists.append((t_wait, 0))
 
