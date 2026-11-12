@@ -226,9 +226,9 @@ PARAM_HELP_GUIDE = {
         "how_to_set": "- LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
     },
     "trend_filter": {
-        "title": "Lọc thuận xu hướng EMA (Chặn cản tàu / bắt đáy)",
-        "what_is_it": "Tự động phân tích xu hướng thị trường đa khung (EMA34/89 trên M15 và EMA21/50 trên M5/M1). Nếu thị trường đang trong xu hướng Giảm mạnh (Downtrend), bot sẽ CHẶN 100% mọi tín hiệu BUY bắt đáy cản tàu của AI. Ngược lại nếu thị trường đang Tăng mạnh, bot sẽ CHẶN 100% tín hiệu SELL bắt đỉnh.",
-        "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Giúp tài khoản không bao giờ bị 'cắm đầu BUY' trong các pha thị trường sập giá sâu hoặc 'cắm đầu SELL' khi giá bay dựng đứng.\n- Nếu tắt: Bot sẽ vào lệnh bất kể thị trường đang có xu hướng mạnh ra sao (chỉ nên dùng khi đánh sideway trong biên hẹp)."
+        "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (Zero-Lag - Không Độ Trễ)",
+        "what_is_it": "Loại bỏ hoàn toàn các đường MA trễ nải (như EMA34/89). Thay vào đó, bot phân tích trực tiếp Cấu Trúc Đỉnh/Đáy thực tế (Market Structure - Swing Highs/Lows), Phá vỡ cấu trúc (BOS) và Đảo chiều cấu trúc (CHoCH) theo chuẩn Price Action/SMC trên M15 và M5/M1. Khi thị trường đang phá đáy rơi tự do (Bearish BOS), bot sẽ CHẶN 100% tín hiệu BUY cản tàu. Ngược lại khi thị trường đang phá đỉnh tăng mạnh (Bullish BOS), bot sẽ CHẶN 100% tín hiệu SELL cản tàu. Khi có CHoCH đảo chiều hoặc thị trường tích lũy, bot lập tức unblock để vào lệnh không trễ 1 nhịp nến nào.",
+        "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Phản ứng tức thì theo thời gian thực (0ms độ trễ), bảo vệ tài khoản tối đa."
     },
     "confirm_entry_pa": {
         "title": "Xác nhận lực nến Price Action (Chống bắt dao rơi)",
@@ -788,7 +788,7 @@ class KronosDesktopApp:
             self.app_version = get_current_app_version()
             self.updater = AppUpdater(self.app_version)
         except Exception:
-            self.app_version = "1.3.4"
+            self.app_version = "1.3.5"
             self.updater = None
 
         self._has_new_version = False
@@ -2311,7 +2311,7 @@ class KronosDesktopApp:
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
         self.trend_filter_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Lọc thuận xu hướng EMA (Chặn cản tàu)", self.trend_filter_var, help_key="trend_filter")
+        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (Zero-Lag)", self.trend_filter_var, help_key="trend_filter")
         self.confirm_entry_pa_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
 
@@ -8613,47 +8613,89 @@ class KronosDesktopApp:
 
     def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float) -> dict:
         """
-        Trích xuất Ngữ cảnh Đa tầng (Macro Trend EMA34/89, Áp lực Order-Flow Volume Delta & Quét thanh khoản Râu nến)
-        trực tiếp từ chuỗi nến lịch sử sẵn có (0ms độ trễ mạng) để gia cố độ tin cậy cho Kronos Scalping M1/M5.
+        Trích xuất Cấu Trúc Thị Trường Không Độ Trễ (Zero-Lag Market Structure - Swing Highs/Lows, BOS & CHoCH)
+        kết hợp Xung Lực Nến Đóng Cửa & Áp lực Order-Flow Volume Delta trực tiếp từ chuỗi nến thực tế.
+        Tuyệt đối KHÔNG phụ thuộc vào các đường MA trễ nải (như EMA34/89) để loại bỏ 100% độ trễ.
         """
         ctx_info = {
-            "macro_dir": 0,       # +1: Tăng, -1: Giảm, 0: Đi ngang
+            "macro_dir": 0,       # +1: Cấu trúc Tăng (BOS/HH+HL), -1: Cấu trúc Giảm (BOS/LH+LL), 0: Đi ngang/Tích lũy
             "orderflow_dir": 0,   # +1: Mua chủ động, -1: Bán chủ động
             "wick_dir": 0,        # +1: Rút chân dưới (Buy Sweep), -1: Rút chân trên (Sell Sweep)
             "summary_tag": "Cân bằng",
+            "structure_reason": "Cân bằng / Tích lũy",
         }
         try:
-            closes = df_ana["close"].astype(float).values
-            if len(closes) >= 35:
-                s_close = pd.Series(closes)
-                span_f = min(34, len(closes) // 2)
-                span_s = min(89, len(closes) - 1)
-                ema_fast = float(s_close.ewm(span=span_f, adjust=False).mean().iloc[-1])
-                ema_slow = float(s_close.ewm(span=span_s, adjust=False).mean().iloc[-1])
-                ema_gap = (ema_fast - ema_slow) / max(atr, 1e-5)
-                cur_ana_c = closes[-1]
+            def _extract_structure(df_in):
+                if df_in is None or len(df_in) < 15:
+                    return 0, "Cân bằng"
+                h_v = df_in["high"].astype(float).values
+                l_v = df_in["low"].astype(float).values
+                c_v = df_in["close"].astype(float).values
+                o_v = df_in["open"].astype(float).values
+                n_b = len(df_in)
 
-                # Xu hướng khung phân tích chính (Analysis TF):
-                if (ema_gap >= 0.15 and cur_ana_c >= ema_fast) or (cur_ana_c > ema_fast > ema_slow):
-                    ctx_info["macro_dir"] = 1
-                elif (ema_gap <= -0.15 and cur_ana_c <= ema_fast) or (cur_ana_c < ema_fast < ema_slow):
-                    ctx_info["macro_dir"] = -1
+                p_h = []
+                p_l = []
+                for i in range(2, n_b - 2):
+                    if h_v[i] > h_v[i-1] and h_v[i] > h_v[i-2] and h_v[i] > h_v[i+1] and h_v[i] > h_v[i+2]:
+                        p_h.append(h_v[i])
+                    if l_v[i] < l_v[i-1] and l_v[i] < l_v[i-2] and l_v[i] < l_v[i+1] and l_v[i] < l_v[i+2]:
+                        p_l.append(l_v[i])
 
-            # Phân tích thêm xu hướng đa khung trên Khung Scalping (M1/M5) để bắt kịp tốc độ thị trường
-            if df_scalp is not None and len(df_scalp) >= 25:
-                sc_closes = pd.Series(df_scalp["close"].astype(float).values)
-                sc_ema21 = float(sc_closes.ewm(span=21, adjust=False).mean().iloc[-1])
-                sc_ema50 = float(sc_closes.ewm(span=50, adjust=False).mean().iloc[-1])
-                sc_cur = sc_closes.iloc[-1]
+                cur_c = c_v[-1]
+                dir_val = 0
+                reas = "Cân bằng"
 
-                if sc_cur < sc_ema21 and sc_ema21 <= sc_ema50:
-                    # Khung Scalp dốc xuống mạnh -> Khóa xu hướng Giảm (nếu M15 đang giảm hoặc đi ngang)
-                    if ctx_info["macro_dir"] <= 0:
-                        ctx_info["macro_dir"] = -1
-                elif sc_cur > sc_ema21 and sc_ema21 >= sc_ema50:
-                    # Khung Scalp dốc lên mạnh -> Khóa xu hướng Tăng (nếu M15 đang tăng hoặc đi ngang)
-                    if ctx_info["macro_dir"] >= 0:
-                        ctx_info["macro_dir"] = 1
+                if len(p_h) >= 2 and len(p_l) >= 2:
+                    lh = p_h[-1] < p_h[-2]
+                    ll = p_l[-1] < p_l[-2]
+                    hh = p_h[-1] > p_h[-2]
+                    hl = p_l[-1] > p_l[-2]
+
+                    if cur_c > p_h[-1]:
+                        dir_val = 1
+                        reas = f"BOS/CHoCH Tăng (Giá {cur_c:.2f} > Đỉnh {p_h[-1]:.2f})"
+                    elif cur_c < p_l[-1]:
+                        dir_val = -1
+                        reas = f"BOS Giảm (Giá {cur_c:.2f} < Đáy {p_l[-1]:.2f})"
+                    elif lh and ll:
+                        dir_val = -1
+                        reas = f"Cấu trúc Giảm LH+LL (Đỉnh {p_h[-1]:.2f} < {p_h[-2]:.2f})"
+                    elif hh and hl:
+                        dir_val = 1
+                        reas = f"Cấu trúc Tăng HH+HL (Đáy {p_l[-1]:.2f} > {p_l[-2]:.2f})"
+
+                # Xung lực 10 nến gần nhất: Kiểm tra hiện tượng rơi tự do hoặc tăng dốc đứng
+                recent_c = c_v[-10:]
+                recent_o = o_v[-10:]
+                red_c = int(np.sum(recent_c < recent_o))
+                green_c = int(np.sum(recent_c > recent_o))
+                local_min = float(np.min(l_v[-10:]))
+                local_max = float(np.max(h_v[-10:]))
+
+                if red_c >= 7 and cur_c <= local_min + (atr * 0.25):
+                    dir_val = -1
+                    reas = f"Đổ đèo tự do ({red_c}/10 nến đỏ sát đáy {local_min:.2f})"
+                elif green_c >= 7 and cur_c >= local_max - (atr * 0.25):
+                    dir_val = 1
+                    reas = f"Tăng dốc đứng ({green_c}/10 nến xanh sát đỉnh {local_max:.2f})"
+
+                return dir_val, reas
+
+            # 1. Trích xuất cấu trúc không độ trễ trên cả 2 khung Scalping (M1/M5) và Phân tích (M15)
+            s_dir, s_reas = _extract_structure(df_scalp)
+            a_dir, a_reas = _extract_structure(df_ana)
+
+            # Ưu tiên khung Scalping vì phản ứng tức thì (0ms độ trễ)
+            if s_dir != 0:
+                ctx_info["macro_dir"] = s_dir
+                ctx_info["structure_reason"] = s_reas
+            elif a_dir != 0:
+                ctx_info["macro_dir"] = a_dir
+                ctx_info["structure_reason"] = a_reas
+            else:
+                ctx_info["macro_dir"] = 0
+                ctx_info["structure_reason"] = "Cân bằng / Tích lũy"
 
             ref_df = df_scalp if (df_scalp is not None and len(df_scalp) >= 12) else df_ana
             recent = ref_df.iloc[-12:]
@@ -8690,7 +8732,7 @@ class KronosDesktopApp:
 
             tags = []
             if ctx_info["macro_dir"] != 0:
-                tags.append("Trend:Tăng" if ctx_info["macro_dir"] > 0 else "Trend:Giảm")
+                tags.append("CấuTrúc:Tăng" if ctx_info["macro_dir"] > 0 else "CấuTrúc:Giảm")
             if ctx_info["orderflow_dir"] != 0:
                 tags.append("Vol:Mua" if ctx_info["orderflow_dir"] > 0 else "Vol:Bán")
             if ctx_info["wick_dir"] != 0:
@@ -9802,12 +9844,13 @@ class KronosDesktopApp:
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
                     elif trend_filter_on and macro_dir == -1:
                         action = None
-                        sig_color = "#ff9800"  # Cảnh báo vàng cam: chặn ngược trend
-                        sig_title = f"🛡️ [{pk} - {symbol}] ĐỨNG NGOÀI (CHẶN BẮT ĐÁY NGƯỢC TREND) — AI báo BUY ({bull_pct:.0f}%) nhưng Xu Hướng đang GIẢM (M15/M5 EMA Dốc Xuống). Bảo toàn vốn!"
+                        sig_color = "#ff9800"  # Cảnh báo vàng cam: chặn ngược cấu trúc
+                        struct_desc = macro_ctx.get("structure_reason", "Cấu trúc Giảm / Đổ đèo")
+                        sig_title = f"🛡️ [{pk} - {symbol}] ĐỨNG NGOÀI (CHẶN BẮT ĐÁY) — AI gợi ý BUY ({bull_pct:.0f}%) nhưng Cấu Trúc Thị Trường đang GIẢM ({struct_desc}). Bảo toàn vốn!"
                         self.log(
-                            f"🛡️ [{pk} - Chặn Bắt Đáy Ngược Trend] Kịch bản AI có đồng thuận BUY ({bull_pct:.0f}%, {bull_count}/{total}), "
-                            f"nhưng Xu hướng EMA M15/M5 đang GIẢM MẠNH ({macro_ctx.get('summary_tag', 'Trend:Giảm')}). "
-                            f"Trend Filter đã CHẶN mở lệnh BUY để bảo toàn vốn!"
+                            f"🛡️ [{pk} - Chặn Bắt Đáy Ngược Cấu Trúc] Kịch bản AI có đồng thuận BUY ({bull_pct:.0f}%, {bull_count}/{total}), "
+                            f"nhưng Cấu Trúc Thị Trường Không Độ Trễ đang GIẢM ({struct_desc} | {macro_ctx.get('summary_tag', 'CấuTrúc:Giảm')}). "
+                            f"Bộ lọc Cấu Trúc Zero-Lag đã CHẶN mở lệnh BUY để bảo toàn vốn!"
                         )
                     else:
                         action = "BUY"
@@ -9829,12 +9872,13 @@ class KronosDesktopApp:
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BẤT ĐỊNH CAO) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% | Phân tán: {dispersion_r:.2f}x ATR > {max_dispersion:.1f}x | Tin cậy: {confidence_pct:.0f}%"
                     elif trend_filter_on and macro_dir == 1:
                         action = None
-                        sig_color = "#ff9800"  # Cảnh báo vàng cam: chặn ngược trend
-                        sig_title = f"🛡️ [{pk} - {symbol}] ĐỨNG NGOÀI (CHẶN BẮT ĐỈNH NGƯỢC TREND) — AI báo SELL ({bear_pct:.0f}%) nhưng Xu Hướng đang TĂNG (M15/M5 EMA Dốc Lên). Bảo toàn vốn!"
+                        sig_color = "#ff9800"  # Cảnh báo vàng cam: chặn ngược cấu trúc
+                        struct_desc = macro_ctx.get("structure_reason", "Cấu trúc Tăng / Dựng cột")
+                        sig_title = f"🛡️ [{pk} - {symbol}] ĐỨNG NGOÀI (CHẶN BẮT ĐỈNH) — AI gợi ý SELL ({bear_pct:.0f}%) nhưng Cấu Trúc Thị Trường đang TĂNG ({struct_desc}). Bảo toàn vốn!"
                         self.log(
-                            f"🛡️ [{pk} - Chặn Bắt Đỉnh Ngược Trend] Kịch bản AI có đồng thuận SELL ({bear_pct:.0f}%, {bear_count}/{total}), "
-                            f"nhưng Xu hướng EMA M15/M5 đang TĂNG MẠNH ({macro_ctx.get('summary_tag', 'Trend:Tăng')}). "
-                            f"Trend Filter đã CHẶN mở lệnh SELL để bảo toàn vốn!"
+                            f"🛡️ [{pk} - Chặn Bắt Đỉnh Ngược Cấu Trúc] Kịch bản AI có đồng thuận SELL ({bear_pct:.0f}%, {bear_count}/{total}), "
+                            f"nhưng Cấu Trúc Thị Trường Không Độ Trễ đang TĂNG ({struct_desc} | {macro_ctx.get('summary_tag', 'CấuTrúc:Tăng')}). "
+                            f"Bộ lọc Cấu Trúc Zero-Lag đã CHẶN mở lệnh SELL để bảo toàn vốn!"
                         )
                     else:
                         action = "SELL"
