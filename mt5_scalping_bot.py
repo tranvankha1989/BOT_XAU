@@ -14,6 +14,7 @@ import json
 import re
 import math
 import time
+import types
 import queue
 import shutil
 import ctypes
@@ -851,7 +852,12 @@ def is_trading_window_blocked(now_utc7=None, cfg: dict = None) -> tuple:
     }
 
     items = [x.strip() for x in re.split(r"[,;\n]+", raw_val) if x.strip()]
-    now_hm = now_dt.strftime("%H:%M")
+    def _to_min(hm: str) -> int:
+        h, mi = hm.split(":")
+        return int(h) * 60 + int(mi)
+
+    now_min = now_dt.hour * 60 + now_dt.minute
+    now_floor = now_dt.replace(second=0, microsecond=0)
     now_weekday = now_dt.weekday()
 
     for item in items:
@@ -860,9 +866,13 @@ def is_trading_window_blocked(now_utc7=None, cfg: dict = None) -> tuple:
             m_date = re.match(r"^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
             if m_date:
                 d_str, t_start, t_end = m_date.groups()
-                dt_start = datetime.strptime(f"{d_str} {t_start}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_utc7)
-                dt_end = datetime.strptime(f"{d_str} {t_end}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_utc7)
-                if dt_start <= now_dt <= dt_end:
+                d_base = datetime.strptime(d_str, "%Y-%m-%d").replace(tzinfo=tz_utc7)
+                m_start, m_end = _to_min(t_start), _to_min(t_end)
+                dt_start = d_base + timedelta(minutes=m_start)
+                dt_end = d_base + timedelta(minutes=m_end)
+                if m_end < m_start:  # Qua nửa đêm sang ngày kế
+                    dt_end += timedelta(days=1)
+                if dt_start <= now_floor <= dt_end:
                     return True, f"Khung giờ cấm giao dịch: {item} (UTC+7)"
                 continue
 
@@ -871,24 +881,28 @@ def is_trading_window_blocked(now_utc7=None, cfg: dict = None) -> tuple:
             if m_week:
                 d_code, t_start, t_end = m_week.groups()
                 d_target = day_map.get(d_code.upper())
-                if d_target is not None and now_weekday == d_target:
-                    if t_start <= t_end:
-                        if t_start <= now_hm <= t_end:
+                if d_target is not None:
+                    m_start, m_end = _to_min(t_start), _to_min(t_end)
+                    if m_start <= m_end:
+                        if now_weekday == d_target and m_start <= now_min <= m_end:
                             return True, f"Khung giờ cấm lặp hàng tuần: {item} (UTC+7)"
                     else:
-                        if now_hm >= t_start or now_hm <= t_end:
+                        # Qua đêm: [start, 24:00) của ngày d_target và [00:00, end] của ngày kế tiếp
+                        in_start_day = (now_weekday == d_target and now_min >= m_start)
+                        in_next_day = (now_weekday == (d_target + 1) % 7 and now_min <= m_end)
+                        if in_start_day or in_next_day:
                             return True, f"Khung giờ cấm lặp hàng tuần: {item} (UTC+7)"
                 continue
 
             # 3. Định dạng lặp hàng ngày: HH:MM-HH:MM
             m_daily = re.match(r"^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
             if m_daily:
-                t_start, t_end = m_daily.groups()
-                if t_start <= t_end:
-                    if t_start <= now_hm <= t_end:
+                m_start, m_end = (_to_min(x) for x in m_daily.groups())
+                if m_start <= m_end:
+                    if m_start <= now_min <= m_end:
                         return True, f"Khung giờ cấm hàng ngày: {item} (UTC+7)"
                 else:
-                    if now_hm >= t_start or now_hm <= t_end:
+                    if now_min >= m_start or now_min <= m_end:
                         return True, f"Khung giờ cấm hàng ngày: {item} (UTC+7)"
                 continue
         except Exception:
@@ -1151,6 +1165,8 @@ class KronosDesktopApp:
         self._order_guard_lock = threading.Lock()
         self._pos_action_in_flight = set()
         self._order_in_flight = {"XAUUSD": False, "BTCUSD": False}
+        self._modify_fail_until = {}  # ticket -> mốc time.monotonic() được phép sửa SL/TP lại (backoff 15s)
+        self._modify_fail_log_ts = {}  # ticket -> mốc log lỗi sửa SL/TP gần nhất (1 lần/15s/ticket)
         self._last_order_open_mono = {"XAUUSD": 0.0, "BTCUSD": 0.0}
         self._last_order_candle_ts = {"XAUUSD": None, "BTCUSD": None}
         self._auto_worker_token = {"XAUUSD": 0, "BTCUSD": 0}
@@ -8022,10 +8038,39 @@ class KronosDesktopApp:
             return "BTCUSD"
         return "XAUUSD"
 
+    def _positions_get_checked(self, **kwargs):
+        """
+        Gọi mt5.positions_get(**kwargs) an toàn trong self._mt5_lock:
+        - Nếu kết quả không None: trả về list(kết quả).
+        - Nếu kết quả là None: gọi mt5.last_error().
+          + Nếu err[0] == 1 (TRADE_RETCODE_DONE / Success): coi là danh sách rỗng và trả [].
+          + Nếu err[0] != 1: trả về None (lỗi MT5 thực sự) và ghi log cảnh báo kèm mã lỗi.
+        """
+        if not MT5_AVAILABLE:
+            return []
+        try:
+            with self._mt5_lock:
+                res = mt5.positions_get(**kwargs)
+                if res is not None:
+                    return list(res)
+                err = mt5.last_error()
+                # err là tuple (code, description)
+                err_code = err[0] if (isinstance(err, (tuple, list)) and len(err) > 0) else None
+                if err_code == 1:
+                    return []
+                self._write_file_log(
+                    f"[POSITIONS_GET_ERROR] mt5.positions_get({kwargs}) trả None với last_error={err}",
+                    is_error=True
+                )
+                return None
+        except Exception as e:
+            self._write_file_log(f"[POSITIONS_GET_EX] mt5.positions_get({kwargs}) ngoại lệ: {e}", is_error=True)
+            return None
+
     def _get_bot_positions(self, symbol: str, profile_key: str = None) -> list:
         """
         Lấy danh sách lệnh đang mở trên MT5 thuộc quyền quản lý của Bot cho một profile và symbol cụ thể.
-        Luôn thực thi trong self._mt5_lock và lọc chính xác theo Magic Number của profile đó.
+        Luôn thực thi trong self._mt5_lock qua _positions_get_checked và lọc chính xác theo Magic Number.
         Nếu symbol rỗng: log cảnh báo và trả về list rỗng, tuyệt đối không truy vấn tất cả lệnh.
         """
         if not MT5_AVAILABLE:
@@ -8037,8 +8082,7 @@ class KronosDesktopApp:
         pk = profile_key or self._resolve_profile_by_symbol(sym_str)
         target_magic = self._get_profile_magic_number(pk)
         try:
-            with self._mt5_lock:
-                raw_pos = mt5.positions_get(symbol=sym_str)
+            raw_pos = self._positions_get_checked(symbol=sym_str)
             if not raw_pos:
                 return []
             return [p for p in raw_pos if getattr(p, "magic", 0) == target_magic]
@@ -8179,9 +8223,14 @@ class KronosDesktopApp:
             filling_modes = self._get_supported_filling_modes(sym_info) if is_deal else [request.get("type_filling", 0)]
 
             # Lưu danh sách ticket đang tồn tại trước khi gửi lệnh mới (để kiểm tra dup sau timeout)
+            snapshot_ok = True
             if is_new_order and symbol:
-                _before_raw = mt5.positions_get(symbol=symbol)
-                before_tickets = {p.ticket for p in (_before_raw or [])}
+                _before_raw = self._positions_get_checked(symbol=symbol)
+                if _before_raw is None:
+                    snapshot_ok = False
+                    before_tickets = set()
+                else:
+                    before_tickets = {p.ticket for p in _before_raw}
             else:
                 before_tickets = set()
 
@@ -8189,7 +8238,7 @@ class KronosDesktopApp:
             for attempt in range(1, max_retries + 1):
                 # Với lệnh đóng vị thế: trước mỗi lần retry, kiểm tra position còn tồn tại hay đã đóng xong rồi
                 if is_close_order and close_pos_ticket:
-                    chk_p = mt5.positions_get(ticket=int(close_pos_ticket))
+                    chk_p = self._positions_get_checked(ticket=int(close_pos_ticket))
                     if chk_p is not None and len(chk_p) == 0:
                         self._write_file_log(
                             f"[MT5_RETRY_OK - {context_tag}] Lệnh #{close_pos_ticket} không còn tồn tại trên MT5 (đã đóng thành công trước đó)."
@@ -8235,8 +8284,14 @@ class KronosDesktopApp:
                         is_error=True
                     )
                     time.sleep(0.15)
-                    with self._mt5_lock:
-                        _pos_after = mt5.positions_get(symbol=symbol)
+                    if not snapshot_ok:
+                        self._write_file_log(
+                            f"[MT5_ORDER_FAILED - {context_tag}] Không thể xác minh do chụp before_tickets thất bại (snapshot_ok=False) -> Trả thất bại an toàn, không gửi lại.",
+                            is_error=True
+                        )
+                        break
+
+                    _pos_after = self._positions_get_checked(symbol=symbol)
                     if _pos_after is None:
                         self._write_file_log(f"[MT5_ORDER_FAILED - {context_tag}] MT5 trả None khi kiểm tra positions sau timeout -> Trả thất bại an toàn.", is_error=True)
                         break
@@ -8252,7 +8307,14 @@ class KronosDesktopApp:
                         self._write_file_log(
                             f"[MT5_ORDER_DEDUP - {context_tag}] Phát hiện lệnh mở mới ticket={matched_pos.ticket} sau timeout -> Coi là thành công."
                         )
-                        return True, last_res, ""
+                        recovered_res = types.SimpleNamespace(
+                            retcode=10009,
+                            order=matched_pos.ticket,
+                            deal=0,
+                            price=getattr(matched_pos, "price_open", 0.0),
+                            comment="recovered"
+                        )
+                        return True, recovered_res, ""
                     # Nếu không tìm thấy position mới -> Trả thất bại, KHÔNG gửi lại để tránh đúp lệnh
                     self._write_file_log(
                         f"[MT5_ORDER_FAILED - {context_tag}] Không tìm thấy lệnh mở mới sau timeout ({symbol}, code={rc}) -> Trả về thất bại an toàn, không gửi lại.",
@@ -8520,6 +8582,17 @@ class KronosDesktopApp:
                         self.log(f"⏳ [{pk} - Canh Vùng {action}] Giá ({cur_price:.2f}) đã vào vùng khớp nhưng đang chờ xác nhận Price Action: {pa_msg}")
                     return
 
+            # Kiểm tra lại RR thực tế (TP AI cache có thể làm RR thấp hơn yêu cầu) -> giữ nguyên pending, chờ giá tốt hơn
+            req_rr = max(rr, 2.0)
+            real_rr = abs(tp_price - cur_price) / cur_sl_dist if cur_sl_dist > 0 else 0.0
+            # Dung sai làm tròn: tp_price được round 2 chữ số thập phân nên RR có thể lệch tối đa 0.005/cur_sl_dist
+            if real_rr < req_rr - (0.005 / cur_sl_dist if cur_sl_dist > 0 else 0.0):
+                now_ts_rr = time.time()
+                if (now_ts_rr - getattr(self, f"_last_rr_log_ts_{pk}", 0)) >= 10.0:
+                    setattr(self, f"_last_rr_log_ts_{pk}", now_ts_rr)
+                    self.log(f"⏳ [{pk} - Canh Vùng {action}] RR thực tế {real_rr:.2f}R < {req_rr:.2f}R yêu cầu (TP {tp_price:.2f}, SL cách {cur_sl_dist:.2f}$) -> giữ canh vùng, chưa vào lệnh.")
+                return
+
             # Thu hồi nguyên tử (Atomic Pop) pending_pullback_order TRƯỚC khi gửi lệnh để tuyệt đối không vào đúp 2 lệnh
             ctx["pending_pullback_order"] = None
             if pk == self.active_profile_key:
@@ -8529,7 +8602,7 @@ class KronosDesktopApp:
             if ok_ord:
                 if ctx.get("last_candle_time") is not None:
                     self._last_order_candle_ts[pk] = ctx.get("last_candle_time")
-                self.log(f"[{pk} - Khớp Lệnh Tại Vùng AI (SL <= {max_sl_cap:.2f}$, RR >= 2R)] Giá về vùng {cur_price:.2f} (Cách SL {cur_sl_dist:.2f}$) -> {ord_msg}")
+                self.log(f"[{pk} - Khớp Lệnh Tại Vùng AI (SL <= {max_sl_cap:.2f}$, RR {real_rr:.2f}R >= {req_rr:.2f}R)] Giá về vùng {cur_price:.2f} (Cách SL {cur_sl_dist:.2f}$) -> {ord_msg}")
                 # Nếu là chế độ canh vùng liên tục trong chu kỳ AI (zone_watch) và chưa đạt max_pos, duy trì canh vùng cho nhịp hồi tiếp theo (vẫn tuân thủ khóa 1 lệnh/nến M1 và khoảng cách nhồi lệnh)
                 if p.get("zone_watch", False) and not p.get("manual_queued", False):
                     p_next = dict(p)
@@ -9058,7 +9131,11 @@ class KronosDesktopApp:
             cur_sl = round(float(getattr(pos, "sl", 0.0) or 0.0), digits)
             cur_tp = round(float(getattr(pos, "tp", 0.0) or 0.0), digits)
             if r_sl == cur_sl and r_tp == cur_tp:
+                self._modify_fail_until.pop(pos.ticket, None)
                 return True
+            # Backoff: ticket vừa sửa SL/TP thất bại -> bỏ qua, không gửi MT5 trong 15 giây
+            if time.monotonic() < self._modify_fail_until.get(pos.ticket, 0.0):
+                return False
             req = {
                 "action": mt5.TRADE_ACTION_SLTP,
                 "position": pos.ticket,
@@ -9067,6 +9144,15 @@ class KronosDesktopApp:
                 "tp": r_tp
             }
             ok, _, _ = self._send_mt5_order_with_retry(req, pos.symbol, context_tag=f"MODIFY_SLTP_#{pos.ticket}", max_retries=2)
+            if ok:
+                self._modify_fail_until.pop(pos.ticket, None)
+                self._modify_fail_log_ts.pop(pos.ticket, None)
+            else:
+                now_m = time.monotonic()
+                self._modify_fail_until[pos.ticket] = now_m + 15.0
+                if now_m - self._modify_fail_log_ts.get(pos.ticket, -1e9) >= 15.0:
+                    self._modify_fail_log_ts[pos.ticket] = now_m
+                    self.log(f"⚠️ [MODIFY_SLTP] Sửa SL/TP #{pos.ticket} thất bại -> tạm nghỉ 15 giây rồi mới thử lại.")
             return ok
 
     def _close_single_pos(self, pos) -> tuple:
@@ -9954,7 +10040,7 @@ class KronosDesktopApp:
                     return False, f"{self._get_cooldown_remaining_str(pk)} — Chưa được phép vào lệnh mới."
 
                 mt5.symbol_select(symbol, True)
-                raw_positions = mt5.positions_get(symbol=symbol)
+                raw_positions = self._positions_get_checked(symbol=symbol)
                 if raw_positions is None:
                     return False, "Không đọc được danh sách lệnh MT5, bỏ qua mở lệnh."
                 target_magic = self._get_profile_magic_number(pk)
