@@ -4218,7 +4218,8 @@ class KronosDesktopApp:
                     last_ana_idx = idx_ana
                     active_bt_zone = None
 
-                    idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right"))
+                    # Trừ 1: searchsorted(right) đếm cả nến scalp ĐANG HÌNH THÀNH (open <= cur_sec); chỉ lấy nến đã đóng như live (chống lookahead)
+                    idx_scalp = int(np.searchsorted(rate_scalp_times, cur_sec, side="right")) - 1
                     atr = 20.0 if is_btc else 1.5
                     if idx_scalp >= 20:
                         sub_recent = df_rates_scalp.iloc[max(0, idx_scalp - 14):idx_scalp]
