@@ -59,3 +59,7 @@ Mục "chưa chắc" là suy luận từ code, chưa có bằng chứng chạy t
 ## Ghi chú
 - Chưa tìm thấy nguy cơ deadlock rõ ràng: thứ tự khóa quan sát được là `_ai_scan_lock` rồi `_ai_inference_lock` (hai khóa này không lồng `_mt5_lock` theo chiều ngược lại); `_order_guard_lock` và `_ai_queue_lock` chỉ giữ trong đoạn ngắn, không gọi MT5 bên trong.
 - Các thay đổi gần đây (backoff SL/TP, khung giờ cấm, cổng RR) không sinh lỗi mới trong phạm vi đã rà, ngoài ghi chú A22.
+
+## Trạng thái xử lý (P35-C)
+- **A37: ĐÃ SỬA** (`_modify_position_sltp`): đọc lại vị thế theo ticket ngay trước khi gửi (`_positions_get_checked`); chỉ đổi trường lời gọi muốn đổi, trường còn lại lấy từ vị thế vừa đọc; không nới SL (cờ `allow_widen_sl=False` mặc định, không có chỗ nào trong code đang cố ý nới SL); không gửi nếu giá trị không đổi; vị thế đã đóng/lỗi đọc thì bỏ qua và log.
+- **A39: ĐÃ SỬA** (nhánh `tighten_sl`): dùng `_get_fresh_tick` (tick mới, bỏ lượt siết SL nếu tick None hoặc quá `TICK_MAX_AGE_SEC` = 10 giây). Tuổi tick suy ra từ giờ server bằng cách làm tròn độ lệch về bội 900 giây nên chỉ tin cậy khi tuổi < 450 giây. Chưa thêm kiểm tra `min_stop_dist` (giữ nguyên các kiểm tra cũ).

@@ -9143,7 +9143,27 @@ class KronosDesktopApp:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _modify_position_sltp(self, pos, new_sl: float, new_tp: float) -> bool:
+    # Ngưỡng tuổi tối đa của tick (giây) khi dùng giá để tính SL mới (tighten_sl)
+    TICK_MAX_AGE_SEC = 10.0
+
+    def _get_fresh_tick(self, symbol: str):
+        """Đọc tick mới nhất; trả None nếu không có tick hoặc tick quá cũ (> TICK_MAX_AGE_SEC).
+        tick.time là giờ SERVER: ước lượng độ lệch múi giờ bằng cách làm tròn (tick.time - time.time()) về bội 900 giây;
+        phần dư chính là tuổi tick (chỉ tin cậy khi tuổi < 450 giây, tick cũ hơn nữa thì coi như không xác định được)."""
+        with self._mt5_lock:
+            tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return None
+        t_srv = float(getattr(tick, "time", 0) or 0)
+        if t_srv <= 0:
+            return None
+        diff = t_srv - time.time()
+        age = -(diff - round(diff / 900.0) * 900.0)
+        if age > self.TICK_MAX_AGE_SEC:
+            return None
+        return tick
+
+    def _modify_position_sltp(self, pos, new_sl: float, new_tp: float, allow_widen_sl: bool = False) -> bool:
         with self._mt5_lock:
             sym_info = mt5.symbol_info(pos.symbol)
             digits = sym_info.digits if sym_info else 2
@@ -9157,6 +9177,32 @@ class KronosDesktopApp:
             # Backoff: ticket vừa sửa SL/TP thất bại -> bỏ qua, không gửi MT5 trong 15 giây
             if time.monotonic() < self._modify_fail_until.get(pos.ticket, 0.0):
                 return False
+            # A37: đọc lại vị thế mới nhất theo ticket; snapshot `pos` có thể cũ (SL đã dời BE/trailing)
+            fresh_list = self._positions_get_checked(ticket=pos.ticket)
+            if not fresh_list:
+                self.log(f"⚠️ [MODIFY_SLTP] #{pos.ticket}: không đọc lại được vị thế (đã đóng hoặc lỗi MT5) -> bỏ qua sửa SL/TP.")
+                return False
+            fresh = fresh_list[0]
+            f_sl = round(float(getattr(fresh, "sl", 0.0) or 0.0), digits)
+            f_tp = round(float(getattr(fresh, "tp", 0.0) or 0.0), digits)
+            # Chỉ đổi trường mà lời gọi muốn đổi (khác snapshot); trường còn lại lấy từ vị thế vừa đọc
+            r_sl = r_sl if r_sl != cur_sl else f_sl
+            r_tp = r_tp if r_tp != cur_tp else f_tp
+            # Chốt chặn: không nới SL ra xa hơn SL hiện tại (trừ khi allow_widen_sl)
+            widen_blocked = False
+            if (not allow_widen_sl) and f_sl > 0 and r_sl != f_sl:
+                is_buy_f = (fresh.type == mt5.POSITION_TYPE_BUY)
+                if r_sl <= 0 or (r_sl < f_sl if is_buy_f else r_sl > f_sl):
+                    now_g = time.monotonic()
+                    gkey = f"guard{pos.ticket}"
+                    if now_g - self._modify_fail_log_ts.get(gkey, -1e9) >= 15.0:
+                        self._modify_fail_log_ts[gkey] = now_g
+                        self.log(f"🛡️ [MODIFY_SLTP] #{pos.ticket}: SL mới {r_sl} sẽ nới xa SL hiện tại {f_sl} -> bỏ qua (giữ SL hiện tại).")
+                    r_sl = f_sl
+                    widen_blocked = True
+            if r_sl == f_sl and r_tp == f_tp:
+                # Không còn gì để đổi so với vị thế hiện tại: không gửi lệnh
+                return not widen_blocked
             req = {
                 "action": mt5.TRADE_ACTION_SLTP,
                 "position": pos.ticket,
@@ -10989,13 +11035,20 @@ class KronosDesktopApp:
                                     )
                                 elif rev_loss_mode == "tighten_sl":
                                     has_losing_opposite_pos = True
-                                    cur_p = (tick.bid if is_buy_pos else tick.ask) if tick else float(pos.price_current)
+                                    # A39: lấy tick MỚI ngay trước khi tính SL (tick đầu lượt phân tích đã cũ sau khi chạy AI)
+                                    fresh_tick = self._get_fresh_tick(pos.symbol)
                                     curr_sl = float(pos.sl) if pos.sl > 0 else (pos.price_open - (atr * sl_atr) if is_buy_pos else pos.price_open + (atr * sl_atr))
-                                    cur_sl_dist = abs(cur_p - curr_sl)
                                     min_step = tols.get("min_trail_step", 0.40)
-                                    new_sl = round(cur_p - (cur_sl_dist * 0.5), digits) if is_buy_pos else round(cur_p + (cur_sl_dist * 0.5), digits)
-                                    # Đảm bảo new_sl siết chặt hơn SL cũ
-                                    is_tighter = (new_sl > curr_sl) if is_buy_pos else (new_sl < curr_sl)
+                                    if fresh_tick is None:
+                                        self.log(f"⚠️ [{pk} - tighten_sl] Tick {pos.symbol} thiếu/quá cũ (> {self.TICK_MAX_AGE_SEC:g}s) -> bỏ lượt siết SL #{pos.ticket}.")
+                                        new_sl = curr_sl
+                                        is_tighter = False
+                                    else:
+                                        cur_p = fresh_tick.bid if is_buy_pos else fresh_tick.ask
+                                        cur_sl_dist = abs(cur_p - curr_sl)
+                                        new_sl = round(cur_p - (cur_sl_dist * 0.5), digits) if is_buy_pos else round(cur_p + (cur_sl_dist * 0.5), digits)
+                                        # Đảm bảo new_sl siết chặt hơn SL cũ
+                                        is_tighter = (new_sl > curr_sl) if is_buy_pos else (new_sl < curr_sl)
                                     be_target_price = round((pos.price_open + be_plus_price) if is_buy_pos else (pos.price_open - be_plus_price), digits)
                                     be_label_tag = f"Entry+{be_plus_price:g}" if be_plus_price > 0 else "Entry"
                                     self.pending_be_exit_tickets.add(pos.ticket)

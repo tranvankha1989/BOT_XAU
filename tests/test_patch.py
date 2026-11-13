@@ -48,12 +48,13 @@ class TestWindow(unittest.TestCase):
 class TestModify(unittest.TestCase):
     def mk(self, ok):
         s = SimpleNamespace(_mt5_lock=threading.RLock(), _modify_fail_until={}, _modify_fail_log_ts={},
-                            log=mock.Mock(), _send_mt5_order_with_retry=mock.Mock(return_value=(ok, None, "err")))
+                            log=mock.Mock(), _send_mt5_order_with_retry=mock.Mock(return_value=(ok, None, "err")),
+                            _positions_get_checked=lambda **k: [self.pos()])
         return s
-    def pos(self): return SimpleNamespace(ticket=7, symbol="XAUUSD", sl=1.0, tp=2.0)
+    def pos(self): return SimpleNamespace(ticket=7, symbol="XAUUSD", sl=1.0, tp=2.0, type=0)
     def run_(self, s, now):
         with mock.patch.object(b, "mt5") as m, mock.patch.object(b.time, "monotonic", return_value=now):
-            m.symbol_info.return_value = SimpleNamespace(digits=2)
+            m.symbol_info.return_value = SimpleNamespace(digits=2); m.POSITION_TYPE_BUY = 0
             return b.KronosDesktopApp._modify_position_sltp(s, self.pos(), 1.5, 2.5)
     def test_fail_backoff_and_log_limit(self):
         s = self.mk(False)
