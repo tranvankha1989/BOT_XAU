@@ -20,10 +20,90 @@ import mt5_scalping_bot as bot_mod
 
 opened_tickets = []
 
-def safe_close_ticket(ticket, symbol):
-    """Đóng dứt điểm một ticket cụ thể trên MT5."""
+def read_positions(**kwargs):
+    """Đọc positions_get an toàn. Trả (list, None) nếu đọc được (kể cả rỗng THẬT: None kèm last_error()[0]==1);
+    trả (None, lỗi) nếu MT5 lỗi -> người gọi phải coi là KHÔNG XÁC ĐỊNH."""
     try:
-        positions = mt5.positions_get(ticket=int(ticket))
+        res = mt5.positions_get(**kwargs)
+    except Exception as ex:
+        return None, f"exception: {ex}"
+    if res is not None:
+        return list(res), None
+    err = mt5.last_error()
+    if isinstance(err, (tuple, list)) and len(err) > 0 and err[0] == 1:
+        return [], None
+    return None, err
+
+def ticket_state(ticket):
+    """'ALIVE' (còn), 'GONE' (mất thật), 'UNKNOWN' (MT5 lỗi, không kết luận được)."""
+    pos, _ = read_positions(ticket=int(ticket))
+    if pos is None:
+        return "UNKNOWN"
+    return "ALIVE" if len(pos) > 0 else "GONE"
+
+def track(ticket):
+    if ticket not in opened_tickets:
+        opened_tickets.append(ticket)
+
+def snapshot_symbol(symbol):
+    """Chụp {ticket: position} của symbol; lỗi MT5 thì ném RuntimeError (KHÔNG XÁC ĐỊNH)."""
+    pos, err = read_positions(symbol=symbol)
+    if pos is None:
+        raise RuntimeError(f"KHÔNG XÁC ĐỊNH: không đọc được positions {symbol} (last_error={err})")
+    return {p.ticket: p for p in pos}
+
+def foreign_bot_tickets(symbol, magic):
+    """Ticket magic bot trên symbol KHÔNG thuộc script (None nếu MT5 lỗi)."""
+    pos, _ = read_positions(symbol=symbol)
+    if pos is None:
+        return None
+    return [p.ticket for p in pos if getattr(p, "magic", None) == magic and p.ticket not in opened_tickets]
+
+def open_bot_tracked(app, symbol, profile_key, magic, **kwargs):
+    """Gọi execute_mt5_order và ghi ticket MỚI (so tập ticket trước/sau) vào opened_tickets."""
+    before = snapshot_symbol(symbol)
+    ok, msg = app.execute_mt5_order(symbol=symbol, profile_key=profile_key, **kwargs)
+    try:
+        after = snapshot_symbol(symbol)
+    except RuntimeError:
+        time.sleep(1.0)
+        after = snapshot_symbol(symbol)
+    new = [t for t, p in after.items() if t not in before and getattr(p, "magic", None) == magic]
+    for t in new:
+        track(t)
+    return ok, msg, new
+
+def open_manual_tracked(symbol, volume, sl, tp, price):
+    """Mở lệnh tay giả lập (magic=0), xác định ticket bằng so tập ticket trước/sau, và ghi để dọn."""
+    before = snapshot_symbol(symbol)
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL, "symbol": symbol, "volume": volume, "type": mt5.ORDER_TYPE_BUY,
+        "price": price, "sl": sl, "tp": tp, "deviation": 50, "magic": 0, "comment": "MANUAL_TEST",
+        "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    res = mt5.order_send(req)
+    if res is None or res.retcode not in (10009, 10008):
+        req["type_filling"] = mt5.ORDER_FILLING_FOK
+        res = mt5.order_send(req)
+    if res is None or res.retcode not in (10009, 10008):
+        raise RuntimeError(f"Không mở được lệnh tay test (retcode={getattr(res, 'retcode', None)})")
+    after = snapshot_symbol(symbol)
+    cands = [t for t, p in after.items() if t not in before and getattr(p, "magic", None) == 0]
+    if getattr(res, "order", 0) in cands:
+        ticket = res.order
+    elif len(cands) == 1:
+        ticket = cands[0]
+    else:
+        raise RuntimeError(f"KHÔNG XÁC ĐỊNH: không xác định được ticket lệnh tay (ứng viên={cands})")
+    track(ticket)
+    return ticket
+
+def safe_close_ticket(ticket, symbol):
+    """Đóng dứt điểm một ticket cụ thể trên MT5. True chỉ khi đã đóng hoặc đã mất THẬT."""
+    try:
+        positions, _ = read_positions(ticket=int(ticket))
+        if positions is None:
+            return False  # lỗi MT5: không kết luận được
         if not positions:
             return True
         pos = positions[0]
@@ -94,6 +174,7 @@ def setup_stub_app(symbol, profile_key="XAUUSD", magic=20260501):
         "max_positions": 2,
         "max_sl_price": 10.0,
         "one_order_per_candle": False,
+        "min_entry_spacing": 0.0,
         "entry_mode": "Bình thường (Độc lập)",
         "daily_tp_usd": 0.0,
         "daily_sl_usd": 0.0,
@@ -205,6 +286,19 @@ def main():
 
     profile_key = "XAUUSD" if is_gold else "BTCUSD"
     bot_magic = 20260501 if is_gold else 20260502
+
+    # 3. CHỐT AN TOÀN 3: Không được có lệnh bot nào (magic của profile) trên symbol trước khi chạy
+    pre_pos, pre_err = read_positions(symbol=symbol)
+    if pre_pos is None:
+        print(f"KHÔNG XÁC ĐỊNH: không đọc được positions {symbol} (last_error={pre_err}), DỪNG")
+        mt5.shutdown()
+        sys.exit(1)
+    existing_bot = [p.ticket for p in pre_pos if getattr(p, "magic", None) == bot_magic]
+    if existing_bot:
+        print(f"ĐANG CÓ LỆNH BOT, DỪNG (magic {bot_magic}, ticket {existing_bot}). Không gửi lệnh nào.")
+        mt5.shutdown()
+        sys.exit(1)
+
     app = setup_stub_app(symbol, profile_key=profile_key, magic=bot_magic)
 
     try:
@@ -212,44 +306,41 @@ def main():
         # PHÉP THỬ T1: Mở lệnh đầu tiên với magic bot qua execute_mt5_order
         # =========================================================================
         print("[PHÉP THỬ T1] Kiểm tra execute_mt5_order khi chưa có vị thế bot...")
-        fresh_tick = mt5.symbol_info_tick(symbol)
-        entry_price = fresh_tick.ask
-        sl_p = round(entry_price - sl_offset, digits)
-        tp_p = round(entry_price + tp_offset, digits)
-
-        ok1, msg1 = app.execute_mt5_order(
-            symbol=symbol,
-            action="BUY",
-            lot=v_min,
-            sl_price=sl_p,
-            tp_price=tp_p,
-            max_positions=2,
-            profile_key=profile_key
-        )
-
         t1_ticket = None
-        if ok1:
-            bot_positions = app._get_bot_positions(symbol, profile_key=profile_key)
-            if bot_positions:
-                t1_ticket = bot_positions[0].ticket
-                opened_tickets.append(t1_ticket)
-            results["T1"] = (True, f"Mở lệnh bot thành công (Ticket #{t1_ticket})")
-            print(f"  -> PASS: {results['T1'][1]}")
-        else:
-            last_err = mt5.last_error()
-            results["T1"] = (False, f"Bị từ chối: {msg1} | MT5 last_error: {last_err}")
+        try:
+            fresh_tick = mt5.symbol_info_tick(symbol)
+            entry_price = fresh_tick.ask
+            sl_p = round(entry_price - sl_offset, digits)
+            tp_p = round(entry_price + tp_offset, digits)
+            ok1, msg1, new1 = open_bot_tracked(
+                app, symbol, profile_key, bot_magic,
+                action="BUY", lot=v_min, sl_price=sl_p, tp_price=tp_p, max_positions=2
+            )
+            if ok1 and len(new1) == 1:
+                t1_ticket = new1[0]
+                results["T1"] = (True, f"Mở lệnh bot thành công (Ticket #{t1_ticket})")
+                print(f"  -> PASS: {results['T1'][1]}")
+            elif ok1:
+                results["T1"] = (False, f"KHÔNG XÁC ĐỊNH: lệnh báo thành công nhưng ticket mới = {new1}")
+                print(f"  -> FAIL: {results['T1'][1]}")
+            else:
+                last_err = mt5.last_error()
+                results["T1"] = (False, f"Bị từ chối: {msg1} | MT5 last_error: {last_err}")
+                print(f"  -> FAIL: {results['T1'][1]}")
+                # Đọc file log nếu có lỗi POSITIONS_GET_ERROR
+                try:
+                    log_file = os.path.join(ROOT_DIR, "logs", f"mt5_{symbol}.log")
+                    if os.path.exists(log_file):
+                        with open(log_file, "r", encoding="utf-8", errors="ignore") as lf:
+                            lines = lf.readlines()[-20:]
+                            for line in lines:
+                                if "[POSITIONS_GET_ERROR]" in line:
+                                    print(f"     [LOG FOUND] {line.strip()}")
+                except Exception:
+                    pass
+        except Exception as ex:
+            results["T1"] = (False, f"Lỗi ngoại lệ phép thử T1: {ex}")
             print(f"  -> FAIL: {results['T1'][1]}")
-            # Đọc file log nếu có lỗi POSITIONS_GET_ERROR
-            try:
-                log_file = os.path.join(ROOT_DIR, "logs", f"mt5_{symbol}.log")
-                if os.path.exists(log_file):
-                    with open(log_file, "r", encoding="utf-8", errors="ignore") as lf:
-                        lines = lf.readlines()[-20:]
-                        for line in lines:
-                            if "[POSITIONS_GET_ERROR]" in line:
-                                print(f"     [LOG FOUND] {line.strip()}")
-            except Exception:
-                pass
 
         # =========================================================================
         # PHÉP THỬ T2: Kiểm tra cô lập lệnh tay (magic = 0) vs lệnh Bot
@@ -257,84 +348,103 @@ def main():
         print("\n[PHÉP THỬ T2] Kiểm tra cô lập lệnh tay (magic = 0)...")
         t2_manual_ticket = None
         try:
-            fresh_tick = mt5.symbol_info_tick(symbol)
-            manual_sl = round(fresh_tick.ask - sl_offset * 3, digits)
-            manual_tp = round(fresh_tick.ask + tp_offset * 3, digits)
-            req_manual = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": symbol,
-                "volume": v_min,
-                "type": mt5.ORDER_TYPE_BUY,
-                "price": fresh_tick.ask,
-                "sl": manual_sl,
-                "tp": manual_tp,
-                "deviation": 50,
-                "magic": 0,
-                "comment": "MANUAL_TEST",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            res_manual = mt5.order_send(req_manual)
-            if res_manual is None or res_manual.retcode not in (10009, 10008):
-                req_manual["type_filling"] = mt5.ORDER_FILLING_FOK
-                res_manual = mt5.order_send(req_manual)
+            if t1_ticket is None:
+                raise RuntimeError("T1 không cung cấp ticket lệnh bot -> không thể chạy T2")
+            unknown = []
+            fails = []
 
-            if res_manual is not None and res_manual.retcode in (10009, 10008):
-                t2_manual_ticket = res_manual.order
-                opened_tickets.append(t2_manual_ticket)
-                print(f"  + Đã mở lệnh tay giả lập ticket #{t2_manual_ticket} (magic=0)")
-            else:
-                raise RuntimeError(f"Không mở được lệnh tay test (retcode={getattr(res_manual, 'retcode', None)})")
+            fresh_tick = mt5.symbol_info_tick(symbol)
+            t2_manual_ticket = open_manual_tracked(
+                symbol, v_min,
+                round(fresh_tick.ask - sl_offset * 3, digits),
+                round(fresh_tick.ask + tp_offset * 3, digits),
+                fresh_tick.ask
+            )
+            print(f"  + Đã mở lệnh tay giả lập ticket #{t2_manual_ticket} (magic=0)")
 
             # Đợi qua debounce 3.0s của bot
             time.sleep(3.2)
 
-            # 2a. Kiểm tra _get_bot_positions không trả lệnh tay
-            bot_pos_list = app._get_bot_positions(symbol, profile_key=profile_key)
-            bot_tickets = [p.ticket for p in bot_pos_list]
-            manual_in_bot = t2_manual_ticket in bot_tickets
+            # 2a. _get_bot_positions phải THẤY lệnh bot T1 (chứng minh phép đo không rỗng do lỗi) và KHÔNG thấy lệnh tay
+            bot_tickets = [p.ticket for p in app._get_bot_positions(symbol, profile_key=profile_key)]
+            if t1_ticket not in bot_tickets:
+                fails.append("lệnh bot T1 không có trong _get_bot_positions (phép đo không đáng tin)")
+            if t2_manual_ticket in bot_tickets:
+                fails.append("_get_bot_positions lẫn lệnh tay")
 
-            # 2b. Kiểm tra max_positions: đặt max_positions = 1 khi đang có 1 lệnh bot -> phải từ chối mở lệnh bot tiếp theo
-            # Đồng thời xác nhận nếu chỉ có lệnh tay thì bot không tính lệnh tay vào max_positions
+            # 2b-1. max_positions=1 khi đã có 1 lệnh bot chưa BE -> phải từ chối
             fresh_tick = mt5.symbol_info_tick(symbol)
-            ok_limit, msg_limit = app.execute_mt5_order(
-                symbol=symbol,
-                action="BUY",
-                lot=v_min,
+            ok_limit, msg_limit, _ = open_bot_tracked(
+                app, symbol, profile_key, bot_magic,
+                action="BUY", lot=v_min,
                 sl_price=round(fresh_tick.ask - sl_offset, digits),
                 tp_price=round(fresh_tick.ask + tp_offset, digits),
-                max_positions=1,
-                profile_key=profile_key
+                max_positions=1
             )
-            blocked_by_max_pos = (not ok_limit and "Bỏ qua nhồi lệnh mới" in msg_limit)
+            if not (not ok_limit and "Bỏ qua nhồi lệnh mới" in msg_limit):
+                fails.append("max_positions=1 không chặn đúng")
 
-            # 2c. Gọi _close_all_positions_for_profile: đóng lệnh bot nhưng lệnh tay VẪN CÒN
-            closed_bot_cnt = app._close_all_positions_for_profile(profile_key, symbol)
-            time.sleep(0.5)
+            # 2b-2. Lệnh tay KHÔNG được đếm vào max_pos: 1 bot (chưa BE) + 1 tay, max_positions=2, HƯỚNG NGƯỢC
+            #       -> phải được mở. Nếu lệnh tay bị đếm (2 >= 2) thì sẽ bị chặn.
+            alive_now = []
+            for t in opened_tickets:
+                st = ticket_state(t)
+                if st == "UNKNOWN":
+                    unknown.append(f"không xác định trạng thái #{t} trước phép thử đếm max_pos")
+                elif st == "ALIVE":
+                    alive_now.append(t)
+            if len(alive_now) >= 3:
+                fails.append(f"đã có {len(alive_now)} lệnh của script đang mở (giới hạn 3) -> bỏ qua phép thử đếm max_pos")
+            else:
+                time.sleep(3.2)
+                fresh_tick = mt5.symbol_info_tick(symbol)
+                ok_opp, msg_opp, new_opp = open_bot_tracked(
+                    app, symbol, profile_key, bot_magic,
+                    action="SELL", lot=v_min,
+                    sl_price=round(fresh_tick.bid + sl_offset, digits),
+                    tp_price=round(fresh_tick.bid - tp_offset * 1.5, digits),
+                    max_positions=2
+                )
+                if not ok_opp:
+                    if "Bỏ qua nhồi lệnh mới" in msg_opp:
+                        fails.append("lệnh tay bị đếm vào max_pos (SELL ngược hướng bị chặn)")
+                    else:
+                        fails.append(f"SELL ngược hướng bị từ chối vì lý do khác: {msg_opp}")
+                elif len(new_opp) != 1:
+                    fails.append(f"SELL báo thành công nhưng ticket mới không xác định ({new_opp})")
 
-            # Kiểm tra trạng thái lệnh tay
-            manual_pos_check = mt5.positions_get(ticket=int(t2_manual_ticket))
-            manual_still_alive = (manual_pos_check is not None and len(manual_pos_check) == 1)
+            # 2c. _close_all_positions_for_profile: đóng lệnh bot nhưng lệnh tay VẪN CÒN
+            #     (chỉ gọi khi không có lệnh bot lạ ngoài các ticket của script)
+            foreign = foreign_bot_tickets(symbol, bot_magic)
+            if foreign is None:
+                unknown.append("không đọc được positions trước khi đóng hàng loạt")
+            elif foreign:
+                fails.append(f"có lệnh bot lạ {foreign} -> BỎ QUA đóng hàng loạt để không đóng nhầm")
+            else:
+                app._close_all_positions_for_profile(profile_key, symbol)
+                time.sleep(0.5)
 
-            # Kiểm tra trạng thái lệnh bot
-            bot_pos_after = app._get_bot_positions(symbol, profile_key=profile_key)
-            bot_all_closed = (len(bot_pos_after) == 0)
+                st_manual = ticket_state(t2_manual_ticket)
+                if st_manual == "UNKNOWN":
+                    unknown.append(f"không xác định trạng thái lệnh tay #{t2_manual_ticket}")
+                elif st_manual != "ALIVE":
+                    fails.append("lệnh tay bị đóng nhầm")
+                for t in [x for x in opened_tickets if x != t2_manual_ticket]:
+                    st = ticket_state(t)
+                    if st == "UNKNOWN":
+                        unknown.append(f"không xác định trạng thái lệnh bot #{t}")
+                    elif st == "ALIVE":
+                        fails.append(f"lệnh bot #{t} chưa đóng")
 
-            if not manual_in_bot and blocked_by_max_pos and manual_still_alive and bot_all_closed:
+            if unknown:
+                results["T2"] = (False, "KHÔNG XÁC ĐỊNH: " + "; ".join(unknown + fails))
+                print(f"  -> FAIL: {results['T2'][1]}")
+            elif fails:
+                results["T2"] = (False, "; ".join(fails))
+                print(f"  -> FAIL: {results['T2'][1]}")
+            else:
                 results["T2"] = (True, "Lệnh tay độc lập hoàn toàn: bot không nhầm lẫn, không tính vào max_pos, không bị đóng nhầm")
                 print(f"  -> PASS: {results['T2'][1]}")
-            else:
-                fail_reasons = []
-                if manual_in_bot:
-                    fail_reasons.append("_get_bot_positions lẫn lệnh tay")
-                if not blocked_by_max_pos:
-                    fail_reasons.append("max_positions không chặn đúng")
-                if not manual_still_alive:
-                    fail_reasons.append("lệnh tay bị đóng nhầm")
-                if not bot_all_closed:
-                    fail_reasons.append("lệnh bot chưa đóng hết")
-                results["T2"] = (False, "; ".join(fail_reasons))
-                print(f"  -> FAIL: {results['T2'][1]}")
 
         except Exception as ex:
             results["T2"] = (False, f"Lỗi ngoại lệ phép thử T2: {ex}")
@@ -345,101 +455,115 @@ def main():
         # =========================================================================
         print("\n[PHÉP THỬ T3] Kiểm tra khóa lãi/lỗ ngày và mở khóa khi đổi ngưỡng...")
         try:
+            unknown = []
+            fails = []
             # Đợi qua debounce 3.0s của bot
             time.sleep(3.2)
 
+            # Daily limit sẽ đóng MỌI lệnh bot của symbol -> phải chắc chắn không có lệnh bot lạ
+            foreign = foreign_bot_tickets(symbol, bot_magic)
+            if foreign is None:
+                raise RuntimeError("KHÔNG XÁC ĐỊNH: không đọc được positions trước T3")
+            if foreign:
+                raise RuntimeError(f"Có lệnh bot lạ {foreign}, BỎ QUA T3 để daily limit không đóng nhầm")
+
             # Mở lại 1 lệnh bot để có vị thế kiểm tra khóa SL
             fresh_tick = mt5.symbol_info_tick(symbol)
-            ok_bot3, msg_bot3 = app.execute_mt5_order(
-                symbol=symbol,
-                action="BUY",
-                lot=v_min,
+            ok_bot3, msg_bot3, new3 = open_bot_tracked(
+                app, symbol, profile_key, bot_magic,
+                action="BUY", lot=v_min,
                 sl_price=round(fresh_tick.ask - sl_offset, digits),
                 tp_price=round(fresh_tick.ask + tp_offset, digits),
-                max_positions=2,
-                profile_key=profile_key
+                max_positions=2
             )
-            t3_ticket = None
-            if ok_bot3:
-                bot_pos3 = app._get_bot_positions(symbol, profile_key=profile_key)
-                if bot_pos3:
-                    t3_ticket = bot_pos3[0].ticket
-                    opened_tickets.append(t3_ticket)
-                print(f"  + Đã mở lệnh bot ticket #{t3_ticket} để test Daily Limit")
-            else:
+            if not ok_bot3:
                 raise RuntimeError(f"Không mở được lệnh bot cho T3: {msg_bot3}")
+            if len(new3) != 1:
+                raise RuntimeError(f"KHÔNG XÁC ĐỊNH: lệnh bot T3 báo thành công nhưng ticket mới = {new3}")
+            t3_ticket = new3[0]
+            print(f"  + Đã mở lệnh bot ticket #{t3_ticket} để test Daily Limit")
 
-            # Lấy realized_pnl hôm nay để tính ngưỡng chạm cắt lỗ ngày chính xác:
-            # total_daily_pnl = realized_pnl + floating_profit
-            # Ta cần total_daily_pnl <= -daily_sl => floating_profit <= -daily_sl - realized_pnl
+            cfg3 = app.profile_cfg[profile_key]
+            cfg3["daily_tp_usd"] = 0.0
+            # total_daily_pnl = realized_pnl + floating_profit; cần total <= -daily_sl
             realized_today, _, _ = app._get_today_deals_stats(symbol=symbol, profile_key=profile_key)
             sl_threshold = 0.05
-            app.profile_cfg[profile_key]["daily_sl_usd"] = sl_threshold
+            cfg3["daily_sl_usd"] = sl_threshold
             # Giả lập floating_profit sao cho total_daily_pnl = -(sl_threshold + 0.10) (chắc chắn chạm SL ngày)
             test_floating = float(-(sl_threshold + 0.10) - realized_today)
 
             app._check_daily_profit_loss_limits(floating_profit=test_floating, profile_key=profile_key)
 
-            # 3a. Kiểm tra khóa đã được thiết lập & lệnh bot bị đóng
+            # 3a. Khóa đã được thiết lập & lệnh bot T3 đã MẤT THẬT (đo theo ticket)
             locked_date = app.profile_ctx[profile_key].get("daily_limit_locked_date")
-            is_locked = (locked_date == datetime.now().strftime("%Y-%m-%d"))
-            bot_pos_after_sl = app._get_bot_positions(symbol, profile_key=profile_key)
-            bot_pos_closed_by_limit = (len(bot_pos_after_sl) == 0)
+            is_locked = (locked_date == datetime.now(tz=bot_mod.VN_TZ).strftime("%Y-%m-%d"))
+            st_t3 = ticket_state(t3_ticket)
+            if st_t3 == "UNKNOWN":
+                unknown.append(f"không xác định trạng thái lệnh bot #{t3_ticket} sau khi chạm SL ngày")
 
-            # Kiểm tra lệnh tay nếu còn thì không bị đóng
+            # Lệnh tay (nếu còn từ T2) không được bị đóng nhầm
             manual_pos_alive_t3 = True
             if t2_manual_ticket:
-                m_chk = mt5.positions_get(ticket=int(t2_manual_ticket))
-                manual_pos_alive_t3 = (m_chk is not None and len(m_chk) == 1)
+                st_m = ticket_state(t2_manual_ticket)
+                if st_m == "UNKNOWN":
+                    unknown.append(f"không xác định trạng thái lệnh tay #{t2_manual_ticket}")
+                manual_pos_alive_t3 = (st_m == "ALIVE")
 
-            # 3b. Gọi lại với floating = 0 và cache đã xóa -> kỳ vọng VẪN KHÓA
+            # 3b. PnL ngày phục hồi rõ ràng cao hơn -daily_sl (floating +1000$), daily_tp=0
+            #     -> kỳ vọng VẪN KHÓA (chỉ đổi ngưỡng mới được mở khóa). Logic lỗi cũ sẽ mở khóa ở bước này.
             app._cached_deals_by_sym.clear()
             app._cached_closed_deals_map.clear()
-            app._check_daily_profit_loss_limits(floating_profit=0.0, profile_key=profile_key)
-            still_locked_after_zero = app._is_daily_limit_locked(profile_key)
+            big_float = 1000.0
+            realized_after, _, _ = app._get_today_deals_stats(symbol=symbol, profile_key=profile_key)
+            premise_3b = (realized_after + big_float) > (-sl_threshold + 1.0)
+            if not premise_3b:
+                unknown.append(f"tiền đề 3b không thỏa (realized hôm nay {realized_after:.2f}$ quá âm)")
+            app._check_daily_profit_loss_limits(floating_profit=big_float, profile_key=profile_key)
+            still_locked_after_pos = app._is_daily_limit_locked(profile_key)
 
             # Đợi qua debounce 3.0s của bot trước khi thử execute_mt5_order
             time.sleep(3.2)
 
             # execute_mt5_order phải từ chối vì đã khóa
             fresh_tick = mt5.symbol_info_tick(symbol)
-            ok_denied, msg_denied = app.execute_mt5_order(
-                symbol=symbol,
-                action="BUY",
-                lot=v_min,
+            ok_denied, msg_denied, _ = open_bot_tracked(
+                app, symbol, profile_key, bot_magic,
+                action="BUY", lot=v_min,
                 sl_price=round(fresh_tick.ask - sl_offset, digits),
                 tp_price=round(fresh_tick.ask + tp_offset, digits),
-                max_positions=2,
-                profile_key=profile_key
+                max_positions=2
             )
             order_blocked_by_limit = (not ok_denied and "Đã tự động dừng giao dịch" in msg_denied)
             if not order_blocked_by_limit:
                 print(f"  [DEBUG T3] ok_denied={ok_denied}, msg_denied={msg_denied}")
 
             # 3c. Đổi ngưỡng sang 1000$ -> kỳ vọng MỞ KHÓA
-            app.profile_cfg[profile_key]["daily_sl_usd"] = 1000.0
+            cfg3["daily_sl_usd"] = 1000.0
             app._check_daily_profit_loss_limits(floating_profit=0.0, profile_key=profile_key)
             unlocked_ok = (not app._is_daily_limit_locked(profile_key))
 
-            if is_locked and bot_pos_closed_by_limit and manual_pos_alive_t3 and still_locked_after_zero and order_blocked_by_limit and unlocked_ok:
-                results["T3"] = (True, "Khóa lãi/lỗ ngày chuẩn xác: đóng lệnh bot, giữ lệnh tay, không mở khóa nhầm khi PnL đổi, mở khóa khi đổi ngưỡng")
-                print(f"  -> PASS: {results['T3'][1]}")
-            else:
-                fail_t3 = []
-                if not is_locked:
-                    fail_t3.append("Không đặt khóa khi chạm SL ngày")
-                if not bot_pos_closed_by_limit:
-                    fail_t3.append("Lệnh bot không được đóng khi chạm SL ngày")
-                if not manual_pos_alive_t3:
-                    fail_t3.append("Lệnh tay bị đóng nhầm trong daily limit")
-                if not still_locked_after_zero:
-                    fail_t3.append("Bị mở khóa sớm khi floating = 0")
-                if not order_blocked_by_limit:
-                    fail_t3.append("execute_mt5_order không chặn khi đang khóa")
-                if not unlocked_ok:
-                    fail_t3.append("Không mở khóa sau khi đổi ngưỡng sang 1000$")
-                results["T3"] = (False, "; ".join(fail_t3))
+            if not is_locked:
+                fails.append("Không đặt khóa khi chạm SL ngày")
+            if st_t3 == "ALIVE":
+                fails.append("Lệnh bot không được đóng khi chạm SL ngày")
+            if not manual_pos_alive_t3 and not any("lệnh tay" in u for u in unknown):
+                fails.append("Lệnh tay bị đóng nhầm trong daily limit")
+            if premise_3b and not still_locked_after_pos:
+                fails.append("Bị mở khóa sớm khi PnL ngày phục hồi (+1000$) mà chưa đổi ngưỡng")
+            if not order_blocked_by_limit:
+                fails.append("execute_mt5_order không chặn khi đang khóa")
+            if not unlocked_ok:
+                fails.append("Không mở khóa sau khi đổi ngưỡng sang 1000$")
+
+            if unknown:
+                results["T3"] = (False, "KHÔNG XÁC ĐỊNH: " + "; ".join(unknown + fails))
                 print(f"  -> FAIL: {results['T3'][1]}")
+            elif fails:
+                results["T3"] = (False, "; ".join(fails))
+                print(f"  -> FAIL: {results['T3'][1]}")
+            else:
+                results["T3"] = (True, "Khóa lãi/lỗ ngày chuẩn xác: đóng lệnh bot, giữ lệnh tay, không mở khóa nhầm khi PnL phục hồi, mở khóa khi đổi ngưỡng")
+                print(f"  -> PASS: {results['T3'][1]}")
 
         except Exception as ex:
             results["T3"] = (False, f"Lỗi ngoại lệ phép thử T3: {ex}")
@@ -459,18 +583,26 @@ def main():
                 closed_tickets.append(t)
                 print(f"  [CLEANUP] Đã đóng thành công Ticket #{t}")
             else:
-                # Kiểm tra lại xem có còn tồn tại không
-                pos_remain = mt5.positions_get(ticket=int(t))
-                if not pos_remain:
+                # Kiểm tra lại: chỉ coi là đã mất khi MT5 báo rỗng THẬT (lỗi MT5 = không xác định)
+                st_c = ticket_state(t)
+                if st_c == "GONE":
                     closed_tickets.append(t)
                     print(f"  [CLEANUP] Ticket #{t} đã được đóng trước đó.")
+                elif st_c == "UNKNOWN":
+                    print(f"  [CLEANUP WARNING] Không xác định được trạng thái Ticket #{t} (lỗi MT5)!")
                 else:
                     print(f"  [CLEANUP WARNING] Chưa đóng được Ticket #{t}!")
 
         # Xác nhận không còn ticket nào của script tồn tại trên MT5
-        all_remaining = mt5.positions_get() or []
-        script_remaining = [p for p in all_remaining if p.ticket in opened_tickets]
-        if not script_remaining:
+        all_remaining, rem_err = read_positions(symbol=symbol)
+        if all_remaining is None:
+            script_remaining = None
+            print(f"  [CLEANUP UNKNOWN] Không đọc được positions {symbol} để xác nhận (last_error={rem_err}).")
+        else:
+            script_remaining = [p for p in all_remaining if p.ticket in opened_tickets]
+        if script_remaining is None:
+            pass
+        elif not script_remaining:
             print("  [CLEANUP SUCCESS] Xác nhận 100%: Toàn bộ ticket của script đã được dọn sạch.")
         else:
             print(f"  [CLEANUP ERROR] Còn lại {len(script_remaining)} ticket chưa đóng: {[p.ticket for p in script_remaining]}")
