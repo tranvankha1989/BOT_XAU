@@ -4284,6 +4284,18 @@ class KronosDesktopApp:
         interval_map = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600}
         interval_sec = interval_map.get(scalp_tf_str, 300)
 
+        # Nạp nến lùi trước start theo SỐ NẾN cần (đủ lookback phân tích + nến scalp/ATR/cấu trúc), không theo 72 giờ cố định.
+        # Nến trước start chỉ làm ngữ cảnh: vòng mô phỏng chỉ đánh giá AI/mở lệnh từ nến (giây) đầu tiên >= start.
+        start_ts = int(start_dt.timestamp())
+        try:
+            bt_lookback = min(max(int(float(cfg.get("lookback", def_cfg.get("lookback", 450)))), 50), 450)
+        except (ValueError, TypeError):
+            bt_lookback = 450
+        warmup_sec = max((bt_lookback + 10) * interval_map.get(ana_tf_str, 300),
+                         80 * interval_map.get(scalp_tf_str, 300))
+        # x1.5 bù cuối tuần/nghỉ phiên, +3 ngày đệm; tối đa 10 ngày lịch
+        warmup_sec = min(int(warmup_sec * 1.5) + 3 * 86400, 10 * 86400)
+
         tf_desc = f"{ana_tf_str}" if ana_tf_str == scalp_tf_str else f"{ana_tf_str} ➔ {scalp_tf_str}"
         self.root.after(0, lambda: self._update_bt_status(f"Đang tải dữ liệu {sym} ({tf_desc}) từ MetaTrader 5...", 5))
 
@@ -4291,7 +4303,7 @@ class KronosDesktopApp:
         rates_scalp = None
         if MT5_AVAILABLE:
             with self._mt5_lock:
-                query_from = datetime.fromtimestamp(int(start_dt.timestamp()) - (3600 * 72))
+                query_from = datetime.fromtimestamp(start_ts - warmup_sec)
                 query_to = datetime.fromtimestamp(int(end_dt.timestamp()) + 7200)
                 rates_ana = mt5.copy_rates_range(sym, mt5_ana_tf, query_from, query_to)
                 if ana_tf_str == scalp_tf_str:
@@ -4318,6 +4330,13 @@ class KronosDesktopApp:
         if "volume" not in df_rates_scalp.columns:
             df_rates_scalp["volume"] = df_rates_scalp["tick_volume"].astype(float) if "tick_volume" in df_rates_scalp.columns else 1.0
         rate_scalp_times = df_rates_scalp["time"].values
+
+        n_ana_before = int(np.searchsorted(rate_ana_times, start_ts, side="left"))
+        n_scalp_before = int(np.searchsorted(rate_scalp_times, start_ts, side="left"))
+        if n_ana_before < bt_lookback or n_scalp_before < 60:
+            self.root.after(0, lambda a=n_ana_before, sc=n_scalp_before: self.log(
+                f"⚠️ [BACKTEST] Ngữ cảnh trước {start_s} chưa đủ: {a}/{bt_lookback} nến {ana_tf_str}, {sc}/60 nến {scalp_tf_str} "
+                f"(giới hạn nạp 10 ngày lịch hoặc dữ liệu sàn) -> các lệnh đầu kỳ dùng ngữ cảnh ngắn hơn live."))
 
         # Nạp AI Predictor nếu người dùng bật Não AI Kronos
         predictor = None
@@ -4349,7 +4368,8 @@ class KronosDesktopApp:
         if is_s1_mode and len(s1_bars) > 50:
             total_s1 = len(s1_bars)
             self.root.after(0, lambda: self._update_bt_status(f"Đang mô phỏng {total_s1:,} nến 1 giây (Canh vùng AI {ana_tf_str})...", 22))
-            s1_idx = 0
+            # Cổng ngày: chỉ bắt đầu từ giây đầu tiên >= start (tick trước start chỉ là đệm, không đánh giá AI/mở lệnh)
+            s1_idx = int(np.searchsorted(np.fromiter((x[0] for x in s1_bars), dtype=np.int64, count=total_s1), start_ts, side="left"))
             active_bt_zone = None
             last_ana_idx = -1
 
@@ -4540,7 +4560,8 @@ class KronosDesktopApp:
             rates = rates_scalp
             total_bars = len(rates)
             self.root.after(0, lambda: self._update_bt_status(f"Đã nạp {total_bars} nến ({scalp_tf_str}). Đang mô phỏng canh vùng AI {ana_tf_str}...", 20))
-            bar_idx = 20
+            # Cổng ngày: chỉ bắt đầu từ nến đầu tiên >= start (nến trước start chỉ là ngữ cảnh, không đánh giá AI/mở lệnh)
+            bar_idx = max(20, int(np.searchsorted(rate_scalp_times, start_ts, side="left")))
             active_bt_zone = None
             last_ana_idx = -1
 
