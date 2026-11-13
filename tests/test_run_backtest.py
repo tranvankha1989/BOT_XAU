@@ -243,3 +243,13 @@ class TestFilterAndMetrics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestThreadsOption(unittest.TestCase):
+    def test_resolve_threads(self):
+        import tools.run_backtest as rb
+        self.assertEqual(rb.resolve_threads(None, 6), (6, None))
+        self.assertEqual(rb.resolve_threads(4, 6), (4, None))
+        n, w = rb.resolve_threads(99, 6)
+        self.assertEqual(n, 6)
+        self.assertIsNotNone(w)

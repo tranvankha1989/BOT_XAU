@@ -78,6 +78,35 @@ def load_strategy_cfg(profile_key: str):
     return cfg, loaded, note
 
 
+def cpu_core_counts():
+    """Trả (lõi vật lý, lõi logic). Không có psutil thì vật lý = logic//2."""
+    logical = os.cpu_count() or 2
+    try:
+        import psutil
+        phys = psutil.cpu_count(logical=False) or max(1, logical // 2)
+        logical = psutil.cpu_count(logical=True) or logical
+    except Exception:
+        phys = max(1, logical // 2)
+    return max(1, phys), logical
+
+
+def resolve_threads(requested, phys):
+    """Chọn số luồng: mặc định = lõi vật lý; vượt lõi vật lý thì chặn lại. Trả (n, cảnh báo hoặc None)."""
+    if requested is None:
+        return phys, None
+    if requested < 1:
+        return 1, f"--threads {requested} không hợp lệ, dùng 1"
+    if requested > phys:
+        return phys, f"--threads {requested} vượt số lõi vật lý ({phys}), đã chặn xuống {phys}"
+    return requested, None
+
+
+def apply_threads(n: int):
+    """Ghi đè giới hạn luồng của bot (bot đặt lúc import bằng torch.set_num_threads). Chỉ ảnh hưởng tiến trình backtest này."""
+    bot_mod.torch.set_num_threads(n)
+    os.environ["OMP_NUM_THREADS"] = os.environ["MKL_NUM_THREADS"] = str(n)
+
+
 def set_seed(seed: int):
     """Đặt seed cho random, numpy, torch (CPU và CUDA nếu có) để lần chạy lặp lại được."""
     random.seed(seed)
@@ -205,7 +234,16 @@ def run(argv=None) -> int:
     ap.add_argument("--seed", type=int, default=1, help="Seed cho random/numpy/torch (mặc định 1)")
     ap.add_argument("--keep-warmup-trades", action="store_true",
                     help="Giữ cả lệnh vào ngoài [start, end] (khởi động/warm-up); mặc định các lệnh này bị loại khỏi thống kê")
+    ap.add_argument("--threads", type=int, default=None,
+                    help="Số luồng CPU cho torch (mặc định = số lõi vật lý, tối đa = số lõi vật lý)")
     args = ap.parse_args(argv)
+
+    phys, logical = cpu_core_counts()
+    n_threads, thr_warn = resolve_threads(args.threads, phys)
+    if thr_warn:
+        print(f"[WARN] {thr_warn}")
+    apply_threads(n_threads)
+    print(f"threads: {n_threads} (vật lý {phys}, logic {logical})")
 
     pk = args.profile
     cfg, _, cfg_note = load_strategy_cfg(pk)
