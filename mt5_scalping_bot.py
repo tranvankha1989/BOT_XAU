@@ -6032,6 +6032,9 @@ class KronosDesktopApp:
     def _handle_telegram_command(self, text: str, chat_id: str, token: str):
         """Xử lý lệnh từ điện thoại gửi về qua tin nhắn văn bản."""
         norm_txt = text.lower().strip()
+        # A31: chỉ khớp NGUYÊN tin nhắn; bỏ hậu tố @tên_bot của dạng /lệnh@bot (Telegram trong nhóm/chat)
+        if norm_txt.startswith("/"):
+            norm_txt = norm_txt.split("@", 1)[0].strip()
         now_str = datetime.now(tz=VN_TZ).strftime("%H:%M:%S")
 
         if norm_txt in ("/start", "/help", "/menu"):
@@ -6052,7 +6055,7 @@ class KronosDesktopApp:
                 "reply_markup": self._get_telegram_inline_keyboard()
             })
 
-        elif "thống kê" in norm_txt or norm_txt in ("/stats", "/status"):
+        elif norm_txt in ("thống kê", "/stats", "/status"):
             report = self._generate_telegram_stats_report()
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
@@ -6060,7 +6063,7 @@ class KronosDesktopApp:
                 "reply_markup": self._get_telegram_inline_keyboard()
             })
 
-        elif "tạm dừng" in norm_txt or norm_txt in ("/pause", "/stop"):
+        elif norm_txt in ("tạm dừng", "/pause", "/stop"):
             self.root.after(0, lambda: self.stop_auto_scan("XAUUSD"))
             self.root.after(0, lambda: self.stop_auto_scan("BTCUSD"))
             resp = (
@@ -6075,7 +6078,7 @@ class KronosDesktopApp:
                 "reply_markup": self._get_telegram_inline_keyboard()
             })
 
-        elif "bật bot" in norm_txt or "chạy" in norm_txt or norm_txt in ("/resume", "/run", "/start_bot"):
+        elif norm_txt in ("bật bot", "chạy", "/resume", "/run", "/start_bot"):
             self.root.after(0, lambda: self.start_auto_scan("XAUUSD"))
             self.root.after(0, lambda: self.start_auto_scan("BTCUSD"))
             resp = (
@@ -6088,6 +6091,13 @@ class KronosDesktopApp:
                 "chat_id": chat_id,
                 "text": resp,
                 "reply_markup": self._get_telegram_inline_keyboard()
+            })
+
+        else:
+            # Tin nhắn thường (không phải đúng một lệnh): KHÔNG kích hoạt gì, chỉ gợi ý lệnh hợp lệ
+            self._telegram_api_call(token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": "ℹ️ Lệnh hợp lệ (gõ đúng nguyên lệnh): /menu, /stats (hoặc 'thống kê'), /pause (hoặc 'tạm dừng'), /resume (hoặc 'bật bot', 'chạy').",
             })
 
     def _generate_telegram_stats_report(self) -> str:

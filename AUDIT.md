@@ -63,3 +63,7 @@ Mục "chưa chắc" là suy luận từ code, chưa có bằng chứng chạy t
 ## Trạng thái xử lý (P35-C)
 - **A37: ĐÃ SỬA** (`_modify_position_sltp`): đọc lại vị thế theo ticket ngay trước khi gửi (`_positions_get_checked`); chỉ đổi trường lời gọi muốn đổi, trường còn lại lấy từ vị thế vừa đọc; không nới SL (cờ `allow_widen_sl=False` mặc định, không có chỗ nào trong code đang cố ý nới SL); không gửi nếu giá trị không đổi; vị thế đã đóng/lỗi đọc thì bỏ qua và log.
 - **A39: ĐÃ SỬA** (nhánh `tighten_sl`): dùng `_get_fresh_tick` (tick mới, bỏ lượt siết SL nếu tick None hoặc quá `TICK_MAX_AGE_SEC` = 10 giây). Tuổi tick suy ra từ giờ server bằng cách làm tròn độ lệch về bội 900 giây nên chỉ tin cậy khi tuổi < 450 giây. Chưa thêm kiểm tra `min_stop_dist` (giữ nguyên các kiểm tra cũ).
+
+## Trạng thái xử lý (P40-C)
+- **A31: ĐÃ SỬA** (`_handle_telegram_command`): chỉ khớp khi NGUYÊN tin nhắn (bỏ khoảng trắng, chữ thường, bỏ hậu tố @tên_bot của /lệnh) bằng một lệnh: `/start|/help|/menu`; `/stats|/status|thống kê`; `/pause|/stop|tạm dừng`; `/resume|/run|/start_bot|bật bot|chạy`. Câu dài hơn không kích hoạt gì, bot trả một dòng gợi ý lệnh hợp lệ.
+- **A32: bỏ qua theo quyết định người dùng** (không thêm bước xác nhận khi bật tự động).
