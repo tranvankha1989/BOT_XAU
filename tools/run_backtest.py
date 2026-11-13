@@ -19,11 +19,12 @@ Ví dụ:
 import argparse
 import json
 import os
+import random
 import sys
 import threading
 import time
 import types
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -77,6 +78,87 @@ def load_strategy_cfg(profile_key: str):
     return cfg, loaded, note
 
 
+def set_seed(seed: int):
+    """Đặt seed cho random, numpy, torch (CPU và CUDA nếu có) để lần chạy lặp lại được."""
+    random.seed(seed)
+    bot_mod.np.random.seed(seed)
+    torch = bot_mod.torch
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def trade_entry_dt(t: dict):
+    """Thời điểm vào lệnh (giờ VN, naive) = cột date (YYYY-MM-DD) + giờ trong in_time ("dd/mm HH:MM[:SS]").
+    Trả None nếu bản ghi thiếu/không đọc được."""
+    try:
+        day = str(t["date"])
+        hms = str(t["in_time"]).split(" ")[-1]
+        if hms.count(":") == 1:
+            hms += ":00"
+        return datetime.strptime(f"{day} {hms}", "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def filter_trades_by_range(trades: list, start: str, end: str):
+    """Giữ lệnh có thời điểm vào trong [start 00:00:00, end 23:59:59] (giờ VN).
+    Trả (kept, dropped, unparsed): lệnh không xác định được thời điểm vào được GIỮ LẠI và đếm riêng."""
+    d0 = datetime.strptime(start, "%Y-%m-%d")
+    d1 = datetime.strptime(end, "%Y-%m-%d")
+    if d0 > d1:
+        d0, d1 = d1, d0
+    lo = d0
+    hi = d1 + timedelta(hours=23, minutes=59, seconds=59)
+    kept, dropped, unparsed = [], [], 0
+    for t in trades:
+        dt = trade_entry_dt(t)
+        if dt is None:
+            unparsed += 1
+            kept.append(t)
+        elif lo <= dt <= hi:
+            kept.append(t)
+        else:
+            dropped.append(t)
+    return kept, dropped, unparsed
+
+
+def compute_extra_metrics(trades: list) -> dict:
+    """Tổng lãi/lỗ, profit factor, kỳ vọng R theo hai cách (tính từ danh sách lệnh):
+    (a) trung bình R của từng lệnh; (b) tổng lãi ròng / tổng risk_usd (chỉ các lệnh có risk_usd > 0)."""
+    pnls = [float(t["pnl"]) for t in trades]
+    win = sum(x for x in pnls if x > 0)
+    loss = abs(sum(x for x in pnls if x < 0))
+    risky = [t for t in trades if float(t.get("risk_usd") or 0.0) > 0]
+    rs = [float(t["pnl"]) / float(t["risk_usd"]) for t in risky]
+    total_risk = sum(float(t["risk_usd"]) for t in risky)
+    risky_pnl = sum(float(t["pnl"]) for t in risky)
+    r_a = (sum(rs) / len(rs)) if rs else None
+    r_b = (risky_pnl / total_risk) if total_risk > 0 else None
+    return {
+        "total_pnl": sum(pnls),
+        "profit_factor": (win / loss) if loss > 0 else (float("inf") if win > 0 else 0.0),
+        "r_mean_per_trade": r_a,
+        "r_total_over_risk": r_b,
+        "n_risk_trades": len(risky),
+        "r_sign_conflict": (r_a is not None and r_b is not None and r_a * r_b < 0),
+    }
+
+
+def format_extra_metrics(m: dict) -> list:
+    pf = "∞" if m["profit_factor"] == float("inf") else f"{m['profit_factor']:.2f}"
+    ra = f"{m['r_mean_per_trade']:+.3f}R" if m["r_mean_per_trade"] is not None else "n/a"
+    rb_ = f"{m['r_total_over_risk']:+.3f}R" if m["r_total_over_risk"] is not None else "n/a"
+    lines = [
+        "📐 ===== THỐNG KÊ BỔ SUNG (tính từ danh sách lệnh) =====",
+        f"Tổng lãi/lỗ: {m['total_pnl']:+.2f} $ | Profit factor: {pf}",
+        f"Kỳ vọng R (a) trung bình R từng lệnh: {ra} | (b) tổng lãi ròng / tổng risk_usd: {rb_} (n={m['n_risk_trades']} lệnh có risk)",
+    ]
+    if m["r_sign_conflict"]:
+        lines.append("⚠️ CẢNH BÁO: hai cách tính kỳ vọng R TRÁI DẤU (a và b) - kết quả phụ thuộc mạnh vào độ lớn risk từng lệnh, cần thận trọng khi kết luận.")
+    return lines
+
+
 def build_app(profile_key, cfg, symbol, start, end, precision, use_ai, capital, lot, log_lines, toasts):
     """Dựng KronosDesktopApp không giao diện, chỉ gắn thuộc tính _run_backtest_simulation cần."""
     var = lambda v: types.SimpleNamespace(get=lambda: v)
@@ -120,6 +202,9 @@ def run(argv=None) -> int:
     ap.add_argument("--no-ai", action="store_true", help="Tắt Não AI Kronos, dùng thuật toán kỹ thuật")
     ap.add_argument("--capital", type=float, default=1000.0)
     ap.add_argument("--lot", type=float, default=0.02)
+    ap.add_argument("--seed", type=int, default=1, help="Seed cho random/numpy/torch (mặc định 1)")
+    ap.add_argument("--keep-warmup-trades", action="store_true",
+                    help="Giữ cả lệnh vào ngoài [start, end] (khởi động/warm-up); mặc định các lệnh này bị loại khỏi thống kê")
     args = ap.parse_args(argv)
 
     pk = args.profile
@@ -147,12 +232,14 @@ def run(argv=None) -> int:
     print(f"[*] Khoảng ngày      : {args.start} -> {args.end}")
     print(f"[*] Chế độ yêu cầu   : {'Tick S1 (1 giây)' if args.precision == 'S1' else 'Nến MT5'} | Não AI: {'TẮT' if args.no_ai else 'BẬT'}")
     print(f"[*] Cấu hình         : {cfg_note}")
+    print(f"[*] Seed             : {args.seed}")
 
     if not mt5.initialize():
         print(f"[ERROR] mt5.initialize() thất bại: {mt5.last_error()}")
         return 1
 
     log_lines, toasts = [], []
+    set_seed(args.seed)
     t0 = time.perf_counter()
     prev_mt5 = bot_mod.mt5
     bot_mod.mt5 = ReadOnlyMT5(mt5)  # từ đây mọi lời gọi mt5 trong bot chỉ đọc
@@ -160,7 +247,7 @@ def run(argv=None) -> int:
         app = build_app(pk, cfg, symbol, args.start, args.end, args.precision, not args.no_ai,
                         args.capital, args.lot, log_lines, toasts)
         app._run_backtest_simulation()
-        trades = list(app._bt_trades_cache or [])
+        all_trades = list(app._bt_trades_cache or [])
     finally:
         bot_mod.mt5 = prev_mt5
         try:
@@ -185,16 +272,33 @@ def run(argv=None) -> int:
     for ln in log_lines[:20]:
         print(f"  [log] {ln}")
 
+    if args.keep_warmup_trades:
+        trades, dropped, unparsed = all_trades, [], 0
+    else:
+        trades, dropped, unparsed = filter_trades_by_range(all_trades, args.start, args.end)
+    dropped_pnl = sum(float(t["pnl"]) for t in dropped)
+
     report = bot_mod.build_backtest_report(trades, args.capital)
     cal_days = (d1 - d0).days + 1 if d1 >= d0 else (d0 - d1).days + 1
     print("-" * 65)
     print(f"Chế độ chạy thực tế  : {mode}")
     print(f"Số ngày giao dịch    : {report.get('n_days', 0)} (trong {cal_days} ngày lịch)")
     print(f"Số lệnh              : {report['n_trades']}")
+    print(f"Seed                 : {args.seed}")
+    if args.keep_warmup_trades:
+        print("Lệnh warm-up         : ĐANG GIỮ (--keep-warmup-trades) - thống kê gồm cả lệnh vào ngoài [start, end]")
+    else:
+        print(f"Lệnh ngoài khoảng    : loại {len(dropped)} lệnh vào ngoài [{args.start} 00:00:00, {args.end} 23:59:59] giờ VN, "
+              f"tổng lãi/lỗ nhóm này {dropped_pnl:+.2f} $ (KHÔNG tính vào thống kê chính)")
+    if unparsed:
+        print(f"⚠️ {unparsed} lệnh không xác định được thời điểm vào nên được giữ lại")
     print(f"Thời gian chạy       : {elapsed:.1f} giây")
     print("-" * 65)
     for line in bot_mod.format_backtest_report(report):
         print(line)
+    if trades:
+        for line in format_extra_metrics(compute_extra_metrics(trades)):
+            print(line)
 
     if trades:
         fname = f"backtest_{symbol}_{args.start}_{args.end}_{datetime.now().strftime('%H%M%S')}.csv"
