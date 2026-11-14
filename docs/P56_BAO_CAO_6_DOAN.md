@@ -41,3 +41,9 @@ Tổng lãi 6 đoạn sau khi trừ thêm X $/lệnh (số đoạn lãi / 6):
 - Vì C ít lệnh hơn và lãi/lệnh cao hơn nên chịu chi phí tốt hơn. Nếu spread + trượt giá + commission thật > ~0,26 (giá) thì A hết lãi.
 - Chưa đủ để đổi sang C (3/6 đoạn mỗi bên), nhưng đây là lý do thứ 2 nghiêng về C. Cần đo chi phí thật từ demo (cột commission/spread trong deals) trước khi quyết.
 - Công cụ: `run_backtest.py --commission-per-lot X --slippage Y` (trừ sau mô phỏng, không đổi quyết định vào/ra lệnh; cổng ngày trong mô phỏng không thấy chi phí này).
+
+## ĐÍNH CHÍNH (14/11/2026, sau khi đọc cấu hình chiến lược đang dùng qua `load_strategy_cfg`, không có token)
+- Cấu hình vàng THẬT của người dùng: `structure_conflict_mode = analysis` (KHÔNG phải neutral), `trend_filter = on`, `consensus 80`, `analysis_tf M5 / tf M1`, `scenarios 16`, `sl_buffer 2.5`, `max_sl_price 4.0`, `rr = 0` (TP theo AI), `trail_dist_r 2.0`, `max_hold_mins 5`, lot 0.02.
+- Vì vậy cột **C (analysis) trong báo cáo này mới là cấu hình đang chạy**, còn A (neutral) chỉ là mặc định của code. Mình đã gọi nhầm A là "hiện tại".
+- Kết luận cập nhật: giữ nguyên `analysis` (đang dùng): 402 lệnh / +87,4$ / 0,22$ mỗi lệnh, vẫn lãi ở mọi mức chi phí thêm đến 0,20$/lệnh. Không cần đổi gì. Kết luận "bộ lọc bật tốt hơn tắt" không đổi.
+- Lưu ý còn lại: backtest dùng TP = 2R còn live dùng `rr = 0` (TP theo AI): khác biệt này chưa đo được.

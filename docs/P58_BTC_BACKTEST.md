@@ -24,3 +24,10 @@ Mỗi ô: lệnh / lãi $ / PF / thắng% / maxDD $ | BUY lệnh/$ | SELL lệnh
 - Hợp lý: min_move 60 (~0,3 ATR M15), sl_atr 1,5, sl_buffer 20, Max SL 350 (> SL điển hình ~300), min_entry_spacing 50, be_plus_price 5 (đơn vị giá).
 - Nên chỉnh (suy luận, backtest KHÔNG đo được vì không có cổng spread): `max_spread` 30 -> ~12-15 (spread thật 6,4, gấp 4,7 lần là quá rộng; bên vàng 1,5 lần). Người dùng tự chỉnh trên giao diện: cấu hình đang chạy nằm trong user_settings.json (không đọc được), đổi mặc định trong code không ảnh hưởng.
 - Cần thêm: thử BTC ở đoạn BTC tăng/đi ngang (tháng 8-9) trước khi chạy demo BTC lâu dài; đề nghị demo BTC với lot 0,01.
+
+## ĐÍNH CHÍNH (14/11/2026): cấu hình BTC THẬT của người dùng (đọc qua `load_strategy_cfg`, không có token)
+- `analysis_tf M5`, `tf M1` (không phải M15/M5 như mặc định), `lot 0.05`, `max_pos 5`, `consensus 75`, `max_spread 30`, `sl_atr 1.5`, `sl_buffer 50`, `max_sl_price 150`, `rr = 0`, **`trend_filter = OFF`**, `structure_conflict_mode analysis`, `min_entry_spacing 20`, `be_plus_price 5`.
+- Backtest P58 đã chạy bằng cấu hình thật này (chỉ ép lot 0,01, trend/conflict theo từng cột). Cấu hình thật (lọc tắt) = cột **B**: 435 lệnh / +66,9$ ở lot 0,01 (nhân ~5 lần ở lot 0,05: ~+335$ nhưng DD cũng nhân ~5), PF 1,23-1,37, thắng 58-64%.
+- Đã sửa nhận định ở trên: "ATR M15 187" không áp dụng (phân tích bằng M5, ATR M5 trung vị ~120). Max SL 150 < SL điển hình 1,5x120+50 = 230 -> BTC thường phải canh vùng (không "vào ngay" như mình viết) -> chịu ảnh hưởng của lỗi chia đôi Max SL đã sửa ở P57.
+- Đề xuất: BẬT `trend_filter` cho BTC (A: lãi/lệnh gấp ~2,3 lần, DD thấp hơn ở 3/3 đoạn). Cùng lý do nhưng cấu hình là của người dùng nên mình KHÔNG tự đổi; bạn bật trong giao diện (Mục 2: "Bộ lọc xu hướng").
+- Rủi ro cần biết: lot 0,05 và max_pos 5: rủi ro mỗi lệnh ~7,5$ (SL 150), tối đa 5 lệnh cùng lúc ~37,5$ (3,75% vốn 1000$).
