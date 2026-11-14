@@ -7976,13 +7976,13 @@ class KronosDesktopApp:
             ctx["daily_limit_locked_kind"] = "TP"
             ctx["daily_limit_locked_threshold"] = daily_tp
             ctx["pending_pullback_order"] = None
-            positions = self._get_bot_positions(symbol, profile_key=pk)
-            if positions:
-                for pos in positions:
-                    self._close_single_pos(pos)
+            failed_close = self._daily_limit_close_bot_positions(pk, symbol, ctx)
             self._cached_deals_by_sym.clear()
             self._cached_closed_deals_map.clear()
-            self.log(f"🏆 [{pk} - QUẢN LÝ VỐN NGÀY] {ctx['daily_limit_reason']} -> Đã chốt toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
+            if failed_close == 0:
+                self.log(f"🏆 [{pk} - QUẢN LÝ VỐN NGÀY] {ctx['daily_limit_reason']} -> Đã chốt toàn bộ lệnh {symbol} & DỪNG GIAO DỊCH hết hôm nay!")
+            else:
+                self.log(f"🏆 [{pk} - QUẢN LÝ VỐN NGÀY] {ctx['daily_limit_reason']} -> DỪNG GIAO DỊCH hết hôm nay nhưng còn {failed_close} lệnh bot chưa đóng được, sẽ thử lại (>= 5 giây/lần).")
 
         # Kiểm tra chạm mức Cắt lỗ ngày (nếu > 0)
         elif daily_sl > 0.0 and total_daily_pnl <= -daily_sl and ctx["daily_limit_locked_date"] != today_str:
@@ -7991,13 +7991,26 @@ class KronosDesktopApp:
             ctx["daily_limit_locked_kind"] = "SL"
             ctx["daily_limit_locked_threshold"] = daily_sl
             ctx["pending_pullback_order"] = None
-            positions = self._get_bot_positions(symbol, profile_key=pk)
-            if positions:
-                for pos in positions:
-                    self._close_single_pos(pos)
+            failed_close = self._daily_limit_close_bot_positions(pk, symbol, ctx)
             self._cached_deals_by_sym.clear()
             self._cached_closed_deals_map.clear()
-            self.log(f"[{pk} - Quản lý vốn ngày] {ctx['daily_limit_reason']} -> Đã đóng toàn bộ lệnh {symbol} & dừng giao dịch hôm nay.")
+            if failed_close == 0:
+                self.log(f"[{pk} - Quản lý vốn ngày] {ctx['daily_limit_reason']} -> Đã đóng toàn bộ lệnh {symbol} & dừng giao dịch hôm nay.")
+            else:
+                self.log(f"[{pk} - Quản lý vốn ngày] {ctx['daily_limit_reason']} -> Dừng giao dịch hôm nay nhưng còn {failed_close} lệnh bot chưa đóng được, sẽ thử lại (>= 5 giây/lần).")
+
+        # A02: thử lại đóng lệnh BOT nếu lần đóng khi chạm ngưỡng chưa hết lệnh (<= 1 lần / 5 giây, log <= 1 lần / 15 giây)
+        if ctx.get("daily_limit_pending_close"):
+            if ctx["daily_limit_locked_date"] != today_str:
+                ctx["daily_limit_pending_close"] = False  # đã mở khóa (sang ngày mới / đổi ngưỡng): không đóng lệnh nữa
+            elif time.monotonic() - ctx.get("daily_close_last_try", -1e9) >= 5.0:
+                failed_close = self._daily_limit_close_bot_positions(pk, symbol, ctx)
+                now_m = time.monotonic()
+                if failed_close == 0:
+                    self.log(f"✅ [{pk} - Quản lý vốn ngày] Đã đóng hết lệnh bot {symbol} sau khi thử lại.")
+                elif now_m - ctx.get("daily_close_last_log", -1e9) >= 15.0:
+                    ctx["daily_close_last_log"] = now_m
+                    self.log(f"⚠️ [{pk} - Quản lý vốn ngày] Còn {failed_close} lệnh bot {symbol} chưa đóng được -> thử lại sau 5 giây.")
 
         if pk == self.active_profile_key:
             self.cached_daily_pnl = ctx["cached_daily_pnl"]
@@ -8011,6 +8024,21 @@ class KronosDesktopApp:
             self.daily_limit_locked_kind = ctx.get("daily_limit_locked_kind")
             self.daily_limit_locked_threshold = float(ctx.get("daily_limit_locked_threshold") or 0.0)
             self.pending_pullback_order = ctx["pending_pullback_order"]
+
+    def _daily_limit_close_bot_positions(self, pk: str, symbol: str, ctx: dict) -> int:
+        """A02: đóng các lệnh BOT của profile (lọc Magic qua _get_bot_positions, không đụng lệnh tay) và KIỂM TRA kết quả.
+        Trả số lệnh bot chưa đóng được; đặt/xóa cờ ctx["daily_limit_pending_close"] để các vòng sau thử lại."""
+        ctx["daily_close_last_try"] = time.monotonic()
+        failed = 0
+        for pos in (self._get_bot_positions(symbol, profile_key=pk) or []):
+            try:
+                ok_c, _msg = self._close_single_pos(pos)
+            except Exception:
+                ok_c = False
+            if not ok_c:
+                failed += 1
+        ctx["daily_limit_pending_close"] = failed > 0
+        return failed
 
     def _is_daily_limit_locked(self, profile_key: str = None) -> bool:
         pk = profile_key or self.active_profile_key

@@ -67,3 +67,6 @@ Mục "chưa chắc" là suy luận từ code, chưa có bằng chứng chạy t
 ## Trạng thái xử lý (P40-C)
 - **A31: ĐÃ SỬA** (`_handle_telegram_command`): chỉ khớp khi NGUYÊN tin nhắn (bỏ khoảng trắng, chữ thường, bỏ hậu tố @tên_bot của /lệnh) bằng một lệnh: `/start|/help|/menu`; `/stats|/status|thống kê`; `/pause|/stop|tạm dừng`; `/resume|/run|/start_bot|bật bot|chạy`. Câu dài hơn không kích hoạt gì, bot trả một dòng gợi ý lệnh hợp lệ.
 - **A32: bỏ qua theo quyết định người dùng** (không thêm bước xác nhận khi bật tự động).
+
+## Trạng thái xử lý (P9a-C)
+- **A02: ĐÃ SỬA** (`_check_daily_profit_loss_limits`, helper `_daily_limit_close_bot_positions`): kiểm tra kết quả `_close_single_pos`; còn lệnh bot chưa đóng được thì đặt `ctx["daily_limit_pending_close"]=True` và thử lại ở các vòng sau (<= 1 lần/5 giây, log <= 1 lần/15 giây) đến khi hết lệnh bot thì xóa cờ; mở khóa (ngày mới/đổi ngưỡng) cũng xóa cờ. Chỉ đóng lệnh theo Magic của profile (`_get_bot_positions`). Điều kiện khóa/mở khóa không đổi. Lưu ý: `_get_bot_positions` trả [] cả khi MT5 lỗi đọc nên lỗi đọc kéo dài có thể bị coi là đã hết lệnh.
