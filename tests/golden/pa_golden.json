@@ -1,0 +1,702 @@
+{
+ "df_1_nen": [
+  false,
+  "Thiếu dữ liệu nến PA trên khung vào lệnh"
+ ],
+ "df_none": [
+  false,
+  "Thiếu dữ liệu nến PA trên khung vào lệnh"
+ ],
+ "df_none_open": [
+  true,
+  "Dữ liệu nến không đủ -> Cho phép theo pa_fail_open"
+ ],
+ "hammer/BUY#48": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.11$ từ đáy)"
+ ],
+ "hammer/BUY#49": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Bật nảy +1.63$ từ đáy)"
+ ],
+ "hammer/BUY#50": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.85$ từ đáy)"
+ ],
+ "hammer/BUY#51": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Bật nảy +1.63$ từ đáy)"
+ ],
+ "hammer/BUY#52": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu dưới + Bật nảy +0.56$ từ đáy)"
+ ],
+ "hammer/BUY#53": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.92$ từ đáy)"
+ ],
+ "hammer/BUY#54": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.70$ từ đáy)"
+ ],
+ "hammer/BUY#55": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.60$ từ đáy)"
+ ],
+ "hammer/BUY#56": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu dưới + Bật nảy +0.64$ từ đáy)"
+ ],
+ "hammer/BUY#57": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.23$ từ đáy)"
+ ],
+ "hammer/BUY#58": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.63$ từ đáy)"
+ ],
+ "hammer/BUY#59": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.27$ từ đáy)"
+ ],
+ "hammer/SELL#60": [
+  false,
+  "Chưa đủ 1 điều kiện PA (Đạt 0/1: Đang cách đỉnh chỉ -0.02$)"
+ ],
+ "hammer/SELL#61": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đỉnh chỉ -0.07$)"
+ ],
+ "hammer/SELL#62": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 0/2: Đang cách đỉnh chỉ 0.02$)"
+ ],
+ "hammer/SELL#63": [
+  true,
+  "Xác nhận lực xả (Giảm -0.41$ từ đỉnh)"
+ ],
+ "hammer/SELL#64": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Nến đỏ đảo chiều)"
+ ],
+ "hammer/SELL#65": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Giảm -0.61$ từ đỉnh)"
+ ],
+ "hammer/SELL#66": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đỉnh chỉ 0.15$)"
+ ],
+ "hammer/SELL#67": [
+  false,
+  "Chưa đủ 1 điều kiện PA (Đạt 0/1: Đang cách đỉnh chỉ 0.09$)"
+ ],
+ "hammer/SELL#68": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 0/2: Đang cách đỉnh chỉ -0.53$)"
+ ],
+ "hammer/SELL#69": [
+  false,
+  "Chưa đủ 1 điều kiện PA (Đạt 0/1: Đang cách đỉnh chỉ 0.23$)"
+ ],
+ "hammer/SELL#70": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 0/2: Đang cách đỉnh chỉ 0.13$)"
+ ],
+ "hammer/SELL#71": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Nến đỏ đảo chiều)"
+ ],
+ "marubozu_down/BUY#0": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#1": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#10": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#11": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#2": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#3": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#4": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#5": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#6": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#7": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#8": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/BUY#9": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "marubozu_down/SELL#12": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -6.64$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#13": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -7.36$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#14": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -7.09$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#15": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -7.28$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#16": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -7.48$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#17": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -7.26$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#18": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -6.51$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#19": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -6.80$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#20": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -7.65$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#21": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -6.75$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#22": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -6.92$ từ đỉnh)"
+ ],
+ "marubozu_down/SELL#23": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -7.25$ từ đỉnh)"
+ ],
+ "marubozu_up/BUY#24": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +7.37$ từ đáy)"
+ ],
+ "marubozu_up/BUY#25": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +7.75$ từ đáy)"
+ ],
+ "marubozu_up/BUY#26": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +7.79$ từ đáy)"
+ ],
+ "marubozu_up/BUY#27": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +7.32$ từ đáy)"
+ ],
+ "marubozu_up/BUY#28": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +7.10$ từ đáy)"
+ ],
+ "marubozu_up/BUY#29": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +7.17$ từ đáy)"
+ ],
+ "marubozu_up/BUY#30": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +7.16$ từ đáy)"
+ ],
+ "marubozu_up/BUY#31": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +7.07$ từ đáy)"
+ ],
+ "marubozu_up/BUY#32": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +7.66$ từ đáy)"
+ ],
+ "marubozu_up/BUY#33": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +7.09$ từ đáy)"
+ ],
+ "marubozu_up/BUY#34": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +6.61$ từ đáy)"
+ ],
+ "marubozu_up/BUY#35": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +6.61$ từ đáy)"
+ ],
+ "marubozu_up/SELL#36": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#37": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#38": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#39": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#40": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#41": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#42": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#43": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#44": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#45": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#46": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "marubozu_up/SELL#47": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "noise/BUY#100": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +0.86$ từ đáy)"
+ ],
+ "noise/BUY#101": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.27$ từ đáy)"
+ ],
+ "noise/BUY#102": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.75$ từ đáy)"
+ ],
+ "noise/BUY#103": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +1.08$ từ đáy)"
+ ],
+ "noise/BUY#104": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu dưới + Bật nảy +1.12$ từ đáy)"
+ ],
+ "noise/BUY#105": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "noise/BUY#106": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +2.25$ từ đáy)"
+ ],
+ "noise/BUY#107": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Bật nảy +1.29$ từ đáy)"
+ ],
+ "noise/BUY#120": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +1.77$ từ đáy)"
+ ],
+ "noise/BUY#121": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Bật nảy +1.11$ từ đáy)"
+ ],
+ "noise/BUY#122": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Rút râu dưới)"
+ ],
+ "noise/BUY#123": [
+  true,
+  "Xác nhận lực đỡ (Bật nảy +0.83$ từ đáy)"
+ ],
+ "noise/BUY#124": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến xanh đảo chiều + Bật nảy +4.42$ từ đáy)"
+ ],
+ "noise/BUY#125": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu dưới + Bật nảy +1.24$ từ đáy)"
+ ],
+ "noise/BUY#126": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đáy chỉ -0.05$)"
+ ],
+ "noise/BUY#127": [
+  true,
+  "Xác nhận lực đỡ (Bật nảy +1.29$ từ đáy)"
+ ],
+ "noise/BUY#128": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.67$ từ đáy)"
+ ],
+ "noise/BUY#129": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Bật nảy +1.29$ từ đáy)"
+ ],
+ "noise/BUY#130": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +3.09$ từ đáy)"
+ ],
+ "noise/BUY#131": [
+  true,
+  "Xác nhận lực đỡ (Bật nảy +0.94$ từ đáy)"
+ ],
+ "noise/BUY#144": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Bật nảy +1.14$ từ đáy)"
+ ],
+ "noise/BUY#145": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.70$ từ đáy)"
+ ],
+ "noise/BUY#146": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.64$ từ đáy)"
+ ],
+ "noise/BUY#147": [
+  true,
+  "Xác nhận lực đỡ (Bật nảy +0.55$ từ đáy)"
+ ],
+ "noise/BUY#148": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.50$ từ đáy)"
+ ],
+ "noise/BUY#149": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.62$ từ đáy)"
+ ],
+ "noise/BUY#150": [
+  false,
+  "Nến M1 đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
+ ],
+ "noise/BUY#151": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.34$ từ đáy)"
+ ],
+ "noise/BUY#152": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +1.36$ từ đáy)"
+ ],
+ "noise/BUY#153": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +1.78$ từ đáy)"
+ ],
+ "noise/BUY#154": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +1.97$ từ đáy)"
+ ],
+ "noise/BUY#155": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Bật nảy +0.96$ từ đáy)"
+ ],
+ "noise/BUY#96": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +1.35$ từ đáy)"
+ ],
+ "noise/BUY#97": [
+  true,
+  "Xác nhận lực đỡ (Bật nảy +0.58$ từ đáy)"
+ ],
+ "noise/BUY#98": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +3.68$ từ đáy)"
+ ],
+ "noise/BUY#99": [
+  true,
+  "Xác nhận lực đỡ (Rút râu dưới + Nến xanh đảo chiều + Bật nảy +2.38$ từ đáy)"
+ ],
+ "noise/SELL#108": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Giảm -0.54$ từ đỉnh)"
+ ],
+ "noise/SELL#109": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "noise/SELL#110": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -0.79$ từ đỉnh)"
+ ],
+ "noise/SELL#111": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Rút râu trên)"
+ ],
+ "noise/SELL#112": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Rút râu trên)"
+ ],
+ "noise/SELL#113": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -1.59$ từ đỉnh)"
+ ],
+ "noise/SELL#114": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -0.86$ từ đỉnh)"
+ ],
+ "noise/SELL#115": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Rút râu trên)"
+ ],
+ "noise/SELL#116": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Rút râu trên)"
+ ],
+ "noise/SELL#117": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "noise/SELL#118": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -2.13$ từ đỉnh)"
+ ],
+ "noise/SELL#119": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Nến đỏ đảo chiều)"
+ ],
+ "noise/SELL#132": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -1.12$ từ đỉnh)"
+ ],
+ "noise/SELL#133": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -3.65$ từ đỉnh)"
+ ],
+ "noise/SELL#134": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -1.21$ từ đỉnh)"
+ ],
+ "noise/SELL#135": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -0.71$ từ đỉnh)"
+ ],
+ "noise/SELL#136": [
+  false,
+  "Nến M1 đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
+ ],
+ "noise/SELL#137": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -1.00$ từ đỉnh)"
+ ],
+ "noise/SELL#138": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Giảm -0.78$ từ đỉnh)"
+ ],
+ "noise/SELL#139": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu trên + Giảm -1.50$ từ đỉnh)"
+ ],
+ "noise/SELL#140": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -1.52$ từ đỉnh)"
+ ],
+ "noise/SELL#141": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -2.47$ từ đỉnh)"
+ ],
+ "noise/SELL#142": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -2.03$ từ đỉnh)"
+ ],
+ "noise/SELL#143": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Rút râu trên)"
+ ],
+ "noise/SELL#156": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu trên + Giảm -0.97$ từ đỉnh)"
+ ],
+ "noise/SELL#157": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -1.31$ từ đỉnh)"
+ ],
+ "noise/SELL#158": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu trên + Giảm -2.53$ từ đỉnh)"
+ ],
+ "noise/SELL#159": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Giảm -0.60$ từ đỉnh)"
+ ],
+ "noise/SELL#160": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Nến đỏ đảo chiều + Giảm -1.34$ từ đỉnh)"
+ ],
+ "noise/SELL#161": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Giảm -0.78$ từ đỉnh)"
+ ],
+ "noise/SELL#162": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -0.99$ từ đỉnh)"
+ ],
+ "noise/SELL#163": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đỉnh chỉ -0.57$)"
+ ],
+ "noise/SELL#164": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -1.83$ từ đỉnh)"
+ ],
+ "noise/SELL#165": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -0.95$ từ đỉnh)"
+ ],
+ "noise/SELL#166": [
+  true,
+  "Xác nhận lực xả (Nến đỏ đảo chiều + Giảm -1.23$ từ đỉnh)"
+ ],
+ "noise/SELL#167": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Giảm -1.34$ từ đỉnh)"
+ ],
+ "shooting/BUY#72": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +1.73$ từ đáy)"
+ ],
+ "shooting/BUY#73": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đáy chỉ -0.64$)"
+ ],
+ "shooting/BUY#74": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 0/2: Đang cách đáy chỉ 0.18$)"
+ ],
+ "shooting/BUY#75": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Bật nảy +1.10$ từ đáy)"
+ ],
+ "shooting/BUY#76": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đáy chỉ 0.01$)"
+ ],
+ "shooting/BUY#77": [
+  false,
+  "Chưa đủ 1 điều kiện PA (Đạt 0/1: Đang cách đáy chỉ 0.45$)"
+ ],
+ "shooting/BUY#78": [
+  true,
+  "Xác nhận lực đỡ (Nến xanh đảo chiều + Bật nảy +0.84$ từ đáy)"
+ ],
+ "shooting/BUY#79": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Bật nảy +1.49$ từ đáy)"
+ ],
+ "shooting/BUY#80": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 0/2: Đang cách đáy chỉ 0.42$)"
+ ],
+ "shooting/BUY#81": [
+  true,
+  "Xác nhận lực đỡ (Bật nảy +0.69$ từ đáy)"
+ ],
+ "shooting/BUY#82": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 0/3: Đang cách đáy chỉ 0.38$)"
+ ],
+ "shooting/BUY#83": [
+  false,
+  "Chưa đủ 1 điều kiện PA (Đạt 0/1: Đang cách đáy chỉ 0.26$)"
+ ],
+ "shooting/SELL#84": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu trên + Giảm -1.28$ từ đỉnh)"
+ ],
+ "shooting/SELL#85": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -1.21$ từ đỉnh)"
+ ],
+ "shooting/SELL#86": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Giảm -1.50$ từ đỉnh)"
+ ],
+ "shooting/SELL#87": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -1.33$ từ đỉnh)"
+ ],
+ "shooting/SELL#88": [
+  false,
+  "Chưa đủ 2 điều kiện PA (Đạt 1/2: Rút râu trên)"
+ ],
+ "shooting/SELL#89": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -1.43$ từ đỉnh)"
+ ],
+ "shooting/SELL#90": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Giảm -0.93$ từ đỉnh)"
+ ],
+ "shooting/SELL#91": [
+  true,
+  "Xác nhận lực xả (Rút râu trên)"
+ ],
+ "shooting/SELL#92": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Nến đỏ đảo chiều + Giảm -1.20$ từ đỉnh)"
+ ],
+ "shooting/SELL#93": [
+  true,
+  "Xác nhận lực xả (Rút râu trên + Giảm -1.50$ từ đỉnh)"
+ ],
+ "shooting/SELL#94": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 1/3: Rút râu trên)"
+ ],
+ "shooting/SELL#95": [
+  false,
+  "Chưa đủ 3 điều kiện PA (Đạt 2/3: Rút râu trên + Giảm -1.49$ từ đỉnh)"
+ ],
+ "thieu_cot": [
+  false,
+  "Lỗi kiểm tra Price Action ('low')"
+ ],
+ "thieu_cot_open": [
+  true,
+  "Lỗi PA check ('low') -> Cho phép theo pa_fail_open"
+ ],
+ "tick_none": [
+  false,
+  "Không lấy được tick giá hiện tại từ MT5"
+ ],
+ "tick_none_open": [
+  true,
+  "Không lấy được tick -> Cho phép theo pa_fail_open"
+ ]
+}
