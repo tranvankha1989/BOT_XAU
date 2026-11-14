@@ -7392,6 +7392,7 @@ class KronosDesktopApp:
             return
         # Bảo vệ Luồng Giao Diện Chính (Non-Blocking Lock): Nếu luồng ngầm đang tải dữ liệu MT5 nặng, bỏ qua nhịp này để UI luôn mượt 60 FPS
         if not self._mt5_lock.acquire(blocking=False):
+            self.__dict__.setdefault("_pb_cnt", {"busy": 0, "exc": 0})["busy"] += 1
             if not getattr(self, "_app_closing", False):
                 self.root.after(1000, self._realtime_tick_loop)
             return
@@ -7437,6 +7438,7 @@ class KronosDesktopApp:
                 self._check_daily_profit_loss_limits(total_profit, tick, profile_key=active_pk)
                 if tick is not None:
                     self._check_pending_pullback_order(symbol, tick, profile_key=active_pk)
+                    self._pb_heartbeat(active_pk, symbol, tick)
                 self._update_left_quick_info(symbol, tf_str, tick, pos_count, total_profit)
                 self._update_bot_status_bar(active_pk)
                 self._sync_self_to_active_ctx()
@@ -7452,11 +7454,13 @@ class KronosDesktopApp:
                     self._check_daily_profit_loss_limits(bg_profit, bg_tick, profile_key=bg_pk)
                     if bg_tick is not None:
                         self._check_pending_pullback_order(bg_sym, bg_tick, profile_key=bg_pk)
+                        self._pb_heartbeat(bg_pk, bg_sym, bg_tick)
 
                 if self.realtime_chart_var.get() and self.heartbeat_toggle and not self.is_analyzing and self._drag_start_px is None:
                     self._refresh_realtime_chart(symbol, tf_str)
         except Exception as e:
             self.log_error("REALTIME_TICK_LOOP", e, show_in_ui=False)
+            self._pb_note_exception(e)
         finally:
             if not getattr(self, "_app_closing", False):
                 self.root.after(1000, self._realtime_tick_loop)
@@ -8504,16 +8508,125 @@ class KronosDesktopApp:
                 return True, f"Lỗi PA check ({e}) -> Cho phép theo pa_fail_open"
             return False, f"Lỗi kiểm tra Price Action ({e})"
 
+    PB_DIAG_INTERVAL_SEC = 10.0   # log chẩn đoán canh vùng: tối đa 1 lần / 10 giây / (profile, cổng)
+    PB_HEARTBEAT_SEC = 60.0       # nhịp "đang canh" khi có pending
+
+    def _pb_gate_log(self, pk: str, gate: str, symbol: str, tick, n_open=None, note: str = "", p=None):
+        """Log CHẨN ĐOÁN (không ảnh hưởng logic vào lệnh): khi _check_pending_pullback_order thoát ở một cổng
+        mà giá đã gần vùng kích hoạt (cách SL <= Max SL hiệu dụng + dung sai + 1.0). Giới hạn 1 lần/10s cho mỗi (profile, cổng)."""
+        try:
+            ctx = self.profile_ctx[pk]
+            if p is None:
+                p = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
+            if p is None or tick is None:
+                return
+            now_m = time.monotonic()
+            ts_map = self.__dict__.setdefault("_pb_diag_ts", {})
+            if now_m - ts_map.get((pk, gate), -1e9) < self.PB_DIAG_INTERVAL_SEC:
+                return
+            cfg = self._get_profile_cfg(pk)
+            action = p["action"]
+            cur_price = tick.ask if action == "BUY" else tick.bid
+            sl_price = float(p["sl_price"])
+            dist = (cur_price - sl_price) if action == "BUY" else (sl_price - cur_price)
+            cap = float(p.get("effective_max_sl", cfg.get("max_sl_price", 0.0)) or 0.0)
+            if cap > 0.0:
+                if dist > cap + 2.0:  # còn xa (dung sai tối đa 1.0): khỏi tra ngưỡng
+                    return
+                tol = float(self._get_symbol_tolerances(symbol, tick).get("max_sl_tol", 0.05))
+                if dist > cap + tol + 1.0:
+                    return
+            ts_map[(pk, gate)] = now_m
+            try:
+                max_spread = float(cfg.get("max_spread", 0.35))
+            except (ValueError, TypeError):
+                max_spread = float("nan")
+            try:
+                max_pos = int(cfg.get("max_pos", 3))
+            except (ValueError, TypeError):
+                max_pos = "?"
+            self.log(
+                f"🔎 [{pk} - Canh vùng] cổng={gate} | bid={tick.bid:.2f} | cách SL={dist:.2f} | Max SL hiệu dụng={cap:.2f} | "
+                f"spread={tick.ask - tick.bid:.2f} | max_spread={max_spread:.2f} | lệnh mở={'?' if n_open is None else n_open} | max_pos={max_pos}"
+                + (f" | {note}" if note else "")
+            )
+        except Exception:
+            pass
+
+    def _pb_note_check(self, pk: str, tick):
+        """Ghi nhận lần kiểm tra canh vùng; trả (bid lần trước, ms từ lần trước) hoặc (None, None). Chỉ phục vụ log."""
+        try:
+            now_m = time.monotonic()
+            last = self.__dict__.setdefault("_pb_last_chk", {})
+            prev = last.get(pk)
+            last[pk] = (now_m, float(tick.bid))
+            if prev is None:
+                return None, None
+            return prev[1], (now_m - prev[0]) * 1000.0
+        except Exception:
+            return None, None
+
+    def _pb_heartbeat(self, pk: str, symbol: str, tick):
+        """Gọi sau mỗi lần _check_pending_pullback_order: đếm lần kiểm tra; mỗi 60s, nếu có pending thì ghi 1 dòng 'đang canh'."""
+        try:
+            now_m = time.monotonic()
+            cnt = self.__dict__.setdefault("_pb_cnt", {"busy": 0, "exc": 0})
+            hb = self.__dict__.setdefault("_pb_hb", {})
+            h = hb.setdefault(pk, {"t0": now_m, "n": 0, "busy0": cnt["busy"], "exc0": cnt["exc"]})
+            h["n"] += 1
+            if now_m - h["t0"] < self.PB_HEARTBEAT_SEC:
+                return
+            n, m, k = h["n"], cnt["busy"] - h["busy0"], cnt["exc"] - h["exc0"]
+            h.update(t0=now_m, n=0, busy0=cnt["busy"], exc0=cnt["exc"])
+            ctx = self.profile_ctx[pk]
+            p = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
+            if p is None or tick is None:
+                return
+            cfg = self._get_profile_cfg(pk)
+            tols = self._get_symbol_tolerances(symbol, tick)
+            action = p["action"]
+            sl_price = float(p["sl_price"])
+            cur_price = tick.ask if action == "BUY" else tick.bid
+            dist = (cur_price - sl_price) if action == "BUY" else (sl_price - cur_price)
+            cap = float(p.get("effective_max_sl", cfg.get("max_sl_price", 0.0)) or 0.0)
+            brk = tols.get("sl_break_tol", 0.25)
+            if cap > 0.0:
+                far = cap + tols.get("max_sl_tol", 0.05)
+                lo, hi = ((sl_price - far, sl_price - brk) if action == "SELL" else (sl_price + brk, sl_price + far))
+                zone = f"[{lo:.2f}, {hi:.2f}]"
+            else:
+                zone = "không giới hạn (theo AI)"
+            self.log(
+                f"🔎 [{pk} - Canh vùng] đang canh {action} | bid={tick.bid:.2f} | vùng kích hoạt={zone} | cách SL={dist:.2f} | "
+                f"lần kiểm tra trong 60s={n} | lần bị bỏ qua do khóa MT5 bận={m} | ngoại lệ vòng tick={k}"
+            )
+        except Exception:
+            pass
+
+    def _pb_note_exception(self, ex):
+        """Đếm ngoại lệ của vòng tick (K) và ghi tối đa 1 dòng/30s. Chỉ phục vụ log."""
+        try:
+            cnt = self.__dict__.setdefault("_pb_cnt", {"busy": 0, "exc": 0})
+            cnt["exc"] += 1
+            now_m = time.monotonic()
+            if now_m - self.__dict__.get("_pb_exc_log_ts", -1e9) >= 30.0:
+                self._pb_exc_log_ts = now_m
+                self.log(f"🔎 [Canh vùng] vòng tick ném ngoại lệ (K={cnt['exc']}): {type(ex).__name__}: {str(ex)[:100]}")
+        except Exception:
+            pass
+
     def _check_pending_pullback_order(self, symbol: str, tick, profile_key: str = None):
         """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa thì khớp lệnh ngay khi đạt (Có khóa chống đúp lệnh)."""
         pk = profile_key or self.active_profile_key
         if self._order_in_flight.get(pk, False):
+            self._pb_gate_log(pk, "order_in_flight", symbol, tick)
             return
         ctx = self.profile_ctx[pk]
         p = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
         if p is None:
             return
         if self._is_daily_limit_locked(pk) or self._is_cooldown_active(pk):
+            self._pb_gate_log(pk, "daily_limit_cooldown", symbol, tick)
             ctx["pending_pullback_order"] = None
             if pk == self.active_profile_key:
                 self.pending_pullback_order = None
@@ -8525,6 +8638,7 @@ class KronosDesktopApp:
         cfg = self._get_profile_cfg(pk)
         is_win_blocked, win_block_reason = is_trading_window_blocked(cfg=cfg)
         if is_win_blocked:
+            self._pb_gate_log(pk, "trading_window", symbol, tick)
             ctx["pending_pullback_order"] = None
             if pk == self.active_profile_key:
                 self.pending_pullback_order = None
@@ -8551,9 +8665,11 @@ class KronosDesktopApp:
 
         cur_sl_dist = (cur_price - sl_price) if action == "BUY" else (sl_price - cur_price)
 
+        prev_bid_chk, prev_dt_ms = self._pb_note_check(pk, tick)
         # 1. Nếu giá chạy ngược xuyên qua luôn mức SL của AI -> Hủy lệnh chờ hồi vì kịch bản đã gãy
         if cur_sl_dist <= tols["sl_break_tol"]:
-            self.log(f"❌ [{pk} - Hủy Lệnh Chờ Hồi {action}] Giá ({cur_price:.2f}) đã chạm/phá qua mức SL AI ({sl_price:.2f}).")
+            _gap_tag = f" | bid lần kiểm tra trước={prev_bid_chk:.2f}, cách {prev_dt_ms:.0f}ms" if prev_bid_chk is not None else " | (chưa có lần kiểm tra trước)"
+            self.log(f"❌ [{pk} - Hủy Lệnh Chờ Hồi {action}] Giá ({cur_price:.2f}) đã chạm/phá qua mức SL AI ({sl_price:.2f}).{_gap_tag}")
             ctx["pending_pullback_order"] = None
             if pk == self.active_profile_key:
                 self.pending_pullback_order = None
@@ -8565,6 +8681,7 @@ class KronosDesktopApp:
             is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
             should_execute = is_auto_on or p.get("manual_queued", False)
             if not should_execute:
+                self._pb_gate_log(pk, "auto_off", symbol, tick)
                 return
 
             # Kiểm tra xem có lệnh ngược chiều đang âm chờ thoát hòa vốn không
@@ -8575,13 +8692,16 @@ class KronosDesktopApp:
                 # Loại bỏ các lệnh ĐÃ DỜI BE (Risk-Free) khỏi bộ đếm số lệnh tối đa
                 at_risk_positions = [pos for pos in open_positions if not self._is_pos_at_be(pos, eps_eq)]
                 if len(at_risk_positions) >= max_pos:
+                    self._pb_gate_log(pk, "max_pos_hoac_lenh_nguoc", symbol, tick, n_open=len(open_positions), note="lý do=đủ max_pos")
                     return
                 for pos in open_positions:
                     is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
                     if ((action == "BUY" and not is_buy_pos) or (action == "SELL" and is_buy_pos)) and pos.profit <= 0:
+                        self._pb_gate_log(pk, "max_pos_hoac_lenh_nguoc", symbol, tick, n_open=len(open_positions), note="lý do=lệnh ngược chiều đang âm")
                         return
 
             if spread_usd > max_spread:
+                self._pb_gate_log(pk, "spread", symbol, tick, n_open=len(open_positions) if open_positions else 0)
                 return
 
             cached_tp_val = p.get("target_tp_price") or (self.cached_tp if pk == self.active_profile_key else ctx.get("cached_tp"))
@@ -8611,6 +8731,7 @@ class KronosDesktopApp:
                     if (now_ts_pa - getattr(self, f"_last_pa_log_ts_{pk}", 0)) >= 10.0:
                         setattr(self, f"_last_pa_log_ts_{pk}", now_ts_pa)
                         self.log(f"⏳ [{pk} - Canh Vùng {action}] Giá ({cur_price:.2f}) đã vào vùng khớp nhưng đang chờ xác nhận Price Action: {pa_msg}")
+                    self._pb_gate_log(pk, "price_action", symbol, tick, n_open=len(open_positions) if open_positions else 0, note=f"PA: {str(pa_msg)[:80]}")
                     return
 
             # Kiểm tra lại RR thực tế (TP AI cache có thể làm RR thấp hơn yêu cầu) -> giữ nguyên pending, chờ giá tốt hơn
@@ -8622,6 +8743,7 @@ class KronosDesktopApp:
                 if (now_ts_rr - getattr(self, f"_last_rr_log_ts_{pk}", 0)) >= 10.0:
                     setattr(self, f"_last_rr_log_ts_{pk}", now_ts_rr)
                     self.log(f"⏳ [{pk} - Canh Vùng {action}] RR thực tế {real_rr:.2f}R < {req_rr:.2f}R yêu cầu (TP {tp_price:.2f}, SL cách {cur_sl_dist:.2f}$) -> giữ canh vùng, chưa vào lệnh.")
+                self._pb_gate_log(pk, "rr_thuc", symbol, tick, n_open=len(open_positions) if open_positions else 0, note=f"RR thực={real_rr:.2f} < {req_rr:.2f}")
                 return
 
             # Thu hồi nguyên tử (Atomic Pop) pending_pullback_order TRƯỚC khi gửi lệnh để tuyệt đối không vào đúp 2 lệnh
@@ -8642,11 +8764,15 @@ class KronosDesktopApp:
                         self.pending_pullback_order = p_next
             else:
                 # Nếu chưa khớp được do đang vướng khóa 1 lệnh/nến M1, chưa đủ khoảng cách nhồi lệnh, chưa BE lệnh trước, hoặc giá giật nhẹ -> tiếp tục giữ trạng thái canh vùng
+                self._pb_gate_log(pk, "execute", symbol, tick, n_open=len(open_positions) if open_positions else 0, note=f"kết quả: {str(ord_msg)[:100]}", p=p)
                 if p.get("zone_watch", False) or "SL hiện tại cách" in ord_msg:
                     ctx["pending_pullback_order"] = p
                     if pk == self.active_profile_key:
                         self.pending_pullback_order = p
                 return
+        else:
+            # Chưa vào vùng kích hoạt: chỉ log chẩn đoán khi giá còn cách vùng <= 1.0 (còn xa thì im lặng)
+            self._pb_gate_log(pk, "chua_vao_vung", symbol, tick)
 
     def _update_left_quick_info(self, symbol, tf_str, tick, pos_count, total_profit):
         bid_str = f"{tick.bid:.2f}" if tick else "---"
