@@ -823,6 +823,7 @@ class DatePickerDialog:
 
 from trading_modules.trading_window import is_trading_window_blocked
 from trading_modules.risk import calc_effective_max_sl
+from trading_modules.position_rules import step_position
 from trading_modules.scenario_scoring import score_scenarios
 from trading_modules.indicators import calculate_atr
 from trading_modules.kronos_sampling import compute_adaptive_sampling_params
@@ -4226,57 +4227,15 @@ class KronosDesktopApp:
                         hold_mins = (fb_time - cur_time).total_seconds() / 60.0
 
                         if signal == "BUY":
-                            f_high_bid = fb[2]
-                            f_low_bid = fb[3]
-                            f_close_bid = fb[4]
-                            fav_dist = f_high_bid - entry_price
-
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = max(sl_price, entry_price + be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                sl_price = max(sl_price, f_high_bid - (one_r_dist * trail_dist_r))
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close_bid
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_low_bid <= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_high_bid >= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
+                            bar_h, bar_l, bar_c = fb[2], fb[3], fb[4]      # giá BID
                         else:
-                            f_high_ask = fb[5]
-                            f_low_ask = fb[6]
-                            f_close_ask = fb[7]
-                            fav_dist = entry_price - f_low_ask
-
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = min(sl_price, entry_price - be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                sl_price = min(sl_price, f_low_ask + (one_r_dist * trail_dist_r))
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close_ask
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_high_ask >= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_low_ask <= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
+                            bar_h, bar_l, bar_c = fb[5], fb[6], fb[7]      # giá ASK
+                        sl_price, be_moved, ex_price, ex_reason = step_position(
+                            signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, bar_h, bar_l, bar_c, hold_mins,
+                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins)
+                        if ex_price is not None:
+                            out_price, exit_reason = ex_price, ex_reason
+                            break
 
                     if signal == "BUY":
                         net_pnl = round((out_price - entry_price) * lot * contract_size, 2)
@@ -4422,52 +4381,12 @@ class KronosDesktopApp:
                         f_time = datetime.fromtimestamp(int(f_bar[0]), tz=VN_TZ)
                         hold_mins = (f_time - cur_time).total_seconds() / 60.0
 
-                        if signal == "BUY":
-                            fav_dist = f_high - entry_price
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = max(sl_price, entry_price + be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                trail_sl = f_high - (one_r_dist * trail_dist_r)
-                                sl_price = max(sl_price, trail_sl)
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_low <= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_high >= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
-                        else:
-                            fav_dist = entry_price - f_low
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = min(sl_price, entry_price - be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                trail_sl = f_low + (one_r_dist * trail_dist_r)
-                                sl_price = min(sl_price, trail_sl)
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_high >= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_low <= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
+                        sl_price, be_moved, ex_price, ex_reason = step_position(
+                            signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, f_high, f_low, f_close, hold_mins,
+                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins)
+                        if ex_price is not None:
+                            out_price, exit_reason = ex_price, ex_reason
+                            break
 
                     spread_pts = 6.4 if is_btc else 0.20
                     if signal == "BUY":
