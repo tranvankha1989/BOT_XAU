@@ -1,6 +1,6 @@
 {
-  "version": "1.3.7",
+  "version": "1.3.8",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-13",
-  "description": "Phiên bản v1.3.7:\n- [SỬA LỖI LOGIC GIAI ĐOẠN 1] Khắc phục triệt để UnboundLocalError trong _run_analysis_worker; xóa pending_pullback_order khi không có tín hiệu.\n- [LỌC MAGIC NUMBER & ĐỘC LẬP TỪNG TAB] Thêm cơ chế lọc magic number toàn diện (_get_bot_positions), không bị ảnh hưởng bởi lệnh tay hoặc EA khác; cache magic ban đầu không giới hạn ngày.\n- [KHÓA LÃI LỖ NGÀY AN TOÀN] Sửa lỗi mở khóa sớm do độ trễ deal sàn; chỉ mở khóa khi người dùng chủ động đổi ngưỡng cài đặt; tự động xóa cache deals ngay khi chạm ngưỡng.\n- [CHỐNG ĐÚP LỆNH MT5 NÂNG CAO] Kiểm tra tập ticket trước/sau khi gửi lệnh (before_tickets) khi gặp timeout; phát hiện chính xác trạng thái lệnh đóng (chk_p is not None and len==0); tự động duyệt filling mode tương thích tránh retcode 10030.\n- [BỔ SUNG QUẢN LÝ LỊCH SỬ] Thêm bộ lọc magic_scope cho tab Lịch sử và checkbox 'Gồm lệnh tay' linh hoạt; tích hợp backoff 30s khi MT5 bận."
+  "release_date": "2026-11-14",
+  "description": "Phiên bản v1.3.8:\n- [SỬA LỖI VÙNG CANH] Max SL không còn bị chia đôi vô cớ khi canh vùng (RR đo tại điểm vào dự kiến), bot vào lệnh đúng vùng hơn.\n- [AN TOÀN] Chặn mở lệnh mới khi không đọc được lịch sử giao dịch hôm nay từ MT5 (giới hạn lãi/lỗ ngày vẫn có hiệu lực).\n- [SỬA LỖI] Không ghi đè vùng canh mới khi khôi phục sau khi gửi lệnh.\n- [BACKTEST] Cache kết quả AI (chạy lại nhanh hơn ~75 lần), thêm tham số chi phí commission/trượt giá."
 }
