@@ -253,3 +253,118 @@ class TestThreadsOption(unittest.TestCase):
         n, w = rb.resolve_threads(99, 6)
         self.assertEqual(n, 6)
         self.assertIsNotNone(w)
+
+
+class TestTrendFilterFlags(unittest.TestCase):
+    """P50-C: --trend-filter / --structure-conflict-mode chỉ ảnh hưởng lần chạy, hiệu lực được báo cáo và ghi vào CSV."""
+
+    def _eval(self, cfg, macro_dir=-1):
+        import pandas as pd
+        n_ana, n_sc = 120, 80
+        ts = pd.date_range("2026-11-13", periods=n_ana, freq="5min", tz="UTC")
+
+        def mk(n):
+            c = 100.0 + np.arange(n) * 0.01
+            return pd.DataFrame({"timestamps": ts[:n], "open": c, "high": c + 0.5, "low": c - 0.5, "close": c, "volume": 1.0})
+        df_ana, df_sc = mk(n_ana), mk(n_sc)
+        last_c = float(df_ana["close"].iloc[100 - 1])
+
+        def scen(*a, **k):  # 8 kịch bản cùng tăng mạnh (đồng thuận BUY 100%, biên độ dự báo +6$)
+            out = []
+            for _ in range(8):
+                d = pd.DataFrame({"close": np.linspace(last_c + 1, last_c + 6, 6), "high": np.linspace(last_c + 1.5, last_c + 6.5, 6),
+                                  "low": np.linspace(last_c + 0.5, last_c + 5.5, 6)})
+                d.attrs["log_prob"] = -1.0
+                out.append(d)
+            return out
+        app = object.__new__(b.KronosDesktopApp)
+        app._analyze_scalping_micro_macro_context = lambda *a, **k: {"macro_dir": macro_dir, "structure_reason": "giả"}
+        app._fast_predict_scenarios = scen
+        app._compute_adaptive_sampling_params = lambda *a, **k: (1.0, 0.9, "test")
+        return app._evaluate_bt_ai_candle(object(), df_ana, 100, cfg, {}, "M5", False, 1.0,
+                                          df_rates_scalp=df_sc, idx_scalp=75, scalp_tf_str="M5")
+
+    def base_cfg(self):
+        return {"consensus": 75, "min_move": 1.2, "max_dispersion": 2.5, "sl_atr": 1.5, "sl_buffer": 0.5,
+                "trend_filter": True, "bt_use_live_structure": True, "lookback": 100, "scenarios": 8}
+
+    def test_mac_dinh_khong_doi_hanh_vi_cu_chan_buy_khi_macro_giam(self):
+        cfg = self.base_cfg()
+        before = dict(cfg)
+        eff = rb.apply_flag_overrides(cfg, {}, None, None)          # không cờ
+        self.assertEqual(cfg, before)                               # cfg không bị đụng
+        self.assertTrue(eff["trend_filter"])
+        self.assertEqual(eff["structure_conflict_mode"], "neutral")
+        self.assertEqual(eff["trend_filter_src"], "cấu hình hiện hành")
+        self.assertIsNone(self._eval(cfg, macro_dir=-1))            # macro_dir == -1 chặn BUY
+
+    def test_co_on_chan_buy(self):
+        cfg = self.base_cfg()
+        cfg["trend_filter"] = False                                  # cấu hình đang tắt, cờ on bật lại
+        eff = rb.apply_flag_overrides(cfg, {}, "on", None)
+        self.assertTrue(eff["trend_filter"])
+        self.assertEqual(eff["trend_filter_src"], "cờ --trend-filter")
+        self.assertIsNone(self._eval(cfg, macro_dir=-1))
+
+    def test_co_off_khong_con_chan_buy(self):
+        cfg = self.base_cfg()
+        eff = rb.apply_flag_overrides(cfg, {}, "off", None)
+        self.assertFalse(eff["trend_filter"])
+        res = self._eval(cfg, macro_dir=-1)
+        self.assertIsNotNone(res)
+        self.assertEqual(res["signal"], "BUY")
+        self.assertEqual(res["macro_dir"], -1)
+
+    def test_structure_conflict_mode_va_hieu_luc(self):
+        cfg = self.base_cfg()
+        cfg["structure_conflict_mode"] = "Scalp "
+        self.assertEqual(rb.apply_flag_overrides(dict(cfg), {}, None, None)["structure_conflict_mode"], "scalp")  # theo cấu hình
+        eff = rb.apply_flag_overrides(cfg, {}, None, "analysis")
+        self.assertEqual(eff["structure_conflict_mode"], "analysis")
+        self.assertEqual(cfg["structure_conflict_mode"], "analysis")
+        lines = "\n".join(rb.format_effective_flags(eff))
+        self.assertIn("trend_filter", lines)
+        self.assertIn("analysis", lines)
+        # trend_filter không có trong cfg -> lấy mặc định của profile (def_cfg), đúng như bot đọc
+        self.assertFalse(rb.apply_flag_overrides({}, {"trend_filter": False}, None, None)["trend_filter"])
+        self.assertTrue(rb.apply_flag_overrides({}, {}, None, None)["trend_filter"])
+
+    def test_khong_ghi_user_settings_va_csv_co_gia_tri_hieu_luc(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = os.path.join(d, "user_settings.json")
+            with open(settings, "w", encoding="utf-8") as f:
+                f.write('{"profiles": {}}')
+            mtime = os.path.getmtime(settings)
+            cfg = self.base_cfg()
+            eff = rb.apply_flag_overrides(cfg, {}, "off", "scalp")
+            trades = [{"ticket": "#0001", "date": "2026-11-13", "in_time": "13/11 20:50", "out_time": "13/11 20:55", "duration": "5p",
+                       "type": "BUY", "lot": "0.02", "in_price": "1.00", "out_price": "2.00", "pnl": 1.5, "risk_usd": 1.0,
+                       "cost_spread": 0.1, "cost_kind": "CANDLE_EXPLICIT", "reason": "TP"}]
+            path = rb.export_csv_with_params(trades, os.path.join(d, "out", "bt.csv"), eff)
+            import csv
+            with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(rows[0]["trend_filter"], "off")
+            self.assertEqual(rows[0]["structure_conflict_mode"], "scalp")
+            self.assertEqual(rows[0]["pnl"], "1.5")                  # cột cũ giữ nguyên
+            self.assertEqual(os.path.getmtime(settings), mtime)      # không đụng user_settings.json
+
+    def run_cli(self, *flags):
+        cfg = dict(b.DEFAULT_PROFILE_SETTINGS["XAUUSD"])
+        fake_mt5 = SimpleNamespace(initialize=lambda: False, last_error=lambda: (1, "x"))
+        buf = io.StringIO()
+        with mock.patch.object(rb, "load_strategy_cfg", return_value=(cfg, 0, "mock")), mock.patch.object(rb, "mt5", fake_mt5),                 mock.patch.object(rb, "apply_threads"), contextlib.redirect_stdout(buf):
+            code = rb.run(["--profile", "XAUUSD", "--symbol", "XAUUSDm", "--start", "2026-11-12", "--end", "2026-11-12", *flags])
+        return code, buf.getvalue(), cfg
+
+    def test_cli_in_gia_tri_hieu_luc_o_dau_log(self):
+        code, out, cfg = self.run_cli("--trend-filter", "off", "--structure-conflict-mode", "analysis")
+        self.assertEqual(code, 1)  # mt5.initialize giả trả False -> dừng sau phần đầu log
+        self.assertIn("trend_filter           : OFF (cờ --trend-filter)", out)
+        self.assertIn("structure_conflict_mode: analysis (cờ --structure-conflict-mode)", out)
+        self.assertFalse(cfg["trend_filter"])
+        self.assertEqual(cfg["structure_conflict_mode"], "analysis")
+        # mặc định: theo cấu hình hiện hành, không đổi cfg
+        code, out, cfg = self.run_cli()
+        self.assertIn("(cấu hình hiện hành)", out)
+        self.assertEqual(cfg["structure_conflict_mode"], b.DEFAULT_PROFILE_SETTINGS["XAUUSD"]["structure_conflict_mode"])

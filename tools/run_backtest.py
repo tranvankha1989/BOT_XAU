@@ -117,6 +117,48 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def apply_flag_overrides(cfg: dict, def_cfg: dict, trend_filter=None, structure_conflict_mode=None) -> dict:
+    """Ghi đè trend_filter / structure_conflict_mode CHỈ trong cfg của lần chạy này (cfg là bản sao trong bộ nhớ,
+    tuyệt đối không ghi lại user_settings.json). Trả giá trị HIỆU LỰC đúng như bot đọc:
+    trend_filter = bool(cfg.get("trend_filter", def_cfg.get("trend_filter", True))) (_evaluate_bt_ai_candle),
+    structure_conflict_mode = str(cfg.get("structure_conflict_mode", "neutral")).strip().lower() (_analyze_scalping_micro_macro_context)."""
+    src_tf = src_sc = "cấu hình hiện hành"
+    if trend_filter is not None:
+        cfg["trend_filter"] = (str(trend_filter).lower() == "on")
+        src_tf = "cờ --trend-filter"
+    if structure_conflict_mode is not None:
+        cfg["structure_conflict_mode"] = str(structure_conflict_mode).strip().lower()
+        src_sc = "cờ --structure-conflict-mode"
+    return {
+        "trend_filter": bool(cfg.get("trend_filter", def_cfg.get("trend_filter", True))),
+        "structure_conflict_mode": str(cfg.get("structure_conflict_mode", "neutral")).strip().lower(),
+        "trend_filter_src": src_tf, "structure_conflict_mode_src": src_sc,
+    }
+
+
+def format_effective_flags(eff: dict) -> list:
+    return [
+        f"trend_filter           : {'ON' if eff['trend_filter'] else 'OFF'} ({eff['trend_filter_src']})",
+        f"structure_conflict_mode: {eff['structure_conflict_mode']} ({eff['structure_conflict_mode_src']})",
+    ]
+
+
+def export_csv_with_params(trades: list, path: str, eff: dict) -> str:
+    """Xuất CSV bằng hàm của bot rồi thêm 2 cột trend_filter / structure_conflict_mode (giá trị hiệu lực của lần chạy)."""
+    import csv
+    bot_mod.export_backtest_csv(trades, path)
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        rd = csv.DictReader(f)
+        cols, rows = list(rd.fieldnames or []), list(rd)
+    extra = {"trend_filter": "on" if eff["trend_filter"] else "off", "structure_conflict_mode": eff["structure_conflict_mode"]}
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols + list(extra))
+        w.writeheader()
+        for r in rows:
+            w.writerow({**r, **extra})
+    return path
+
+
 def trade_entry_dt(t: dict):
     """Thời điểm vào lệnh (giờ VN, naive) = cột date (YYYY-MM-DD) + giờ trong in_time ("dd/mm HH:MM[:SS]").
     Trả None nếu bản ghi thiếu/không đọc được."""
@@ -236,6 +278,10 @@ def run(argv=None) -> int:
                     help="Giữ cả lệnh vào ngoài [start, end] (khởi động/warm-up); mặc định các lệnh này bị loại khỏi thống kê")
     ap.add_argument("--threads", type=int, default=None,
                     help="Số luồng CPU cho torch (mặc định = số lõi vật lý, tối đa = số lõi vật lý)")
+    ap.add_argument("--trend-filter", choices=["on", "off"], default=None,
+                    help="Bật/tắt bộ lọc chặn ngược cấu trúc (macro_dir) CHỈ cho lần chạy này; mặc định: theo cấu hình hiện hành")
+    ap.add_argument("--structure-conflict-mode", choices=["neutral", "analysis", "scalp"], default=None,
+                    help="Xử lý xung đột cấu trúc M5/M15 CHỈ cho lần chạy này; mặc định: theo cấu hình hiện hành")
     args = ap.parse_args(argv)
 
     phys, logical = cpu_core_counts()
@@ -247,6 +293,7 @@ def run(argv=None) -> int:
 
     pk = args.profile
     cfg, _, cfg_note = load_strategy_cfg(pk)
+    eff_flags = apply_flag_overrides(cfg, bot_mod.DEFAULT_PROFILE_SETTINGS.get(pk, {}), args.trend_filter, args.structure_conflict_mode)
     symbol = (args.symbol or str(cfg.get("symbol", "")) or bot_mod.DEFAULT_PROFILE_SETTINGS[pk]["symbol"]).strip()
     try:
         d0 = datetime.strptime(args.start, "%Y-%m-%d").date()
@@ -271,6 +318,8 @@ def run(argv=None) -> int:
     print(f"[*] Chế độ yêu cầu   : {'Tick S1 (1 giây)' if args.precision == 'S1' else 'Nến MT5'} | Não AI: {'TẮT' if args.no_ai else 'BẬT'}")
     print(f"[*] Cấu hình         : {cfg_note}")
     print(f"[*] Seed             : {args.seed}")
+    for ln in format_effective_flags(eff_flags):
+        print(f"[*] {ln}")
 
     if not mt5.initialize():
         print(f"[ERROR] mt5.initialize() thất bại: {mt5.last_error()}")
@@ -334,13 +383,15 @@ def run(argv=None) -> int:
     print("-" * 65)
     for line in bot_mod.format_backtest_report(report):
         print(line)
+    for ln in format_effective_flags(eff_flags):
+        print(f"⚙️ {ln}")
     if trades:
         for line in format_extra_metrics(compute_extra_metrics(trades)):
             print(line)
 
     if trades:
         fname = f"backtest_{symbol}_{args.start}_{args.end}_{datetime.now().strftime('%H%M%S')}.csv"
-        path = bot_mod.export_backtest_csv(trades, os.path.join(out_dir, fname))
+        path = export_csv_with_params(trades, os.path.join(out_dir, fname), eff_flags)
         print(f"💾 Đã xuất CSV: {path}")
     return 0
 
