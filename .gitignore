@@ -90,3 +90,6 @@ build_staging/
 core_engine.bin
 tools/vc_redist.x64.exe
 
+
+# Kết quả chạy backtest/quét thông số (tự sinh, không commit)
+backtest_data/runs/
