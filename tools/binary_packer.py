@@ -131,6 +131,11 @@ if __name__ == "__main__":
         "kronos_updater": ROOT_DIR / "kronos_updater.py",
         "mt5_scalping_bot": ROOT_DIR / "mt5_scalping_bot.py",
     }
+    # Các module giao dịch tách riêng (trading_modules/*.py): gói cùng container; bot tự nạp chúng khi chạy từ core_engine.bin
+    for _f in sorted((ROOT_DIR / "trading_modules").glob("*.py")):
+        src["trading_modules" if _f.stem == "__init__" else f"trading_modules.{_f.stem}"] = _f
+    if len(sys.argv) > 1:  # python tools/binary_packer.py <đường_dẫn_xuất>: ghi ra nơi khác (không đè core_engine.bin đang dùng)
+        out_file = Path(sys.argv[1])
     print("[*] Đang băm và mã hóa toàn bộ mã nguồn sang file nhị phân (core_engine.bin)...")
     sz = pack_code_to_binary(src, out_file)
     print(f"[OK] Đã xuất file nhị phân: {out_file} ({sz / 1024:.1f} KB)")

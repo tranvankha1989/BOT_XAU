@@ -1,0 +1,270 @@
+{
+  "metadata": {
+    "symbol": "XAUUSDm",
+    "start_date": "2026-11-10",
+    "end_date": "2026-11-12",
+    "analysis_tf": "M15",
+    "scalp_tf": "M5",
+    "model": "AI-base (102.3M - Mạnh nhất)",
+    "seed": 42,
+    "timestamp": "2026-11-12T19:50:15.175324"
+  },
+  "kpi": {
+    "total_trades": 22,
+    "wins": 11,
+    "losses": 11,
+    "breakevens": 0,
+    "winrate_pct": 50.0,
+    "profit_factor": 0.73,
+    "total_pnl_usd": -28.7,
+    "max_drawdown_usd": 49.59,
+    "max_drawdown_pct": 4.86,
+    "blocked_buy_signals": 54,
+    "blocked_sell_signals": 25,
+    "total_blocked_signals": 79
+  },
+  "trades": [
+    {
+      "ticket": "#0001",
+      "in_time": "10/11 02:15",
+      "out_time": "10/11 02:25",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4104.8,
+      "out_price": 4109.8,
+      "pnl": -10.4,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0002",
+      "in_time": "10/11 03:40",
+      "out_time": "10/11 03:45",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4137.01,
+      "out_price": 4140.98,
+      "pnl": 7.54,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0003",
+      "in_time": "10/11 14:15",
+      "out_time": "10/11 14:50",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4117.06,
+      "out_price": 4112.24,
+      "pnl": -10.03,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0004",
+      "in_time": "10/11 19:45",
+      "out_time": "10/11 20:00",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4079.69,
+      "out_price": 4074.02,
+      "pnl": 10.94,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0005",
+      "in_time": "11/11 03:30",
+      "out_time": "11/11 03:35",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4033.52,
+      "out_price": 4029.09,
+      "pnl": -9.26,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0006",
+      "in_time": "11/11 04:15",
+      "out_time": "11/11 04:55",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4029.89,
+      "out_price": 4033.16,
+      "pnl": 6.14,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0007",
+      "in_time": "11/11 06:30",
+      "out_time": "11/11 07:00",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4035.0,
+      "out_price": 4038.51,
+      "pnl": 6.62,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0008",
+      "in_time": "11/11 07:00",
+      "out_time": "11/11 07:50",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4038.19,
+      "out_price": 4033.19,
+      "pnl": -10.4,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0009",
+      "in_time": "11/11 11:00",
+      "out_time": "11/11 11:10",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4048.61,
+      "out_price": 4044.66,
+      "pnl": 7.5,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0010",
+      "in_time": "11/11 11:50",
+      "out_time": "11/11 12:00",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4045.7,
+      "out_price": 4050.11,
+      "pnl": -9.21,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0011",
+      "in_time": "11/11 13:45",
+      "out_time": "11/11 13:50",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4058.7,
+      "out_price": 4057.3,
+      "pnl": 2.4,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0012",
+      "in_time": "11/11 15:30",
+      "out_time": "11/11 15:50",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4059.86,
+      "out_price": 4056.52,
+      "pnl": 6.28,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0013",
+      "in_time": "11/11 16:45",
+      "out_time": "11/11 17:00",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4051.67,
+      "out_price": 4055.57,
+      "pnl": -8.21,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0014",
+      "in_time": "11/11 18:00",
+      "out_time": "11/11 18:40",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4052.19,
+      "out_price": 4048.45,
+      "pnl": 7.08,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0015",
+      "in_time": "11/11 18:45",
+      "out_time": "11/11 18:55",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4049.38,
+      "out_price": 4045.63,
+      "pnl": 7.09,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0016",
+      "in_time": "11/11 19:00",
+      "out_time": "11/11 20:05",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4044.94,
+      "out_price": 4041.19,
+      "pnl": 7.09,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0017",
+      "in_time": "11/11 20:10",
+      "out_time": "11/11 20:25",
+      "type": "SELL",
+      "lot": 0.02,
+      "in_price": 4043.99,
+      "out_price": 4038.93,
+      "pnl": 9.72,
+      "reason": "Hòa vốn (BE+)"
+    },
+    {
+      "ticket": "#0018",
+      "in_time": "12/11 00:40",
+      "out_time": "12/11 00:55",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 4000.16,
+      "out_price": 3995.66,
+      "pnl": -9.39,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0019",
+      "in_time": "12/11 08:35",
+      "out_time": "12/11 08:40",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 3991.25,
+      "out_price": 3986.25,
+      "pnl": -10.4,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0020",
+      "in_time": "12/11 09:30",
+      "out_time": "12/11 09:35",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 3982.35,
+      "out_price": 3977.59,
+      "pnl": -9.92,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0021",
+      "in_time": "12/11 18:10",
+      "out_time": "12/11 18:35",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 3949.35,
+      "out_price": 3944.81,
+      "pnl": -9.48,
+      "reason": "Cắt lỗ (SL)"
+    },
+    {
+      "ticket": "#0022",
+      "in_time": "12/11 18:35",
+      "out_time": "12/11 19:25",
+      "type": "BUY",
+      "lot": 0.02,
+      "in_price": 3944.64,
+      "out_price": 3939.64,
+      "pnl": -10.4,
+      "reason": "Cắt lỗ (SL)"
+    }
+  ]
+}

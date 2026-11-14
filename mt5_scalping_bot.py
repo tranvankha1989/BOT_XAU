@@ -30,6 +30,30 @@ from tkinter import ttk, messagebox, filedialog
 
 import numpy as np
 import pandas as pd
+
+
+def _load_packed_trading_modules():
+    """Chế độ đóng gói (launcher + core_engine.bin): các module trading_modules.* nằm trong container nhị phân của launcher.
+    Nạp chúng TRƯỚC khi import (tương thích cả launcher cũ). Chạy từ mã nguồn thì không có container -> bỏ qua."""
+    try:
+        raw = getattr(sys.modules.get("__main__"), "_CONTAINER_RAW_DICT", None)
+        if not raw:
+            return
+        import marshal
+        names = sorted((k for k in raw if k == "trading_modules" or k.startswith("trading_modules.")),
+                       key=lambda k: (k != "trading_modules", k != "trading_modules.indicators", k))
+        for k in names:
+            m = sys.modules.get(k)
+            if m is not None and not getattr(m, "_packed_loaded", False):
+                exec(marshal.loads(raw[k]), m.__dict__)
+                m._packed_loaded = True
+    except Exception:
+        pass
+
+
+_load_packed_trading_modules()
+from trading_modules.structure import analyze_structure_context
+from trading_modules.price_action import evaluate_price_action
 import gc
 import torch
 import torch.nn.functional as F
@@ -819,249 +843,16 @@ class DatePickerDialog:
         self.dialog.destroy()
 
 
-def is_trading_window_blocked(now_utc7=None, cfg: dict = None) -> tuple:
-    """
-    Kiểm tra xem thời điểm hiện tại (múi giờ UTC+7) có nằm trong danh sách khung giờ cấm giao dịch không.
-    Hỗ trợ các định dạng:
-    - Cố định theo ngày: 'YYYY-MM-DD HH:MM-HH:MM' (VD: '2026-11-12 19:25-20:00')
-    - Lặp hàng tuần: 'THU 19:25-20:00' (hoặc T2..T7, CN, MON..SUN)
-    - Lặp hàng ngày: 'HH:MM-HH:MM' (VD: '04:00-06:00')
-    Nhiều khung giờ phân tách nhau bằng dấu phẩy ',', chấm phẩy ';' hoặc xuống dòng.
-    Trả về: (is_blocked: bool, reason: str)
-    """
-    if not cfg or not isinstance(cfg, dict):
-        return False, ""
-    raw_val = str(cfg.get("blocked_trading_windows", "")).strip()
-    if not raw_val:
-        return False, ""
-
-    tz_utc7 = timezone(timedelta(hours=7))
-    if now_utc7 is None:
-        now_dt = datetime.now(tz_utc7)
-    elif isinstance(now_utc7, datetime):
-        if now_utc7.tzinfo is None:
-            now_dt = now_utc7.replace(tzinfo=tz_utc7)
-        else:
-            now_dt = now_utc7.astimezone(tz_utc7)
-    else:
-        now_dt = datetime.now(tz_utc7)
-
-    day_map = {
-        "MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6,
-        "T2": 0, "T3": 1, "T4": 2, "T5": 3, "T6": 4, "T7": 5, "CN": 6,
-    }
-
-    items = [x.strip() for x in re.split(r"[,;\n]+", raw_val) if x.strip()]
-    def _to_min(hm: str) -> int:
-        h, mi = hm.split(":")
-        return int(h) * 60 + int(mi)
-
-    now_min = now_dt.hour * 60 + now_dt.minute
-    now_floor = now_dt.replace(second=0, microsecond=0)
-    now_weekday = now_dt.weekday()
-
-    for item in items:
-        try:
-            # 1. Định dạng cố định theo ngày: YYYY-MM-DD HH:MM-HH:MM
-            m_date = re.match(r"^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
-            if m_date:
-                d_str, t_start, t_end = m_date.groups()
-                d_base = datetime.strptime(d_str, "%Y-%m-%d").replace(tzinfo=tz_utc7)
-                m_start, m_end = _to_min(t_start), _to_min(t_end)
-                dt_start = d_base + timedelta(minutes=m_start)
-                dt_end = d_base + timedelta(minutes=m_end)
-                if m_end < m_start:  # Qua nửa đêm sang ngày kế
-                    dt_end += timedelta(days=1)
-                if dt_start <= now_floor <= dt_end:
-                    return True, f"Khung giờ cấm giao dịch: {item} (UTC+7)"
-                continue
-
-            # 2. Định dạng lặp hàng tuần: THU 19:25-20:00
-            m_week = re.match(r"^([A-Za-z0-9]{2,3})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
-            if m_week:
-                d_code, t_start, t_end = m_week.groups()
-                d_target = day_map.get(d_code.upper())
-                if d_target is not None:
-                    m_start, m_end = _to_min(t_start), _to_min(t_end)
-                    if m_start <= m_end:
-                        if now_weekday == d_target and m_start <= now_min <= m_end:
-                            return True, f"Khung giờ cấm lặp hàng tuần: {item} (UTC+7)"
-                    else:
-                        # Qua đêm: [start, 24:00) của ngày d_target và [00:00, end] của ngày kế tiếp
-                        in_start_day = (now_weekday == d_target and now_min >= m_start)
-                        in_next_day = (now_weekday == (d_target + 1) % 7 and now_min <= m_end)
-                        if in_start_day or in_next_day:
-                            return True, f"Khung giờ cấm lặp hàng tuần: {item} (UTC+7)"
-                continue
-
-            # 3. Định dạng lặp hàng ngày: HH:MM-HH:MM
-            m_daily = re.match(r"^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$", item)
-            if m_daily:
-                m_start, m_end = (_to_min(x) for x in m_daily.groups())
-                if m_start <= m_end:
-                    if m_start <= now_min <= m_end:
-                        return True, f"Khung giờ cấm hàng ngày: {item} (UTC+7)"
-                else:
-                    if now_min >= m_start or now_min <= m_end:
-                        return True, f"Khung giờ cấm hàng ngày: {item} (UTC+7)"
-                continue
-        except Exception:
-            continue
-
-    return False, ""
-
-
-_BT_WIN_EPS = 0.05  # Ngưỡng $ phân loại thắng/thua/hòa vốn, đồng bộ với thẻ Scorecards
-
-
-def calc_effective_max_sl(action: str, entry_ref: float, sl_price: float, tp_price: float, max_sl_price: float):
-    """Max SL hiệu lực của vùng canh (live). Trả (effective_max_sl, da_chia_doi).
-    Kiểm tra RR >= 2R tính tại điểm vào DỰ KIẾN (SL ± Max SL khi SL AI xa hơn Max SL), KHÔNG tính tại giá hiện tại:
-    TP đã dựng từ điểm vào dự kiến nên đo từ giá hiện tại (xa hơn) luôn cho RR thấp giả -> chia đôi Max SL vô cớ, vùng canh quá sâu."""
-    cur_sl_dist = abs(entry_ref - sl_price)
-    if action not in ("BUY", "SELL") or cur_sl_dist <= 0.001:
-        return max_sl_price, False
-    ref = entry_ref
-    if max_sl_price > 0.0 and cur_sl_dist > max_sl_price:
-        ref = (sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price)
-    sl_d = abs(ref - sl_price)
-    dist_tp = abs(tp_price - ref)
-    if dist_tp < 2.0 * sl_d:
-        base_sl_cap = max_sl_price if max_sl_price > 0.0 else cur_sl_dist
-        return round(base_sl_cap / 2.0, 2), True
-    return max_sl_price, False
-
-
-def build_backtest_report(trades: list, init_cap: float, n_boot: int = 2000, seed: int = 12345) -> dict:
-    """Tính các chỉ số tổng kết backtest từ danh sách lệnh (chỉ đọc, không đổi logic vào/thoát lệnh)."""
-    rep = {"n_trades": len(trades), "init_cap": float(init_cap), "daily": [], "warnings": []}
-    if not trades:
-        rep["warnings"].append("Không có lệnh nào.")
-        return rep
-
-    by_day = {}
-    for t in trades:
-        by_day.setdefault(str(t.get("date") or "N/A"), []).append(float(t["pnl"]))
-    for d in sorted(by_day):
-        pl = by_day[d]
-        wins_d = sum(1 for x in pl if x > _BT_WIN_EPS)
-        rep["daily"].append({"date": d, "n": len(pl), "pnl": round(sum(pl), 2), "win_rate": wins_d / len(pl) * 100.0})
-    n_days = len(rep["daily"])
-    rep["n_days"] = n_days
-
-    pnls = [float(t["pnl"]) for t in trades]
-    win_sum = sum(x for x in pnls if x > 0)
-    loss_sum = abs(sum(x for x in pnls if x < 0))
-    rep["total_pnl"] = round(sum(pnls), 2)
-    rep["win_rate"] = sum(1 for x in pnls if x > _BT_WIN_EPS) / len(pnls) * 100.0
-    rep["profit_factor"] = (win_sum / loss_sum) if loss_sum > 0 else (float("inf") if win_sum > 0 else 0.0)
-
-    rs = [float(t["pnl"]) / float(t["risk_usd"]) for t in trades if float(t.get("risk_usd") or 0.0) > 0]
-    rep["expectancy_r"] = (sum(rs) / len(rs)) if rs else None
-    rep["expectancy_r_n"] = len(rs)
-
-    eq = peak = float(init_cap)
-    max_dd = max_dd_pct = 0.0
-    for x in pnls:
-        eq += x
-        if eq > peak:
-            peak = eq
-        dd = peak - eq
-        if dd > max_dd:
-            max_dd = dd
-            max_dd_pct = (dd / peak * 100.0) if peak > 0 else 0.0
-    rep["max_dd"] = round(max_dd, 2)
-    rep["max_dd_pct"] = max_dd_pct
-
-    day_pnls = np.array([d["pnl"] for d in rep["daily"]], dtype=float)
-    rep["profitable_days_pct"] = float(np.sum(day_pnls > 0)) / n_days * 100.0
-    rep["avg_trades_per_day"] = len(trades) / n_days
-    worst = min(rep["daily"], key=lambda d: d["pnl"])
-    rep["worst_day"] = (worst["date"], worst["pnl"])
-
-    streak = best = 0  # Lệnh hòa vốn (|pnl| <= eps) không cắt cũng không cộng chuỗi thua
-    for x in pnls:
-        if x < -_BT_WIN_EPS:
-            streak += 1
-            best = max(best, streak)
-        elif x > _BT_WIN_EPS:
-            streak = 0
-    rep["max_loss_streak"] = best
-
-    rep["mean_daily"] = float(day_pnls.mean())
-    rep["ci95_daily"] = None
-    if n_days >= 10:
-        rng = np.random.default_rng(seed)
-        means = day_pnls[rng.integers(0, n_days, size=(int(n_boot), n_days))].mean(axis=1)
-        lo, hi = np.percentile(means, [2.5, 97.5])
-        rep["ci95_daily"] = (float(lo), float(hi))
-
-    kinds = sorted({str(t.get("cost_kind")) for t in trades if t.get("cost_kind")})
-    costs = [float(t["cost_spread"]) for t in trades if t.get("cost_spread") is not None]
-    rep["cost_kinds"] = kinds
-    rep["cost_spread_total"] = round(sum(costs), 2)
-    rep["cost_trades_known"] = len(costs)
-    gross_before_cost = rep["total_pnl"] + rep["cost_spread_total"]
-    rep["gross_before_cost"] = round(gross_before_cost, 2)
-    rep["cost_ratio_pct"] = (rep["cost_spread_total"] / gross_before_cost * 100.0) if (costs and gross_before_cost > 0) else None
-
-    if n_days < 10:
-        rep["warnings"].append(f"Chỉ có {n_days} ngày giao dịch (< 10): kết luận thống kê không đáng tin.")
-    if len(trades) < 100:
-        rep["warnings"].append(f"Chỉ có {len(trades)} lệnh (< 100): mẫu quá nhỏ.")
-    return rep
-
-
-def format_backtest_report(rep: dict) -> list:
-    """Chuyển báo cáo thành các dòng văn bản tiếng Việt để ghi log."""
-    L = ["📊 ===== TỔNG KẾT BACKTEST ====="]
-    if rep.get("n_trades", 0) == 0:
-        return L + ["Không có lệnh nào để thống kê."]
-    L.append("Ngày (theo ngày vào lệnh) | Số lệnh | Lãi/Lỗ ròng | Tỷ lệ thắng")
-    for d in rep["daily"]:
-        L.append(f"  {d['date']} | {d['n']:>3} | {d['pnl']:+9.2f} $ | {d['win_rate']:5.1f}%")
-    pf = rep["profit_factor"]
-    pf_s = "∞" if pf == float("inf") else f"{pf:.2f}"
-    er = rep["expectancy_r"]
-    er_s = f"{er:+.3f}R/lệnh (n={rep['expectancy_r_n']})" if er is not None else "không có dữ liệu rủi ro (R)"
-    L.append(f"Tổng: {rep['n_trades']} lệnh / {rep['n_days']} ngày | Lãi ròng {rep['total_pnl']:+.2f} $ | Win rate {rep['win_rate']:.1f}%")
-    L.append(f"Kỳ vọng: {er_s} | Profit factor: {pf_s}")
-    L.append(f"Max drawdown: -{rep['max_dd']:.2f} $ ({rep['max_dd_pct']:.1f}%) | Chuỗi thua dài nhất: {rep['max_loss_streak']} lệnh")
-    L.append(f"Ngày có lãi: {rep['profitable_days_pct']:.1f}% | Lệnh TB/ngày: {rep['avg_trades_per_day']:.1f} | Ngày tệ nhất: {rep['worst_day'][0]} ({rep['worst_day'][1]:+.2f} $)")
-    ci = rep["ci95_daily"]
-    if ci is None:
-        L.append("KTC 95% lãi/lỗ TB mỗi ngày: không đủ dữ liệu (cần >= 10 ngày giao dịch)")
-    else:
-        L.append(f"KTC 95% lãi/lỗ TB mỗi ngày (bootstrap theo ngày, 2000 lần): [{ci[0]:+.2f}; {ci[1]:+.2f}] $ (TB {rep['mean_daily']:+.2f} $)")
-    kinds = rep["cost_kinds"]
-    spread_desc = []
-    if "CANDLE_EXPLICIT" in kinds:
-        spread_desc.append("spread cố định theo lot (chế độ nến) đã trừ vào lãi/lỗ")
-    if "S1_EMBEDDED" in kinds:
-        spread_desc.append("spread tick thực (chế độ S1) nằm sẵn trong giá ask/bid; số liệu chi phí chỉ là ước tính theo spread tại giây vào lệnh")
-    L.append("Chi phí ĐÃ áp dụng: " + ("; ".join(spread_desc) if spread_desc else "không xác định được (lệnh thiếu dữ liệu chi phí)"))
-    L.append("Chi phí KHÔNG được mô phỏng: commission, slippage, swap")
-    if rep["cost_ratio_pct"] is not None:
-        L.append(f"Tổng chi phí spread {rep['cost_spread_total']:.2f} $ so với lãi gộp trước chi phí {rep['gross_before_cost']:.2f} $ = {rep['cost_ratio_pct']:.1f}%")
-    else:
-        L.append(f"Tổng chi phí spread {rep['cost_spread_total']:.2f} $; lãi gộp trước chi phí {rep['gross_before_cost']:.2f} $ (không tính được tỷ lệ)")
-    for w in rep["warnings"]:
-        L.append(f"⚠️ CẢNH BÁO: {w}")
-    return L
-
-
-def export_backtest_csv(trades: list, path: str) -> str:
-    """Xuất danh sách lệnh backtest ra CSV (UTF-8 BOM để Excel đọc đúng tiếng Việt)."""
-    import csv
-    cols = ["ticket", "date", "in_time", "out_time", "duration", "type", "lot", "in_price", "out_price",
-            "pnl", "risk_usd", "cost_spread", "cost_kind", "reason"]
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8-sig", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
-        w.writeheader()
-        for t in trades:
-            w.writerow({c: t.get(c, "") for c in cols})
-    return path
+from trading_modules.trading_window import is_trading_window_blocked
+from trading_modules.risk import calc_effective_max_sl
+from trading_modules.kronos_engine import fast_predict_scenarios
+from trading_modules.symbol_profile import symbol_tolerances
+from trading_modules.tick_resample import resample_ticks_to_s1
+from trading_modules.position_rules import step_position
+from trading_modules.scenario_scoring import score_scenarios
+from trading_modules.indicators import calculate_atr
+from trading_modules.kronos_sampling import compute_adaptive_sampling_params
+from trading_modules.backtest_report import _BT_WIN_EPS, build_backtest_report, format_backtest_report, export_backtest_csv
 
 
 class KronosDesktopApp:
@@ -1378,8 +1169,6 @@ class KronosDesktopApp:
         - Bitcoin (BTCUSDm ~ 75,860$, spread ~ 6.40$): bước nhảy Trailing >= 5.0$ (hoặc 0.8x Spread), đệm dời SL >= 8.0$ (hoặc 1.2x Spread),
           giúp BTCUSD không bị spam lệnh sửa SL mỗi giây hoặc bị MT5 từ chối vì Stops Level.
         """
-        sym_up = str(symbol or "").upper()
-        is_btc = "BTC" in sym_up
         spread = 0.0
         stops_dist = 0.0
         try:
@@ -1398,31 +1187,7 @@ class KronosDesktopApp:
         except Exception:
             pass
 
-        if is_btc:
-            return {
-                "is_btc": True,
-                "eps_equal": 1.50,
-                "min_stop_dist": max(stops_dist * 1.2, spread * 1.2, 8.0),
-                "min_trail_step": max(spread * 0.8, 5.0),
-                "min_manual_be_dist": max(spread * 1.0, 6.0),
-                "sl_break_tol": max(spread * 0.5, 3.0),
-                "max_sl_tol": 1.0,
-                "min_candle_body": 2.0,
-                "min_atr_sl_floor": 20.0,
-                "min_tp_floor": 30.0,
-            }
-        return {
-            "is_btc": False,
-            "eps_equal": 0.05,
-            "min_stop_dist": max(stops_dist * 1.2, spread * 1.2, 0.50),
-            "min_trail_step": 0.40,
-            "min_manual_be_dist": 0.30,
-            "sl_break_tol": 0.25,
-            "max_sl_tol": 0.05,
-            "min_candle_body": 0.05,
-            "min_atr_sl_floor": 1.0,
-            "min_tp_floor": 1.5,
-        }
+        return symbol_tolerances(symbol, spread, stops_dist)
 
     def _get_profile_cfg(self, profile_key: str = None) -> dict:
         """Lấy thông số cài đặt độc lập của Tab được chỉ định (an toàn đa luồng, không bao giờ trộn thông số giữa XAUUSD và BTCUSD)."""
@@ -4023,43 +3788,8 @@ class KronosDesktopApp:
         return ticks
 
     def _resample_ticks_to_s1(self, ticks):
-        """
-        Chuyển đổi mảng tick MT5 thành các thanh nến 1 giây (S1) siêu tốc bằng NumPy:
-        Mỗi giây trả về tuple (time_sec, o_b, h_b, l_b, c_b, h_a, l_a, c_a, spread)
-        """
-        if ticks is None or len(ticks) == 0:
-            return []
-
-        times = ticks["time"]
-        bids = ticks["bid"]
-        asks = ticks["ask"]
-
-        unique_times, idx_start = np.unique(times, return_index=True)
-        idx_end = np.append(idx_start[1:], len(ticks))
-
-        opens_bid = bids[idx_start]
-        highs_bid = np.maximum.reduceat(bids, idx_start)
-        lows_bid = np.minimum.reduceat(bids, idx_start)
-        closes_bid = bids[idx_end - 1]
-
-        highs_ask = np.maximum.reduceat(asks, idx_start)
-        lows_ask = np.minimum.reduceat(asks, idx_start)
-        closes_ask = asks[idx_end - 1]
-
-        s1_bars = []
-        for i in range(len(unique_times)):
-            t_sec = int(unique_times[i])
-            o_b = float(opens_bid[i])
-            h_b = float(highs_bid[i])
-            l_b = float(lows_bid[i])
-            c_b = float(closes_bid[i])
-            h_a = float(highs_ask[i])
-            l_a = float(lows_ask[i])
-            c_a = float(closes_ask[i])
-            spread = max(c_a - c_b, 0.0)
-            s1_bars.append((t_sec, o_b, h_b, l_b, c_b, h_a, l_a, c_a, spread))
-
-        return s1_bars
+        """Ghép tick MT5 thành nến 1 giây (S1). Logic ở trading_modules/tick_resample.py."""
+        return resample_ticks_to_s1(ticks)
 
     def _evaluate_bt_ai_candle(
         self,
@@ -4153,47 +3883,16 @@ class KronosDesktopApp:
                 return None
 
             last_c = float(sub_df["close"].iloc[-1])
-            # Chấm điểm quỹ đạo đa bước (Path-Coherent Consensus)
-            bull_cnt = 0
-            bear_cnt = 0
-            for s in scenarios:
-                c_arr = s["close"].values.astype(float)
-                end_d = float(c_arr[-1]) - last_c
-                path_d = float(np.mean(c_arr)) - last_c
-                eff_d = 0.70 * end_d + 0.30 * path_d
-                if eff_d > 0.0:
-                    bull_cnt += 1
-                elif eff_d < 0.0:
-                    bear_cnt += 1
-            total_scen = len(scenarios)
-            b_pct = (bull_cnt / total_scen) * 100.0
-            s_pct = (bear_cnt / total_scen) * 100.0
-
-            # Trọng số xác suất Bayesian Log-Likelihood
-            raw_lps = np.array([float(s.attrs.get("log_prob", 0.0)) for s in scenarios], dtype=float)
-            if np.ptp(raw_lps) > 1e-6:
-                lp_shifted = np.clip((raw_lps - np.max(raw_lps)) * 0.35, -4.0, 0.0)
-                scen_weights = np.exp(lp_shifted)
-                scen_weights = scen_weights / np.sum(scen_weights)
-            else:
-                scen_weights = np.ones(total_scen, dtype=float) / max(float(total_scen), 1.0)
-
-            all_closes_mat = np.array([s["close"].values.astype(float) for s in scenarios], dtype=float)
-            mean_closes = np.average(all_closes_mat, axis=0, weights=scen_weights)
-            avg_end_close = float(mean_closes[-1])
-            exp_m = avg_end_close - last_c
-
-            # Kiểm tra độ phân tán kịch bản
-            end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
-            scenario_std = float(np.sqrt(np.average((end_closes - avg_end_close) ** 2, weights=scen_weights)))
-            dispersion_r = float(scenario_std / max(atr, 0.01))
+            # Chấm điểm kịch bản (dùng chung với live): module trading_modules/scenario_scoring.py
+            sc = score_scenarios(scenarios, last_c, atr, macro_ctx)
+            bull_cnt, bear_cnt, total_scen = sc["bull_count"], sc["bear_count"], sc["total"]
+            b_pct, s_pct = sc["bull_pct"], sc["bear_pct"]
+            avg_end_close, exp_m = sc["avg_end_close"], sc["expected_move"]
+            scenario_std, dispersion_r, best_idx = sc["scenario_std"], sc["dispersion_r"], sc["best_idx"]
+            dir_pct, ai_dom_dir, confidence_pct = sc["dir_pct"], sc["ai_dom_dir"], sc["confidence_pct"]
             if max_dispersion > 0.0 and dispersion_r > max_dispersion:
                 return None
 
-            best_idx = int(np.argmin([
-                float(np.mean(np.abs(s["close"].values.astype(float) - mean_closes))) / max(float(scen_weights[idx_s]) * total_scen, 0.35)
-                for idx_s, s in enumerate(scenarios)
-            ]))
             mean_df = scenarios[best_idx]
             pred_hi = float(mean_df["high"].max())
             pred_lo = float(mean_df["low"].min())
@@ -4208,18 +3907,6 @@ class KronosDesktopApp:
 
             base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
 
-            dir_pct = max(b_pct, s_pct)
-            disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
-            base_conf = dir_pct * (1.0 - disp_penalty)
-            ai_dom_dir = 1 if b_pct > s_pct else (-1 if s_pct > b_pct else (1 if avg_end_close >= last_c else -1))
-            ctx_bonus = 0.0
-            if macro_ctx.get("macro_dir", 0) != 0:
-                ctx_bonus += 4.0 if macro_ctx.get("macro_dir", 0) == ai_dom_dir else -3.5
-            if macro_ctx.get("orderflow_dir", 0) != 0:
-                ctx_bonus += 3.5 if macro_ctx.get("orderflow_dir", 0) == ai_dom_dir else -2.5
-            if macro_ctx.get("wick_dir", 0) == ai_dom_dir:
-                ctx_bonus += 3.5
-            confidence_pct = max(10.0, min(99.0, base_conf + ctx_bonus))
             use_confidence_gate = bool(cfg.get("use_confidence_gate", False))
             is_bull_consensus = (confidence_pct >= min_consensus and b_pct > s_pct) if use_confidence_gate else (b_pct >= min_consensus)
             is_bear_consensus = (confidence_pct >= min_consensus and s_pct > b_pct) if use_confidence_gate else (s_pct >= min_consensus)
@@ -4504,57 +4191,15 @@ class KronosDesktopApp:
                         hold_mins = (fb_time - cur_time).total_seconds() / 60.0
 
                         if signal == "BUY":
-                            f_high_bid = fb[2]
-                            f_low_bid = fb[3]
-                            f_close_bid = fb[4]
-                            fav_dist = f_high_bid - entry_price
-
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = max(sl_price, entry_price + be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                sl_price = max(sl_price, f_high_bid - (one_r_dist * trail_dist_r))
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close_bid
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_low_bid <= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_high_bid >= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
+                            bar_h, bar_l, bar_c = fb[2], fb[3], fb[4]      # giá BID
                         else:
-                            f_high_ask = fb[5]
-                            f_low_ask = fb[6]
-                            f_close_ask = fb[7]
-                            fav_dist = entry_price - f_low_ask
-
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = min(sl_price, entry_price - be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                sl_price = min(sl_price, f_low_ask + (one_r_dist * trail_dist_r))
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close_ask
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_high_ask >= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_low_ask <= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
+                            bar_h, bar_l, bar_c = fb[5], fb[6], fb[7]      # giá ASK
+                        sl_price, be_moved, ex_price, ex_reason = step_position(
+                            signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, bar_h, bar_l, bar_c, hold_mins,
+                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins)
+                        if ex_price is not None:
+                            out_price, exit_reason = ex_price, ex_reason
+                            break
 
                     if signal == "BUY":
                         net_pnl = round((out_price - entry_price) * lot * contract_size, 2)
@@ -4700,52 +4345,12 @@ class KronosDesktopApp:
                         f_time = datetime.fromtimestamp(int(f_bar[0]), tz=VN_TZ)
                         hold_mins = (f_time - cur_time).total_seconds() / 60.0
 
-                        if signal == "BUY":
-                            fav_dist = f_high - entry_price
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = max(sl_price, entry_price + be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                trail_sl = f_high - (one_r_dist * trail_dist_r)
-                                sl_price = max(sl_price, trail_sl)
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_low <= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_high >= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
-                        else:
-                            fav_dist = entry_price - f_low
-                            if auto_be and not be_moved and fav_dist >= one_r_dist * be_trigger_r:
-                                sl_price = min(sl_price, entry_price - be_plus_price)
-                                be_moved = True
-
-                            if auto_trail and be_moved and fav_dist >= one_r_dist * trail_dist_r:
-                                trail_sl = f_low + (one_r_dist * trail_dist_r)
-                                sl_price = min(sl_price, trail_sl)
-
-                            if max_hold_mins > 0 and hold_mins >= max_hold_mins and not be_moved:
-                                out_price = f_close
-                                exit_reason = "Time-Stop (Hết giờ)"
-                                break
-
-                            if f_high >= sl_price:
-                                out_price = sl_price
-                                exit_reason = "Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)"
-                                break
-                            elif f_low <= tp_price:
-                                out_price = tp_price
-                                exit_reason = "Chốt lãi (TP)"
-                                break
+                        sl_price, be_moved, ex_price, ex_reason = step_position(
+                            signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, f_high, f_low, f_close, hold_mins,
+                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins)
+                        if ex_price is not None:
+                            out_price, exit_reason = ex_price, ex_reason
+                            break
 
                     spread_pts = 6.4 if is_btc else 0.20
                     if signal == "BUY":
@@ -8502,86 +8107,7 @@ class KronosDesktopApp:
                     return True, "Không lấy được tick -> Cho phép theo pa_fail_open"
                 return False, "Không lấy được tick giá hiện tại từ MT5"
 
-            cur_price = tick.ask if action == "BUY" else tick.bid
-            spread = max(tick.ask - tick.bid, 0.05)
-
-            forming = df_recent.iloc[-1]
-            last_closed = df_recent.iloc[-2]
-
-            o_f, h_f, l_f, c_f = float(forming["open"]), float(forming["high"]), float(forming["low"]), float(forming["close"])
-            rng_f = max(h_f - l_f, 0.05)
-            body_f = abs(c_f - o_f)
-
-            o_c, h_c, l_c, c_c = float(last_closed["open"]), float(last_closed["high"]), float(last_closed["low"]), float(last_closed["close"])
-            rng_c = max(h_c - l_c, 0.05)
-            body_c = abs(c_c - o_c)
-
-            min_low_5 = float(df_recent["low"].min())
-            max_high_5 = float(df_recent["high"].max())
-
-            eff_atr = float(atr) if (atr is not None and float(atr) > 0.0) else max(rng_c, 1.5)
-            min_bounce = max(0.25, spread * 1.5, 0.15 * eff_atr)
-            min_drop = max(0.25, spread * 1.5, 0.15 * eff_atr)
-
-            if action == "BUY":
-                # 1. KIỂM TRA NẾN RƠI TỰ DO (RUNAWAY MARUBOZU):
-                lower_wick_f = min(o_f, c_f) - l_f
-                lower_wick_c = min(o_c, c_c) - l_c
-
-                is_falling_knife_forming = (c_f < o_f) and (body_f >= 0.70 * rng_f) and (lower_wick_f < 0.15 * rng_f) and (c_f <= l_f + 0.15 * rng_f)
-                is_falling_knife_closed = (c_c < o_c) and (body_c >= 0.75 * rng_c) and (lower_wick_c < 0.15 * rng_c) and (c_f < c_c)
-
-                if is_falling_knife_forming or is_falling_knife_closed:
-                    return False, f"Nến {scalp_tf} đang cắm đầu rơi tự do (Thân đỏ đặc, chưa có lực đỡ)"
-
-                # 2. XÁC NHẬN LỰC ĐỠ (BUY REJECTION / ABSORPTION):
-                has_wick_rejection = (lower_wick_f >= 0.25 * rng_f and lower_wick_f >= spread * 1.5) or (lower_wick_c >= 0.35 * rng_c)
-                is_bullish_turnaround = (c_f > o_f and c_f > (l_f + rng_f * 0.40)) or (c_c > o_c and c_f >= c_c)
-                has_tick_bounce = (cur_price - min_low_5) >= min_bounce
-
-                confirmations = []
-                if has_wick_rejection:
-                    confirmations.append("Rút râu dưới")
-                if is_bullish_turnaround:
-                    confirmations.append("Nến xanh đảo chiều")
-                if has_tick_bounce:
-                    confirmations.append(f"Bật nảy +{cur_price - min_low_5:.2f}$ từ đáy")
-
-                if len(confirmations) >= req_conf:
-                    reason = " + ".join(confirmations)
-                    return True, f"Xác nhận lực đỡ ({reason})"
-
-                detail = " + ".join(confirmations) if confirmations else f"Đang cách đáy chỉ {cur_price - min_low_5:.2f}$"
-                return False, f"Chưa đủ {req_conf} điều kiện PA (Đạt {len(confirmations)}/{req_conf}: {detail})"
-
-            else:  # SELL
-                upper_wick_f = h_f - max(o_f, c_f)
-                upper_wick_c = h_c - max(o_c, c_c)
-
-                is_rocketing_forming = (c_f > o_f) and (body_f >= 0.70 * rng_f) and (upper_wick_f < 0.15 * rng_f) and (c_f >= h_f - 0.15 * rng_f)
-                is_rocketing_closed = (c_c > o_c) and (body_c >= 0.75 * rng_c) and (upper_wick_c < 0.15 * rng_c) and (c_f > c_c)
-
-                if is_rocketing_forming or is_rocketing_closed:
-                    return False, f"Nến {scalp_tf} đang dựng cột tăng mạnh (Thân xanh đặc, chưa có lực xả)"
-
-                has_wick_rejection = (upper_wick_f >= 0.25 * rng_f and upper_wick_f >= spread * 1.5) or (upper_wick_c >= 0.35 * rng_c)
-                is_bearish_turnaround = (c_f < o_f and c_f < (h_f - rng_f * 0.40)) or (c_c < o_c and c_f <= c_c)
-                has_tick_drop = (max_high_5 - cur_price) >= min_drop
-
-                confirmations = []
-                if has_wick_rejection:
-                    confirmations.append("Rút râu trên")
-                if is_bearish_turnaround:
-                    confirmations.append("Nến đỏ đảo chiều")
-                if has_tick_drop:
-                    confirmations.append(f"Giảm -{max_high_5 - cur_price:.2f}$ từ đỉnh")
-
-                if len(confirmations) >= req_conf:
-                    reason = " + ".join(confirmations)
-                    return True, f"Xác nhận lực xả ({reason})"
-
-                detail = " + ".join(confirmations) if confirmations else f"Đang cách đỉnh chỉ {max_high_5 - cur_price:.2f}$"
-                return False, f"Chưa đủ {req_conf} điều kiện PA (Đạt {len(confirmations)}/{req_conf}: {detail})"
+            return evaluate_price_action(action, df_recent, tick.ask, tick.bid, atr, scalp_tf, req_conf)
 
         except Exception as e:
             if pa_fail_open:
@@ -9775,401 +9301,25 @@ class KronosDesktopApp:
             pass
 
     def _compute_adaptive_sampling_params(self, df_ai: pd.DataFrame, analysis_tf: str) -> tuple[float, float, str]:
-        """
-        Tự động điều chỉnh Nhiệt độ suy luận (Temperature) và Nucleus Sampling (Top-P)
-        tối ưu riêng cho Scalping M1/M5 và trạng thái biến động thực tế (Volatility Regime):
-        - M1/M5: Hạ nhiệt độ xuống 0.58 - 0.65 để triệt tiêu nhiễu râu nến ngắn hạn, hội tụ vào xung lực dòng tiền.
-        - Khi biến động bung mạnh (ATR ngắn hạn > 1.35x ATR dài hạn): Siết thêm T để khóa chặt xu hướng chính, tránh phân tán ảo.
-        """
-        tf_upper = str(analysis_tf).upper().strip()
-        base_map = {
-            "M1": (0.58, 0.80),
-            "M5": (0.65, 0.84),
-            "M15": (0.72, 0.86),
-            "H1": (0.78, 0.88),
-        }
-        base_t, base_top_p = base_map.get(tf_upper, (0.65, 0.84))
-        regime_tag = f"{tf_upper}-Scalp"
-
-        try:
-            if len(df_ai) >= 30:
-                atr_fast = self.calculate_atr(df_ai.iloc[-10:], 7)
-                atr_slow = self.calculate_atr(df_ai.iloc[-35:], 14)
-                vol_ratio = atr_fast / max(atr_slow, 1e-5)
-                if vol_ratio >= 1.35:
-                    base_t = max(0.48, round(base_t - 0.06, 2))
-                    base_top_p = max(0.75, round(base_top_p - 0.04, 2))
-                    regime_tag = f"{tf_upper}-Impulse"
-                elif vol_ratio <= 0.75:
-                    base_t = min(0.82, round(base_t + 0.04, 2))
-                    base_top_p = min(0.90, round(base_top_p + 0.02, 2))
-                    regime_tag = f"{tf_upper}-Range"
-        except Exception:
-            pass
-        return float(base_t), float(base_top_p), regime_tag
+        """Nhiệt độ/top-p thích ứng của Kronos. Logic ở trading_modules/kronos_sampling.py."""
+        return compute_adaptive_sampling_params(df_ai, analysis_tf)
 
     def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float) -> dict:
-        """
-        Trích xuất Cấu Trúc Thị Trường Không Độ Trễ (Zero-Lag Market Structure - Swing Highs/Lows, BOS & CHoCH)
-        kết hợp Xung Lực Nến Đóng Cửa & Áp lực Order-Flow Volume Delta trực tiếp từ chuỗi nến thực tế.
-        Tuyệt đối KHÔNG phụ thuộc vào các đường MA trễ nải (như EMA34/89) để loại bỏ 100% độ trễ.
-        """
-        ctx_info = {
-            "macro_dir": 0,       # +1: Cấu trúc Tăng, -1: Cấu trúc Giảm, 0: Đi ngang/Tích lũy/Xung đột
-            "orderflow_dir": 0,   # +1: Mua chủ động, -1: Bán chủ động
-            "wick_dir": 0,        # +1: Rút chân dưới (Buy Sweep), -1: Rút chân trên (Sell Sweep)
-            "summary_tag": "Cân bằng",
-            "structure_reason": "Cân bằng / Tích lũy",
-            "break_type": "NONE", # "BOS" | "CHOCH" | "SWING" | "NONE"
-            "timeframe_conflict": False,
-            "scalp_dir": 0,
-            "ana_dir": 0,
-        }
+        """Cấu trúc thị trường (BOS/CHoCH, order-flow, râu nến). Logic nằm ở trading_modules/structure.py; hàm này chỉ đọc cấu hình rồi gọi module."""
+        conflict_mode = "neutral"
         try:
-            conflict_mode = "neutral"
-            try:
-                pk = getattr(self, "active_profile_key", "XAUUSD")
-                cfg = self._get_profile_cfg(pk) if hasattr(self, "_get_profile_cfg") else {}
-                conflict_mode = str(cfg.get("structure_conflict_mode", "neutral")).strip().lower()
-            except Exception:
-                conflict_mode = "neutral"
-
-            def _extract_structure(df_in):
-                if df_in is None or len(df_in) < 15:
-                    return 0, "Cân bằng", "NONE"
-                h_v = df_in["high"].astype(float).values
-                l_v = df_in["low"].astype(float).values
-                c_v = df_in["close"].astype(float).values
-                o_v = df_in["open"].astype(float).values
-                n_b = len(df_in)
-
-                p_h = []
-                p_l = []
-                for i in range(2, n_b - 2):
-                    if h_v[i] > h_v[i-1] and h_v[i] > h_v[i-2] and h_v[i] > h_v[i+1] and h_v[i] > h_v[i+2]:
-                        p_h.append(h_v[i])
-                    if l_v[i] < l_v[i-1] and l_v[i] < l_v[i-2] and l_v[i] < l_v[i+1] and l_v[i] < l_v[i+2]:
-                        p_l.append(l_v[i])
-
-                cur_c = c_v[-1]
-                dir_val = 0
-                reas = "Cân bằng"
-                b_type = "NONE"
-
-                if len(p_h) >= 2 and len(p_l) >= 2:
-                    lh = p_h[-1] < p_h[-2]
-                    ll = p_l[-1] < p_l[-2]
-                    hh = p_h[-1] > p_h[-2]
-                    hl = p_l[-1] > p_l[-2]
-
-                    prev_trend = -1 if (lh and ll) else (1 if (hh and hl) else 0)
-
-                    if cur_c > p_h[-1]:
-                        dir_val = 1
-                        b_type = "CHOCH" if prev_trend == -1 else "BOS"
-                        reas = f"{b_type} Tăng (Giá {cur_c:.2f} > Đỉnh {p_h[-1]:.2f})"
-                    elif cur_c < p_l[-1]:
-                        dir_val = -1
-                        b_type = "CHOCH" if prev_trend == 1 else "BOS"
-                        reas = f"{b_type} Giảm (Giá {cur_c:.2f} < Đáy {p_l[-1]:.2f})"
-                    elif lh and ll:
-                        dir_val = -1
-                        b_type = "SWING"
-                        reas = f"Cấu trúc Giảm LH+LL (Đỉnh {p_h[-1]:.2f} < {p_h[-2]:.2f})"
-                    elif hh and hl:
-                        dir_val = 1
-                        b_type = "SWING"
-                        reas = f"Cấu trúc Tăng HH+HL (Đáy {p_l[-1]:.2f} > {p_l[-2]:.2f})"
-
-                # Xung lực 10 nến gần nhất: KHÔNG được ghi đè BOS/CHoCH vô điều kiện
-                # Chỉ dùng khi dir_val == 0 (chưa rõ cấu trúc) hoặc khi cùng chiều với cấu trúc
-                recent_c = c_v[-10:]
-                recent_o = o_v[-10:]
-                red_c = int(np.sum(recent_c < recent_o))
-                green_c = int(np.sum(recent_c > recent_o))
-                local_min = float(np.min(l_v[-10:]))
-                local_max = float(np.max(h_v[-10:]))
-
-                if red_c >= 7 and cur_c <= local_min + (atr * 0.25):
-                    if dir_val == 0 or dir_val == -1:
-                        dir_val = -1
-                        reas = f"Đổ đèo tự do ({red_c}/10 nến đỏ sát đáy {local_min:.2f})"
-                        if b_type == "NONE":
-                            b_type = "SWING"
-                elif green_c >= 7 and cur_c >= local_max - (atr * 0.25):
-                    if dir_val == 0 or dir_val == 1:
-                        dir_val = 1
-                        reas = f"Tăng dốc đứng ({green_c}/10 nến xanh sát đỉnh {local_max:.2f})"
-                        if b_type == "NONE":
-                            b_type = "SWING"
-
-                return dir_val, reas, b_type
-
-            # 1. Trích xuất cấu trúc không độ trễ trên cả 2 khung Scalping (M1/M5) và Phân tích (M15)
-            s_dir, s_reas, s_type = _extract_structure(df_scalp)
-            a_dir, a_reas, a_type = _extract_structure(df_ana)
-            ctx_info["scalp_dir"] = s_dir
-            ctx_info["ana_dir"] = a_dir
-
-            # 2. Xử lý xung đột khung Scalp vs Phân tích M15 theo cấu hình structure_conflict_mode
-            if s_dir != 0 and a_dir != 0 and (s_dir * a_dir == -1):
-                ctx_info["timeframe_conflict"] = True
-                if conflict_mode == "neutral":
-                    ctx_info["macro_dir"] = 0
-                    ctx_info["break_type"] = "NONE"
-                    ctx_info["structure_reason"] = f"Xung đột đa khung (Scalp {s_dir:+d} vs Phân tích {a_dir:+d}) -> Trung lập"
-                elif conflict_mode == "analysis":
-                    ctx_info["macro_dir"] = a_dir
-                    ctx_info["break_type"] = a_type
-                    ctx_info["structure_reason"] = f"Xung đột đa khung (Ưu tiên Phân tích: {a_reas})"
-                else:  # "scalp"
-                    ctx_info["macro_dir"] = s_dir
-                    ctx_info["break_type"] = s_type
-                    ctx_info["structure_reason"] = f"Xung đột đa khung (Ưu tiên Scalp: {s_reas})"
-            else:
-                ctx_info["timeframe_conflict"] = False
-                if s_dir != 0:
-                    ctx_info["macro_dir"] = s_dir
-                    ctx_info["break_type"] = s_type
-                    ctx_info["structure_reason"] = s_reas
-                elif a_dir != 0:
-                    ctx_info["macro_dir"] = a_dir
-                    ctx_info["break_type"] = a_type
-                    ctx_info["structure_reason"] = a_reas
-                else:
-                    ctx_info["macro_dir"] = 0
-                    ctx_info["break_type"] = "NONE"
-                    ctx_info["structure_reason"] = "Cân bằng / Tích lũy"
-
-            ref_df = df_scalp if (df_scalp is not None and len(df_scalp) >= 12) else df_ana
-            recent = ref_df.iloc[-12:]
-            h_v = recent["high"].astype(float).values
-            l_v = recent["low"].astype(float).values
-            o_v = recent["open"].astype(float).values
-            c_v = recent["close"].astype(float).values
-            v_v = recent["volume"].astype(float).values
-            rng = np.maximum(h_v - l_v, 1e-5)
-
-            # Volume Delta Proxy: Tỷ trọng đóng cửa kết hợp thân nến nhân với Tick Volume
-            clv = ((c_v - l_v) - (h_v - c_v)) / rng
-            body_pressure = (c_v - o_v) / rng
-            signed_vol = v_v * (0.6 * clv + 0.4 * body_pressure)
-            vol_sum = float(np.sum(v_v)) + 1e-5
-            norm_delta = float(np.sum(signed_vol)) / vol_sum
-            if norm_delta >= 0.12:
-                ctx_info["orderflow_dir"] = 1
-            elif norm_delta <= -0.12:
-                ctx_info["orderflow_dir"] = -1
-
-            # Phát hiện Quét râu thanh khoản (Liquidity Sweep / Pinbar Rejection) trên 2 nến gần nhất
-            last_2 = recent.iloc[-2:]
-            for _, row in last_2.iterrows():
-                ro, rh, rl, rc = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
-                r_len = max(rh - rl, 1e-5)
-                if r_len >= 0.45 * atr:
-                    lower_wick = min(ro, rc) - rl
-                    upper_wick = rh - max(ro, rc)
-                    if lower_wick >= 0.52 * r_len and lower_wick > upper_wick * 1.6:
-                        ctx_info["wick_dir"] = 1
-                    elif upper_wick >= 0.52 * r_len and upper_wick > lower_wick * 1.6:
-                        ctx_info["wick_dir"] = -1
-
-            tags = []
-            if ctx_info["macro_dir"] != 0:
-                tags.append("CấuTrúc:Tăng" if ctx_info["macro_dir"] > 0 else "CấuTrúc:Giảm")
-            if ctx_info["orderflow_dir"] != 0:
-                tags.append("Vol:Mua" if ctx_info["orderflow_dir"] > 0 else "Vol:Bán")
-            if ctx_info["wick_dir"] != 0:
-                tags.append("RútChân:Dưới" if ctx_info["wick_dir"] > 0 else "RútChân:Trên")
-            if tags:
-                ctx_info["summary_tag"] = " | ".join(tags)
+            pk = getattr(self, "active_profile_key", "XAUUSD")
+            cfg = self._get_profile_cfg(pk) if hasattr(self, "_get_profile_cfg") else {}
+            conflict_mode = str(cfg.get("structure_conflict_mode", "neutral")).strip().lower()
         except Exception:
-            pass
-        return ctx_info
+            conflict_mode = "neutral"
+        return analyze_structure_context(df_ana, df_scalp, atr, conflict_mode)
 
     def _fast_predict_scenarios(self, predictor, df_in: pd.DataFrame, x_timestamp: pd.Series, y_timestamp: pd.Series, pred_len: int = 6, num_scenarios: int = 8, T: float = 1.0, top_k: int = 0, top_p: float = 0.9):
-        """
-        Tăng tốc dự báo AI gấp 15x-25x (từ ~18 giây xuống ~0.8 giây trên CPU) mà giữ nguyên 100% độ chính xác toán học:
-        - Single-Encode (batch=1): Chỉ mã hóa chuỗi nến lịch sử đúng 1 lần thay vì lặp lại 8 lần.
-        - Single-Prefill + KV-Cache (batch=1 -> batch=N): Chạy 12 tầng Transformer trên lịch sử đúng 1 lần và lưu bộ đệm Key/Value (KV-Cache),
-          sau đó ở mỗi bước dự báo chỉ tính toán trên đúng 1 nến mới sinh ra (seq_len=1).
-        - KV-Cache cho cả Cross-Attention (decode_s2) và Tokenizer Decoder.
-        - Tích hợp chấm điểm Xác suất Log-Likelihood nội tại của từng kịch bản & Chuẩn hóa hình học nến OHLC.
-        """
-        device = predictor.device
-        max_hist = max(32, min(len(df_in), predictor.max_context - pred_len))
-        if len(df_in) > max_hist:
-            df_in = df_in.iloc[-max_hist:].reset_index(drop=True)
-            x_timestamp = x_timestamp.iloc[-max_hist:].reset_index(drop=True)
-
-        df_c = df_in[["open", "high", "low", "close", "volume"]].copy()
-        df_c["amount"] = df_c["volume"] * df_c[["open", "high", "low", "close"]].mean(axis=1)
-        x_np = df_c[["open", "high", "low", "close", "volume", "amount"]].values.astype(np.float32)
-        x_mean, x_std = np.mean(x_np, axis=0), np.std(x_np, axis=0)
-        x_norm = np.clip((x_np - x_mean) / (x_std + 1e-5), -predictor.clip, predictor.clip)
-
-        x_stamp_np = calc_time_stamps(x_timestamp).values.astype(np.float32)
-        y_stamp_np = calc_time_stamps(y_timestamp).values.astype(np.float32)
-
-        # Cố định Seed độc lập trong ngữ cảnh fork_rng theo dữ liệu OHLC của nến cuối cùng (không làm ảnh hưởng luồng khác)
-        last_r = x_np[-1]
-        last_hist_close = float(last_r[3])
-        data_seed = int(abs(hash((len(df_in), round(float(last_r[0]), 2), round(float(last_r[1]), 2), round(float(last_r[2]), 2), round(float(last_r[3]), 2))))) % (2**31 - 1)
-
-        with self._ai_inference_lock, torch.random.fork_rng(), torch.no_grad():
-            torch.manual_seed(data_seed)
-            x_t = torch.from_numpy(x_norm[np.newaxis, :]).to(device)
-            x_st = torch.from_numpy(x_stamp_np[np.newaxis, :]).to(device)
-            y_st = torch.from_numpy(y_stamp_np[np.newaxis, :]).to(device)
-            full_stamp_1 = torch.cat([x_st, y_st], dim=1)
-
-            # 1. Single Tokenizer Encode (batch=1)
-            x_token_1 = predictor.tokenizer.encode(x_t, half=True)
-            init_len = x_t.size(1)
-
-            # 2. Single Transformer Prefill trên chuỗi nến lịch sử (batch=1)
-            x_pre = predictor.model.embedding([x_token_1[0], x_token_1[1]]) + predictor.model.time_emb(x_st)
-            kv_cache = []
-            for layer in predictor.model.transformer:
-                res = x_pre
-                xn = layer.norm1(x_pre)
-                sa = layer.self_attn
-                q = sa.q_proj(xn).view(1, init_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                k = sa.k_proj(xn).view(1, init_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                v = sa.v_proj(xn).view(1, init_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                q, k = sa.rotary(q, k)
-                kv_cache.append((k.expand(num_scenarios, -1, -1, -1), v.expand(num_scenarios, -1, -1, -1)))
-                ao = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True)
-                ao = ao.transpose(1, 2).contiguous().view(1, init_len, sa.d_model)
-                x_pre = res + sa.out_proj(ao)
-                x_pre = x_pre + layer.ffn(layer.norm2(x_pre))
-            ctx_hist = predictor.model.norm(x_pre)
-            s1_logits_0 = predictor.model.head(ctx_hist[:, -1:, :])[:, 0, :].expand(num_scenarios, -1).contiguous()
-
-            # Tiền tính toán Key/Value cho DependencyAwareLayer (decode_s2) trên lịch sử (batch=1)
-            ca = predictor.model.dep_layer.cross_attn
-            cos_1, sin_1 = ca.rotary._update_cos_sin_cache(ctx_hist, 1)
-            k_dep_h = ca.k_proj(ctx_hist).view(1, init_len, ca.n_heads, ca.head_dim).transpose(1, 2)
-            v_dep_h = ca.v_proj(ctx_hist).view(1, init_len, ca.n_heads, ca.head_dim).transpose(1, 2)
-            k_dep_h = (k_dep_h * cos_1) + (ca.rotary._rotate_half(k_dep_h) * sin_1)
-            k_dep_cache = k_dep_h.expand(num_scenarios, -1, -1, -1)
-            v_dep_cache = v_dep_h.expand(num_scenarios, -1, -1, -1)
-            last_ctx = ctx_hist[:, -1:, :].expand(num_scenarios, -1, -1)
-
-            generated_pre = x_token_1[0].new_empty(num_scenarios, pred_len)
-            generated_post = x_token_1[1].new_empty(num_scenarios, pred_len)
-            scenario_log_probs = torch.zeros(num_scenarios, dtype=torch.float32, device=device)
-
-            for i in range(pred_len):
-                if i == 0:
-                    s1_logits = s1_logits_0
-                else:
-                    pos = init_len + i - 1
-                    prev_s1 = generated_pre[:, i - 1:i]
-                    prev_s2 = generated_post[:, i - 1:i]
-                    st_step = full_stamp_1[:, pos:pos + 1, :].expand(num_scenarios, -1, -1)
-                    x_step = predictor.model.embedding([prev_s1, prev_s2]) + predictor.model.time_emb(st_step)
-                    for idx_l, layer in enumerate(predictor.model.transformer):
-                        res = x_step
-                        xn = layer.norm1(x_step)
-                        sa = layer.self_attn
-                        q = sa.q_proj(xn).view(num_scenarios, 1, sa.n_heads, sa.head_dim).transpose(1, 2)
-                        k_new = sa.k_proj(xn).view(num_scenarios, 1, sa.n_heads, sa.head_dim).transpose(1, 2)
-                        v_new = sa.v_proj(xn).view(num_scenarios, 1, sa.n_heads, sa.head_dim).transpose(1, 2)
-                        cos, sin = sa.rotary._update_cos_sin_cache(q, pos + 1)
-                        cos_t, sin_t = cos[:, :, pos:pos + 1, :], sin[:, :, pos:pos + 1, :]
-                        q = (q * cos_t) + (sa.rotary._rotate_half(q) * sin_t)
-                        k_new = (k_new * cos_t) + (sa.rotary._rotate_half(k_new) * sin_t)
-                        k_all = torch.cat([kv_cache[idx_l][0], k_new], dim=2)
-                        v_all = torch.cat([kv_cache[idx_l][1], v_new], dim=2)
-                        kv_cache[idx_l] = (k_all, v_all)
-                        ao = F.scaled_dot_product_attention(q, k_all, v_all, dropout_p=0.0, is_causal=False)
-                        ao = ao.transpose(1, 2).contiguous().view(num_scenarios, 1, sa.d_model)
-                        x_step = res + sa.out_proj(ao)
-                        x_step = x_step + layer.ffn(layer.norm2(x_step))
-                    last_ctx = predictor.model.norm(x_step)
-                    s1_logits = predictor.model.head(last_ctx)[:, 0, :]
-
-                    k_dep_new = ca.k_proj(last_ctx).view(num_scenarios, 1, ca.n_heads, ca.head_dim).transpose(1, 2)
-                    v_dep_new = ca.v_proj(last_ctx).view(num_scenarios, 1, ca.n_heads, ca.head_dim).transpose(1, 2)
-                    k_dep_new = (k_dep_new * cos_1) + (ca.rotary._rotate_half(k_dep_new) * sin_1)
-                    k_dep_cache = torch.cat([k_dep_cache, k_dep_new], dim=2)
-                    v_dep_cache = torch.cat([v_dep_cache, v_dep_new], dim=2)
-
-                sample_pre = sample_from_logits(s1_logits, temperature=T, top_k=top_k, top_p=top_p, sample_logits=True)
-                log_p1 = F.log_softmax(s1_logits, dim=-1).gather(-1, sample_pre).squeeze(-1)
-                sib = predictor.model.embedding.emb_s1(sample_pre)
-                q_dep = ca.q_proj(sib).view(num_scenarios, 1, ca.n_heads, ca.head_dim).transpose(1, 2)
-                q_dep = (q_dep * cos_1) + (ca.rotary._rotate_half(q_dep) * sin_1)
-                ao_dep = F.scaled_dot_product_attention(q_dep, k_dep_cache, v_dep_cache, dropout_p=0.0, is_causal=False)
-                ao_dep = ca.out_proj(ao_dep.transpose(1, 2).contiguous().view(num_scenarios, 1, ca.d_model))
-                x2_last = predictor.model.dep_layer.norm(last_ctx + ao_dep)
-                s2_logits = predictor.model.head.cond_forward(x2_last)[:, 0, :]
-                sample_post = sample_from_logits(s2_logits, temperature=T, top_k=top_k, top_p=top_p, sample_logits=True)
-                log_p2 = F.log_softmax(s2_logits, dim=-1).gather(-1, sample_post).squeeze(-1)
-
-                # Nhấn mạnh các nến đầu tiên của chuỗi Scalping (early horizon weight)
-                step_w = 1.15 if i < max(1, pred_len // 2) else 0.90
-                scenario_log_probs += (log_p1 + log_p2) * (step_w / max(float(pred_len), 1.0))
-
-                generated_pre[:, i] = sample_pre.squeeze(-1)
-                generated_post[:, i] = sample_post.squeeze(-1)
-
-            # 3. Single-Prefill + KV-Cache cho Tokenizer Decoder
-            q_hist = predictor.tokenizer.indices_to_bits([x_token_1[0], x_token_1[1]], half=True)
-            z_h = predictor.tokenizer.post_quant_embed(q_hist)
-            q_gen = predictor.tokenizer.indices_to_bits([generated_pre, generated_post], half=True)
-            z_g = predictor.tokenizer.post_quant_embed(q_gen)
-            attn_mask = torch.ones((pred_len, init_len + pred_len), dtype=torch.bool, device=device)
-            attn_mask[:, init_len:] = torch.tril(torch.ones((pred_len, pred_len), dtype=torch.bool, device=device))
-            for layer in predictor.tokenizer.decoder:
-                res_h = z_h
-                xh = layer.norm1(z_h)
-                sa = layer.self_attn
-                q_h = sa.q_proj(xh).view(1, init_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                k_h = sa.k_proj(xh).view(1, init_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                v_h = sa.v_proj(xh).view(1, init_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                q_h, k_h = sa.rotary(q_h, k_h)
-                ao_h = F.scaled_dot_product_attention(q_h, k_h, v_h, dropout_p=0.0, is_causal=True)
-                z_h = res_h + sa.out_proj(ao_h.transpose(1, 2).contiguous().view(1, init_len, sa.d_model))
-                z_h = z_h + layer.ffn(layer.norm2(z_h))
-
-                res_g = z_g
-                xg = layer.norm1(z_g)
-                q_g = sa.q_proj(xg).view(num_scenarios, pred_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                k_g = sa.k_proj(xg).view(num_scenarios, pred_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                v_g = sa.v_proj(xg).view(num_scenarios, pred_len, sa.n_heads, sa.head_dim).transpose(1, 2)
-                cos, sin = sa.rotary._update_cos_sin_cache(q_g, init_len + pred_len)
-                cos_g, sin_g = cos[:, :, init_len:init_len + pred_len, :], sin[:, :, init_len:init_len + pred_len, :]
-                q_g = (q_g * cos_g) + (sa.rotary._rotate_half(q_g) * sin_g)
-                k_g = (k_g * cos_g) + (sa.rotary._rotate_half(k_g) * sin_g)
-                k_all = torch.cat([k_h.expand(num_scenarios, -1, -1, -1), k_g], dim=2)
-                v_all = torch.cat([v_h.expand(num_scenarios, -1, -1, -1), v_g], dim=2)
-                ao_g = F.scaled_dot_product_attention(q_g, k_all, v_all, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
-                z_g = res_g + sa.out_proj(ao_g.transpose(1, 2).contiguous().view(num_scenarios, pred_len, sa.d_model))
-                z_g = z_g + layer.ffn(layer.norm2(z_g))
-            preds = predictor.tokenizer.head(z_g).cpu().numpy()
-            log_probs_np = scenario_log_probs.cpu().numpy()
-
-        scenarios = []
-        cols = ["open", "high", "low", "close", "volume", "amount"]
-        for b in range(num_scenarios):
-            p_b = preds[b] * (x_std + 1e-5) + x_mean
-            # Chuẩn hóa hình học nến OHLC (đảm bảo High >= max(Open, Close), Low <= min(Open, Close) và nối mượt giá mở cửa)
-            if pred_len > 0:
-                p_b[0, 0] = 0.65 * float(p_b[0, 0]) + 0.35 * last_hist_close
-                for step_i in range(1, pred_len):
-                    p_b[step_i, 0] = 0.60 * float(p_b[step_i, 0]) + 0.40 * float(p_b[step_i - 1, 3])
-                body_top = np.maximum(p_b[:, 0], p_b[:, 3])
-                body_bot = np.minimum(p_b[:, 0], p_b[:, 3])
-                p_b[:, 1] = np.maximum(p_b[:, 1], body_top)
-                p_b[:, 2] = np.minimum(p_b[:, 2], body_bot)
-            p_df = pd.DataFrame(p_b, columns=cols)
-            p_df.insert(0, "timestamps", y_timestamp.values)
-            p_df.attrs["log_prob"] = float(log_probs_np[b])
-            scenarios.append(p_df)
-        self._cleanup_memory_and_trim_workingset()
-        return scenarios
+        """Sinh N kịch bản Kronos (lõi AI). Logic ở trading_modules/kronos_engine.py; hàm này chỉ truyền khóa suy luận và hàm dọn bộ nhớ."""
+        return fast_predict_scenarios(predictor, df_in, x_timestamp, y_timestamp, pred_len=pred_len, num_scenarios=num_scenarios,
+                                      T=T, top_k=top_k, top_p=top_p, inference_lock=self._ai_inference_lock,
+                                      cleanup=self._cleanup_memory_and_trim_workingset)
 
     def fetch_mt5_candles(self, symbol: str, timeframe_str: str, count: int, include_forming: bool = False):
         tf_map = {
@@ -10370,11 +9520,7 @@ class KronosDesktopApp:
         )
 
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
-        high = df["high"]
-        low = df["low"]
-        close = df["close"].shift(1)
-        tr = pd.concat([high - low, (high - close).abs(), (low - close).abs()], axis=1).max(axis=1)
-        return float(tr.iloc[-period:].mean())
+        return calculate_atr(df, period)
 
     def execute_mt5_order(self, symbol: str, action: str, lot: float, sl_price: float, tp_price: float, max_positions: int, profile_key: str = None):
         pk = profile_key or self.active_profile_key
@@ -11086,59 +10232,14 @@ class KronosDesktopApp:
                         top_p=dyn_top_p
                     )
 
-                # Chấm điểm quỹ đạo đa bước (Path-Coherent Consensus): Kết hợp 70% giá đóng cuối + 30% xung lực trung bình toàn chuỗi
-                bull_count = 0
-                bear_count = 0
-                for s in scenarios:
-                    c_arr = s["close"].values.astype(float)
-                    end_d = float(c_arr[-1]) - last_close
-                    path_d = float(np.mean(c_arr)) - last_close
-                    eff_d = 0.70 * end_d + 0.30 * path_d
-                    if eff_d > 0.0:
-                        bull_count += 1
-                    elif eff_d < 0.0:
-                        bear_count += 1
-                total = len(scenarios)
-                bull_pct = (bull_count / total) * 100.0
-                bear_pct = (bear_count / total) * 100.0
-
-                # Trọng số Xác suất Nội tại (Bayesian Log-Likelihood Weighting từ Transformer Logits)
-                raw_lps = np.array([float(s.attrs.get("log_prob", 0.0)) for s in scenarios], dtype=float)
-                if np.ptp(raw_lps) > 1e-6:
-                    lp_shifted = np.clip((raw_lps - np.max(raw_lps)) * 0.35, -4.0, 0.0)
-                    scen_weights = np.exp(lp_shifted)
-                    scen_weights = scen_weights / np.sum(scen_weights)
-                else:
-                    scen_weights = np.ones(total, dtype=float) / max(float(total), 1.0)
-
-                # Tính đường giá đóng cửa trung bình có trọng số xác suất của các kịch bản
-                all_closes_mat = np.array([s["close"].values.astype(float) for s in scenarios], dtype=float)
-                mean_closes = np.average(all_closes_mat, axis=0, weights=scen_weights)
-                avg_end_close = float(mean_closes[-1])
-
-                # Chọn Kịch bản Đại diện Chuẩn nhất (MAP Medoid kết hợp độ khớp quỹ đạo và xác suất mô hình)
-                best_idx = int(np.argmin([
-                    float(np.mean(np.abs(s["close"].values.astype(float) - mean_closes))) / max(float(scen_weights[idx_s]) * total, 0.35)
-                    for idx_s, s in enumerate(scenarios)
-                ]))
+                # Chấm điểm kịch bản (dùng chung với backtest): module trading_modules/scenario_scoring.py
+                sc = score_scenarios(scenarios, last_close, atr, macro_ctx)
+                bull_count, bear_count, total = sc["bull_count"], sc["bear_count"], sc["total"]
+                bull_pct, bear_pct = sc["bull_pct"], sc["bear_pct"]
+                avg_end_close, scenario_std, dispersion_r = sc["avg_end_close"], sc["scenario_std"], sc["dispersion_r"]
+                best_idx = sc["best_idx"]
                 mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy(deep=True)
-
-                # Phân tích Độ phân tán & Bất định kịch bản + Gia cố Ngữ cảnh Đa tầng (Macro Trend & Order-Flow)
-                end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
-                scenario_std = float(np.sqrt(np.average((end_closes - avg_end_close) ** 2, weights=scen_weights)))
-                dispersion_r = float(scenario_std / max(atr, 0.01))
-                dir_pct = max(bull_pct, bear_pct)
-                disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
-                base_conf = dir_pct * (1.0 - disp_penalty)
-                ai_dom_dir = 1 if bull_pct > bear_pct else (-1 if bear_pct > bull_pct else (1 if avg_end_close >= last_close else -1))
-                ctx_bonus = 0.0
-                if macro_ctx["macro_dir"] != 0:
-                    ctx_bonus += 4.0 if macro_ctx["macro_dir"] == ai_dom_dir else -3.5
-                if macro_ctx["orderflow_dir"] != 0:
-                    ctx_bonus += 3.5 if macro_ctx["orderflow_dir"] == ai_dom_dir else -2.5
-                if macro_ctx["wick_dir"] == ai_dom_dir:
-                    ctx_bonus += 3.5
-                confidence_pct = max(10.0, min(99.0, base_conf + ctx_bonus))
+                dir_pct, ai_dom_dir, confidence_pct = sc["dir_pct"], sc["ai_dom_dir"], sc["confidence_pct"]
                 is_high_uncertainty = (max_dispersion > 0.0 and dispersion_r > max_dispersion)
 
                 expected_move = avg_end_close - last_close
