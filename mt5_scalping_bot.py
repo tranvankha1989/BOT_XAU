@@ -1079,6 +1079,8 @@ class KronosDesktopApp:
 
         self.local_cache = {}
         self.initial_r_cache = {}  # Lưu khoảng cách 1R (|Entry - SL ban đầu|) theo từng ticket
+        self._initial_r_saved = {}  # Bản đã ghi ra file gần nhất (A11): chỉ ghi lại khi cache thay đổi
+        self._load_initial_r_cache()  # A11: nạp lại 1R của các lệnh còn mở sau khi khởi động lại
         self.pending_be_exit_tickets = set()  # Lưu các ticket đang âm bị AI báo đảo chiều -> chờ hồi về Entry thoát
         self.pending_pullback_order = None  # Lưu tín hiệu chờ giá hồi về <= SL tối đa (1 giá = 10 pip) mới vào lệnh
         self.daily_limit_locked_date = None  # Ngày (YYYY-MM-DD) đã chạm mục tiêu Lãi/Lỗ ngày -> Dừng giao dịch hết ngày
@@ -8889,6 +8891,84 @@ class KronosDesktopApp:
         diff = (target_price - pos.price_open) if pos.type == mt5.POSITION_TYPE_BUY else (pos.price_open - target_price)
         return float(diff * pos.volume * contract_sz)
 
+    INITIAL_R_STALE_SEC = 30.0  # ticket vắng mặt liên tục từng này giây trong danh sách lệnh mở thì mới bị dọn khỏi cache
+
+    def _initial_r_path(self) -> str:
+        return os.path.join(SETTINGS_DIR, "initial_r_cache.json")
+
+    def _load_initial_r_cache(self):
+        """A11: nạp initial_r_cache từ file JSON. File thiếu/hỏng/sai dạng thì bỏ qua (dùng cách suy ra 1R hiện có)."""
+        try:
+            path = self._initial_r_path()
+            if not os.path.exists(path):
+                return
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            raw = data.get("r") if isinstance(data, dict) else None
+            if not isinstance(raw, dict):
+                return
+            loaded = {}
+            for k, v in raw.items():
+                try:
+                    ticket, r_val = int(k), float(v)
+                except (ValueError, TypeError):
+                    continue
+                if math.isfinite(r_val) and 0.0 < r_val < 1e7:
+                    loaded[ticket] = r_val
+            self.initial_r_cache.update(loaded)
+            self._initial_r_saved = dict(self.initial_r_cache)
+        except Exception:
+            pass
+
+    def _save_initial_r_cache_if_changed(self):
+        """A11: ghi initial_r_cache ra file khi (và chỉ khi) nó thay đổi so với lần ghi trước; ghi atomic (.tmp rồi os.replace)."""
+        try:
+            snap = dict(self.initial_r_cache)
+            if snap == self.__dict__.get("_initial_r_saved"):
+                return
+            now_m = time.monotonic()
+            if now_m < self.__dict__.get("_initial_r_fail_until", 0.0):
+                return
+            path = self._initial_r_path()
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"version": 1, "r": {str(k): v for k, v in snap.items()}}, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, path)
+                self._initial_r_saved = snap
+            except Exception as ex:
+                self._initial_r_fail_until = now_m + 30.0  # lỗi ghi: thử lại sau 30s, không spam log
+                self._write_file_log(f"[INITIAL_R] Không ghi được initial_r_cache.json: {type(ex).__name__}", is_error=True)
+        except Exception:
+            pass
+
+    def _sync_initial_r_cache(self, pk: str, positions: list):
+        """A11: ghi nhận danh sách lệnh mở của profile pk; dọn ticket không còn lệnh mở thật (chỉ khi MỌI profile có symbol đã báo cáo,
+        và ticket vắng mặt liên tục >= INITIAL_R_STALE_SEC để không xóa nhầm khi MT5 đọc lỗi tạm thời); rồi ghi file nếu có thay đổi."""
+        try:
+            now_m = time.monotonic()
+            open_map = self.__dict__.setdefault("_r_open_by_pk", {})
+            open_map[pk] = {p.ticket for p in (positions or [])}
+            need = [k for k in self.profile_ctx if str(self.profile_settings.get(k, {}).get("symbol", "")).strip()]
+            if need and all(k in open_map for k in need):
+                open_all = set().union(*(open_map[k] for k in need))
+                missing = self.__dict__.setdefault("_r_missing_since", {})
+                for t in list(self.initial_r_cache):
+                    if t in open_all:
+                        missing.pop(t, None)
+                    elif now_m - missing.setdefault(t, now_m) >= self.INITIAL_R_STALE_SEC:
+                        self.initial_r_cache.pop(t, None)
+                        missing.pop(t, None)
+                for t in list(missing):
+                    if t not in self.initial_r_cache:
+                        missing.pop(t, None)
+            self._save_initial_r_cache_if_changed()
+        except Exception:
+            pass
+
     def _get_pos_one_r_dist(self, pos, profile_key: str = None) -> float:
         """Tính khoảng cách 1R (|Entry - SL ban đầu|) của lệnh."""
         pk = profile_key or self.active_profile_key
@@ -9278,6 +9358,7 @@ class KronosDesktopApp:
             text=f"[{pk} - {symbol}] Đang mở: {len(positions)} lệnh{be_detail_str} ({total_profit:+.2f}$)  |  Đã chốt hôm nay: {closed_count} lệnh ({closed_profit_sum:+.2f}$){win_rate_tag}  |  Tổng Lãi/Lỗ Ngày (VN): {daily_pnl_val:+.2f}${daily_lock_tag}",
             fg=GOLD_ACCENT if is_locked else (pnl_color if len(positions) > 0 else CYAN_LIVE)
         )
+        self._sync_initial_r_cache(pk, positions)
         return len(positions), total_profit
 
     def _dispatch_pos_action_async(self, action_key: tuple, fn, *args, log_msg: str = None, log_prefix: str = None, clear_be_ticket: int = None):
