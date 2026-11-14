@@ -40,23 +40,22 @@ Ghi theo người dùng, chưa xác nhận lại bằng đọc code trong lần 
 - Cấu trúc không được kiểm lại lúc vào lệnh ở đường canh vùng (`_check_pending_pullback_order`).
 - Help text ghi xung đột "M5 vs M15" (đã thấy ở mô tả cài đặt) nhưng code dùng khung scalp/phân tích theo cấu hình (người dùng: M5/M1).
 
-## 4. Đang chạy
-- **P51-G** (Gemini): A/B bộ lọc cấu trúc, đoạn 17–21/8, seed 42; A = `trend_filter on` + `neutral`, B = `off`, C = `on` + `analysis`
-  (dùng cờ `--trend-filter` / `--structure-conflict-mode` của c255c08). Kết quả chưa có; trong repo không có dấu vết của lần chạy này (người dùng).
+## 4. Đã xong ngày 14/11 (sau bản bàn giao trước)
+- **P51-G/P55**: bộ lọc cấu trúc A/B/C trên 3 đoạn: KHÔNG có bằng chứng đổi luật (xem docs/P55_KET_QUA_3_DOAN.md). Giữ nguyên `trend_filter` và `neutral`.
+- **P53-C** (aff3fa5): cache AI cho backtest, `--ai-cache on|off` mặc định BẬT, thư mục `%APPDATA%\Kronos_MT5_Bott_ai_cache`. Chạy lại cùng đoạn mất ~30 giây thay vì ~50 phút. Đã kiểm 1 ngày thật: kết quả giống hệt (P54).
+- **A03** (1eedc27): không ghi đè pending canh vùng mới khi khôi phục sau execute.
+- **A10** (3a05c0c): không đọc được lịch sử deals (chưa có cache) -> chặn mở lệnh mới tới khi đọc lại được (cờ `ctx["deals_unknown"]`).
+- **A12**: đọc code: cooldown chuỗi thua và SL nhanh được dựng lại từ deals hôm nay mỗi giây (`_check_daily_profit_loss_limits`), nên sau restart vẫn có hiệu lực. Chỉ suy luận từ code, chưa có test riêng. Cooldown chốt chùm (`basket_cooldown_until`) chỉ ở RAM, mất sau restart (ít quan trọng).
+- Quy ước mới (CLAUDE.md, 4aab3ac): Claude được tự chạy backtest chỉ-đọc và tự quyết sửa khi có bằng chứng nhiều đoạn.
 
 ## 5. Hàng đợi
-- **A10** [CẦN OK]: `_get_today_deals_stats` trả `(0.0, 0, None)` khi `history_deals_get` lỗi và chưa có cache -> giới hạn ngày/cooldown vô hiệu (xem AUDIT.md).
-- **A03** (Opus High): race ghi đè `pending_pullback_order` trong `_check_pending_pullback_order`.
-- **P26-C**: tắt BTC bằng `ENABLED_PROFILES` (hiện chưa có trong code; giữ code BTC).
-- **P28-C**: giao diện, tối đa 3 điểm.
-- Cache kết quả AI + `--resume` cho `run_backtest`.
-- **P23/P24**: so sánh model. Model Gold phải test SAU giai đoạn huấn luyện. Thư mục `model/weights/Kronos-Gold-Exness/` và
-  `Kronos-Tokenizer-Gold-Exness/` nằm NGOÀI Git (untracked) -> cần sao lưu riêng.
-- **P11-C**: nhật ký quyết định.
-- Phase 2 còn lại (CLAUDE.md cũ): giờ server (offset) khi tính elapsed/cooldown/ngày; việc nặng của `_realtime_tick_loop` ra luồng nền (làm sau cùng, giữ `min(4, cpu//2)`);
-  backoff sửa SL/TP theo ticket; khung giờ cấm so theo phút; PA BUY dùng bid; kiểm RR thực trước khi vào; PnL ngày cộng commission; việc nhỏ (tf_map, ghi settings atomic).
-  Chưa xác nhận mục nào trong danh sách này đã xong một phần (một số đã có ở ded6451).
-- **A29** (nghiêm trọng, `kronos_updater.py`: SSL không kiểm chứng, không thấy chữ ký/sha256): phải xử lý TRƯỚC khi phát hành cho khách.
+- **P26-C**: tắt BTC bằng `ENABLED_PROFILES`: có ~15 chỗ lặp `("XAUUSD", "BTCUSD")`, rủi ro cao so với lợi ích; BTC hiện chỉ không bật auto. Chưa làm.
+- **P28-C**: giao diện, tối đa 3 điểm (cần người dùng liệt kê).
+- **P23/P24**: so sánh model base/small/gold. Model Gold test SAU giai đoạn huấn luyện; thư mục `model/weights/Kronos-*-Exness/` untracked -> sao lưu riêng NGOÀI Git.
+- **P11-C**: nhật ký quyết định CSV.
+- Tách module (docs/ARCHITECTURE_MAP.md), giai đoạn A trước; `trade_plan` chế độ ghi nhận; module chế độ thị trường (ghi nhận trước).
+- Phase 2 còn lại: việc nặng của `_realtime_tick_loop` ra luồng nền, PA BUY dùng bid, việc nhỏ (tf_map, ghi settings atomic). Giờ server: Exness server = UTC (suy luận, chưa kiểm).
+- **A29** (nghiêm trọng, `kronos_updater.py`): xử lý TRƯỚC khi phát hành cho khách.
 
 ## 6. Kết quả backtest hợp lệ (người dùng)
 227 lệnh, +59,97$, PF 1,14; hòa vốn chỉ ở chi phí khoảng 0,26$/lệnh. **KHÔNG chỉnh tham số theo số này.**
