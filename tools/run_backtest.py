@@ -136,6 +136,22 @@ def apply_flag_overrides(cfg: dict, def_cfg: dict, trend_filter=None, structure_
     }
 
 
+def apply_set_overrides(cfg: dict, def_cfg: dict, pairs) -> list:
+    """Ghi đè khóa cấu hình CHỈ trong cfg của lần chạy này (--set khóa=giá_trị). Chỉ nhận khóa có trong cấu hình mặc định
+    của profile (chống gõ sai); giá trị giữ dạng chuỗi như user_settings. Trả danh sách mô tả để in. Ném ValueError nếu sai."""
+    out = []
+    for item in pairs or []:
+        if "=" not in item:
+            raise ValueError(f"--set cần dạng khóa=giá_trị, nhận '{item}'")
+        k, v = item.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if k not in def_cfg or k in EXCLUDED_KEYS or k.startswith(EXCLUDED_PREFIXES):
+            raise ValueError(f"--set: khóa '{k}' không hợp lệ hoặc không được phép ghi đè")
+        cfg[k] = v
+        out.append(f"{k}={v}")
+    return out
+
+
 def format_effective_flags(eff: dict) -> list:
     return [
         f"trend_filter           : {'ON' if eff['trend_filter'] else 'OFF'} ({eff['trend_filter_src']})",
@@ -302,6 +318,8 @@ def run(argv=None) -> int:
                     help="Commission USD mỗi lot (khứ hồi) trừ thêm vào pnl sau mô phỏng (mặc định 0)")
     ap.add_argument("--slippage", type=float, default=0.0,
                     help="Trượt giá (đơn vị giá, ví dụ 0.05 = 5 cent) trừ thêm mỗi lệnh, tổng cả vào+ra (mặc định 0)")
+    ap.add_argument("--set", action="append", default=[], metavar="KHÓA=GIÁ_TRỊ",
+                    help="Ghi đè một khóa cấu hình chiến lược CHỈ cho lần chạy này (lặp được), ví dụ --set max_sl_price=3 --set consensus=80")
     ap.add_argument("--trend-filter", choices=["on", "off"], default=None,
                     help="Bật/tắt bộ lọc chặn ngược cấu trúc (macro_dir) CHỈ cho lần chạy này; mặc định: theo cấu hình hiện hành")
     ap.add_argument("--structure-conflict-mode", choices=["neutral", "analysis", "scalp"], default=None,
@@ -318,6 +336,11 @@ def run(argv=None) -> int:
     pk = args.profile
     cfg, _, cfg_note = load_strategy_cfg(pk)
     eff_flags = apply_flag_overrides(cfg, bot_mod.DEFAULT_PROFILE_SETTINGS.get(pk, {}), args.trend_filter, args.structure_conflict_mode)
+    try:
+        set_notes = apply_set_overrides(cfg, bot_mod.DEFAULT_PROFILE_SETTINGS.get(pk, {}), args.set)
+    except ValueError as ve:
+        print(f"[ERROR] {ve}")
+        return 2
     symbol = (args.symbol or str(cfg.get("symbol", "")) or bot_mod.DEFAULT_PROFILE_SETTINGS[pk]["symbol"]).strip()
     try:
         d0 = datetime.strptime(args.start, "%Y-%m-%d").date()
@@ -344,6 +367,8 @@ def run(argv=None) -> int:
     print(f"[*] Seed             : {args.seed}")
     for ln in format_effective_flags(eff_flags):
         print(f"[*] {ln}")
+    if set_notes:
+        print(f"[*] Ghi đè --set      : {', '.join(set_notes)}")
 
     if not mt5.initialize():
         print(f"[ERROR] mt5.initialize() thất bại: {mt5.last_error()}")

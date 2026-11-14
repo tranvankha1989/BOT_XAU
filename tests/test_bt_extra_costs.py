@@ -22,5 +22,21 @@ class TestExtraCosts(unittest.TestCase):
         self.assertEqual(t[0]["pnl"], 10.0)  # bản gốc không đổi
 
 
+class TestSetOverrides(unittest.TestCase):
+    def test_ghi_de_hop_le_va_khong_dung_ban_goc(self):
+        cfg = {"max_sl_price": "4.0", "consensus": "80"}
+        notes = rb.apply_set_overrides(cfg, {"max_sl_price": "5.0", "consensus": "75"}, ["max_sl_price=3", " consensus = 85 "])
+        self.assertEqual(cfg, {"max_sl_price": "3", "consensus": "85"})
+        self.assertEqual(notes, ["max_sl_price=3", "consensus=85"])
+
+    def test_khoa_sai_hoac_cam_bi_tu_choi(self):
+        for bad in ("khong_co=1", "telegram_bot_token=x", "hf_token=x", "symbol=A", "thieu_dau_bang"):
+            with self.assertRaises(ValueError):
+                rb.apply_set_overrides({}, {"max_sl_price": "5", "telegram_bot_token": "", "hf_token": "", "symbol": "X"}, [bad])
+
+    def test_khong_co_set(self):
+        self.assertEqual(rb.apply_set_overrides({}, {}, []), [])
+
+
 if __name__ == "__main__":
     unittest.main()
