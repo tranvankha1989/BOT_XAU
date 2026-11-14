@@ -12,15 +12,17 @@ test so module mới và wrapper trong bot với golden trên hàng trăm ca n�
 | `kronos_sampling.py` | Nhiệt độ/top-p thích ứng cho Kronos (ảnh hưởng khóa cache backtest) | `_compute_adaptive_sampling_params` | như trên |
 | `trading_window.py` | Khung giờ cấm giao dịch | `is_trading_window_blocked` | tests/test_patch.py, test_pb_diag.py |
 | `risk.py` | Max SL hiệu lực của vùng canh (đo RR tại điểm vào dự kiến) | `calc_effective_max_sl` | tests/test_effective_max_sl.py |
+| `scenario_scoring.py` | Chấm điểm kịch bản Kronos: đồng thuận, trọng số Bayesian, phân tán, độ tin cậy. DÙNG CHUNG live và backtest (trước đây chép 2 nơi) | khối chấm điểm trong `_run_analysis_worker` và `_evaluate_bt_ai_candle` | tests/test_scenario_scoring_module.py (108 ca golden + 300 ca so bản gốc live) |
+| `position_rules.py` | Quy tắc quản lý lệnh mô phỏng: BE, trailing, Time-Stop, chạm SL/TP trên một thanh giá (dùng chung 4 vòng backtest nến/tick x BUY/SELL) | 4 vòng lặp trong `_run_backtest_simulation` | tests/test_position_rules_module.py (3000 đường giá) |
 | `backtest_report.py` | Thống kê, định dạng, xuất CSV backtest | `build/format/export_backtest_*` | tests/test_bt_report.py, test_bt_records.py |
 
 Giữ nguyên ở file chính (chưa tách): lõi Kronos (`_fast_predict_scenarios`, gắn chặt với trọng số và khóa AI), luồng quét và ra quyết định
 (`_run_analysis_worker`, ~640 dòng), canh vùng, đặt lệnh, quản lý lệnh (BE/trailing), khóa lãi/lỗ ngày, cổng MT5, giao diện, backtest engine.
 
 ## Việc tách tiếp theo (theo thứ tự rủi ro tăng dần)
-1. Quyết định tín hiệu (đồng thuận, phân tán, độ tin cậy, SL/TP): hiện lặp giữa `_run_analysis_worker` và `_evaluate_bt_ai_candle` -> dùng chung 1 hàm (sẽ làm backtest và live khớp nhau; kết quả backtest cũ có thể đổi nhẹ).
+1. (ĐÃ XONG phần chấm điểm kịch bản.) Còn: tính SL/TP/chi phí kỳ vọng và cổng tín hiệu (min_move, đồng thuận, bộ lọc cấu trúc) vẫn viết riêng ở live và backtest.
 2. Cổng rủi ro (khóa ngày, cooldown, spread, max_pos).
-3. Quản lý lệnh mở (BE, trailing, đảo chiều).
+3. Quản lý lệnh mở LIVE (BE, trailing, đảo chiều) dùng chung `position_rules.py` (hiện chỉ backtest dùng; bản live dài ~340 dòng gắn với giao diện và MT5).
 4. Cổng MT5 (mọi `mt5.*` qua một chỗ), thực thi lệnh, giao diện.
 5. Module mới: chế độ thị trường (ghi nhãn trước), trade_plan (kiểm tra SL/TP/entry, chế độ ghi nhận trước).
 
