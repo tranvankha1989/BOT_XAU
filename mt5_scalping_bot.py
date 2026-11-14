@@ -30,6 +30,28 @@ from tkinter import ttk, messagebox, filedialog
 
 import numpy as np
 import pandas as pd
+
+
+def _load_packed_trading_modules():
+    """Chế độ đóng gói (launcher + core_engine.bin): các module trading_modules.* nằm trong container nhị phân của launcher.
+    Nạp chúng TRƯỚC khi import (tương thích cả launcher cũ). Chạy từ mã nguồn thì không có container -> bỏ qua."""
+    try:
+        raw = getattr(sys.modules.get("__main__"), "_CONTAINER_RAW_DICT", None)
+        if not raw:
+            return
+        import marshal
+        names = sorted((k for k in raw if k == "trading_modules" or k.startswith("trading_modules.")),
+                       key=lambda k: (k != "trading_modules", k != "trading_modules.indicators", k))
+        for k in names:
+            m = sys.modules.get(k)
+            if m is not None and not getattr(m, "_packed_loaded", False):
+                exec(marshal.loads(raw[k]), m.__dict__)
+                m._packed_loaded = True
+    except Exception:
+        pass
+
+
+_load_packed_trading_modules()
 from trading_modules.structure import analyze_structure_context
 from trading_modules.price_action import evaluate_price_action
 import gc
