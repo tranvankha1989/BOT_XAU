@@ -8805,16 +8805,20 @@ class KronosDesktopApp:
                 # Nếu là chế độ canh vùng liên tục trong chu kỳ AI (zone_watch) và chưa đạt max_pos, duy trì canh vùng cho nhịp hồi tiếp theo (vẫn tuân thủ khóa 1 lệnh/nến M1 và khoảng cách nhồi lệnh)
                 if p.get("zone_watch", False) and not p.get("manual_queued", False):
                     p_next = dict(p)
-                    ctx["pending_pullback_order"] = p_next
-                    if pk == self.active_profile_key:
-                        self.pending_pullback_order = p_next
+                    # A03: chỉ khôi phục nếu trong lúc gửi lệnh chưa có pending mới (luồng quét AI có thể đã đặt vùng mới)
+                    if ctx.get("pending_pullback_order") is None:
+                        ctx["pending_pullback_order"] = p_next
+                        if pk == self.active_profile_key:
+                            self.pending_pullback_order = p_next
             else:
                 # Nếu chưa khớp được do đang vướng khóa 1 lệnh/nến M1, chưa đủ khoảng cách nhồi lệnh, chưa BE lệnh trước, hoặc giá giật nhẹ -> tiếp tục giữ trạng thái canh vùng
                 self._pb_gate_log(pk, "execute", symbol, tick, n_open=len(open_positions) if open_positions else 0, note=f"kết quả: {str(ord_msg)[:100]}", p=p)
                 if p.get("zone_watch", False) or "SL hiện tại cách" in ord_msg:
-                    ctx["pending_pullback_order"] = p
-                    if pk == self.active_profile_key:
-                        self.pending_pullback_order = p
+                    # A03: không ghi đè pending mới do luồng quét AI đặt trong lúc gửi lệnh
+                    if ctx.get("pending_pullback_order") is None:
+                        ctx["pending_pullback_order"] = p
+                        if pk == self.active_profile_key:
+                            self.pending_pullback_order = p
                 return
         else:
             # Chưa vào vùng kích hoạt: chỉ log chẩn đoán khi giá còn cách vùng <= 1.0 (còn xa thì im lặng)
