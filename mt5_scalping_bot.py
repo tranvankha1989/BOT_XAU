@@ -823,6 +823,8 @@ class DatePickerDialog:
 
 from trading_modules.trading_window import is_trading_window_blocked
 from trading_modules.risk import calc_effective_max_sl
+from trading_modules.symbol_profile import symbol_tolerances
+from trading_modules.tick_resample import resample_ticks_to_s1
 from trading_modules.position_rules import step_position
 from trading_modules.scenario_scoring import score_scenarios
 from trading_modules.indicators import calculate_atr
@@ -1144,8 +1146,6 @@ class KronosDesktopApp:
         - Bitcoin (BTCUSDm ~ 75,860$, spread ~ 6.40$): bước nhảy Trailing >= 5.0$ (hoặc 0.8x Spread), đệm dời SL >= 8.0$ (hoặc 1.2x Spread),
           giúp BTCUSD không bị spam lệnh sửa SL mỗi giây hoặc bị MT5 từ chối vì Stops Level.
         """
-        sym_up = str(symbol or "").upper()
-        is_btc = "BTC" in sym_up
         spread = 0.0
         stops_dist = 0.0
         try:
@@ -1164,31 +1164,7 @@ class KronosDesktopApp:
         except Exception:
             pass
 
-        if is_btc:
-            return {
-                "is_btc": True,
-                "eps_equal": 1.50,
-                "min_stop_dist": max(stops_dist * 1.2, spread * 1.2, 8.0),
-                "min_trail_step": max(spread * 0.8, 5.0),
-                "min_manual_be_dist": max(spread * 1.0, 6.0),
-                "sl_break_tol": max(spread * 0.5, 3.0),
-                "max_sl_tol": 1.0,
-                "min_candle_body": 2.0,
-                "min_atr_sl_floor": 20.0,
-                "min_tp_floor": 30.0,
-            }
-        return {
-            "is_btc": False,
-            "eps_equal": 0.05,
-            "min_stop_dist": max(stops_dist * 1.2, spread * 1.2, 0.50),
-            "min_trail_step": 0.40,
-            "min_manual_be_dist": 0.30,
-            "sl_break_tol": 0.25,
-            "max_sl_tol": 0.05,
-            "min_candle_body": 0.05,
-            "min_atr_sl_floor": 1.0,
-            "min_tp_floor": 1.5,
-        }
+        return symbol_tolerances(symbol, spread, stops_dist)
 
     def _get_profile_cfg(self, profile_key: str = None) -> dict:
         """Lấy thông số cài đặt độc lập của Tab được chỉ định (an toàn đa luồng, không bao giờ trộn thông số giữa XAUUSD và BTCUSD)."""
@@ -3789,43 +3765,8 @@ class KronosDesktopApp:
         return ticks
 
     def _resample_ticks_to_s1(self, ticks):
-        """
-        Chuyển đổi mảng tick MT5 thành các thanh nến 1 giây (S1) siêu tốc bằng NumPy:
-        Mỗi giây trả về tuple (time_sec, o_b, h_b, l_b, c_b, h_a, l_a, c_a, spread)
-        """
-        if ticks is None or len(ticks) == 0:
-            return []
-
-        times = ticks["time"]
-        bids = ticks["bid"]
-        asks = ticks["ask"]
-
-        unique_times, idx_start = np.unique(times, return_index=True)
-        idx_end = np.append(idx_start[1:], len(ticks))
-
-        opens_bid = bids[idx_start]
-        highs_bid = np.maximum.reduceat(bids, idx_start)
-        lows_bid = np.minimum.reduceat(bids, idx_start)
-        closes_bid = bids[idx_end - 1]
-
-        highs_ask = np.maximum.reduceat(asks, idx_start)
-        lows_ask = np.minimum.reduceat(asks, idx_start)
-        closes_ask = asks[idx_end - 1]
-
-        s1_bars = []
-        for i in range(len(unique_times)):
-            t_sec = int(unique_times[i])
-            o_b = float(opens_bid[i])
-            h_b = float(highs_bid[i])
-            l_b = float(lows_bid[i])
-            c_b = float(closes_bid[i])
-            h_a = float(highs_ask[i])
-            l_a = float(lows_ask[i])
-            c_a = float(closes_ask[i])
-            spread = max(c_a - c_b, 0.0)
-            s1_bars.append((t_sec, o_b, h_b, l_b, c_b, h_a, l_a, c_a, spread))
-
-        return s1_bars
+        """Ghép tick MT5 thành nến 1 giây (S1). Logic ở trading_modules/tick_resample.py."""
+        return resample_ticks_to_s1(ticks)
 
     def _evaluate_bt_ai_candle(
         self,
