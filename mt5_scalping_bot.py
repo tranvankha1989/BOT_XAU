@@ -4104,17 +4104,33 @@ class KronosDesktopApp:
             y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
 
             dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(sub_df, ana_tf_str)
-            scenarios = self._fast_predict_scenarios(
-                predictor=predictor,
-                df_in=sub_df,
-                x_timestamp=x_ts,
-                y_timestamp=y_ts,
-                pred_len=6,
-                num_scenarios=num_scenarios,
-                T=dyn_t,
-                top_k=0,
-                top_p=dyn_top_p
-            )
+            # Cache kịch bản AI thô: chỉ tools/run_backtest.py gắn vào (live/UI: None -> chạy AI như cũ)
+            _sc_cache = getattr(self, "_bt_scenario_cache", None)
+            scenarios = None
+            _sc_key = None
+            if _sc_cache is not None:
+                try:
+                    _sc_key = _sc_cache.make_key(predictor, sub_df, y_ts, num_scenarios, dyn_t, dyn_top_p)
+                    scenarios = _sc_cache.get(_sc_key, y_ts)
+                except Exception:
+                    scenarios, _sc_key = None, None
+            if scenarios is None:
+                scenarios = self._fast_predict_scenarios(
+                    predictor=predictor,
+                    df_in=sub_df,
+                    x_timestamp=x_ts,
+                    y_timestamp=y_ts,
+                    pred_len=6,
+                    num_scenarios=num_scenarios,
+                    T=dyn_t,
+                    top_k=0,
+                    top_p=dyn_top_p
+                )
+                if scenarios and _sc_cache is not None and _sc_key is not None:
+                    try:
+                        _sc_cache.put(_sc_key, scenarios)
+                    except Exception:
+                        pass
             if not scenarios:
                 return None
 

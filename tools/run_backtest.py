@@ -230,7 +230,7 @@ def format_extra_metrics(m: dict) -> list:
     return lines
 
 
-def build_app(profile_key, cfg, symbol, start, end, precision, use_ai, capital, lot, log_lines, toasts):
+def build_app(profile_key, cfg, symbol, start, end, precision, use_ai, capital, lot, log_lines, toasts, ai_cache=None):
     """Dựng KronosDesktopApp không giao diện, chỉ gắn thuộc tính _run_backtest_simulation cần."""
     var = lambda v: types.SimpleNamespace(get=lambda: v)
     app = object.__new__(bot_mod.KronosDesktopApp)
@@ -258,6 +258,7 @@ def build_app(profile_key, cfg, symbol, start, end, precision, use_ai, capital, 
         _update_bt_status=update_status,
         _push_live_bt_trade=lambda *a, **k: None,
         _render_backtest_results=lambda *a, **k: None,  # kết quả lấy từ _bt_trades_cache
+        _bt_scenario_cache=ai_cache,  # cache kịch bản AI thô (None = tắt, chạy AI như cũ)
     )
     return app
 
@@ -278,6 +279,9 @@ def run(argv=None) -> int:
                     help="Giữ cả lệnh vào ngoài [start, end] (khởi động/warm-up); mặc định các lệnh này bị loại khỏi thống kê")
     ap.add_argument("--threads", type=int, default=None,
                     help="Số luồng CPU cho torch (mặc định = số lõi vật lý, tối đa = số lõi vật lý)")
+    ap.add_argument("--ai-cache", choices=["on", "off"], default="on",
+                    help="Cache kịch bản AI thô theo nến để chạy lại nhanh khi đổi cờ/ngưỡng (mặc định on; khóa có hash dữ liệu + trọng số model)")
+    ap.add_argument("--ai-cache-dir", default=None, help="Thư mục cache AI (mặc định SETTINGS_DIR\bt_ai_cache)")
     ap.add_argument("--trend-filter", choices=["on", "off"], default=None,
                     help="Bật/tắt bộ lọc chặn ngược cấu trúc (macro_dir) CHỈ cho lần chạy này; mặc định: theo cấu hình hiện hành")
     ap.add_argument("--structure-conflict-mode", choices=["neutral", "analysis", "scalp"], default=None,
@@ -331,8 +335,16 @@ def run(argv=None) -> int:
     prev_mt5 = bot_mod.mt5
     bot_mod.mt5 = ReadOnlyMT5(mt5)  # từ đây mọi lời gọi mt5 trong bot chỉ đọc
     try:
+        ai_cache = None
+        if args.ai_cache == "on" and not args.no_ai:
+            try:
+                from tools.bt_ai_cache import ScenarioCache
+                ai_cache = ScenarioCache(args.ai_cache_dir or os.path.join(bot_mod.SETTINGS_DIR, "bt_ai_cache"))
+            except Exception as ce:
+                print(f"[WARN] Không khởi tạo được AI cache ({ce}), chạy không cache")
+        print(f"[*] AI cache         : {'BẬT -> ' + ai_cache.cache_dir if ai_cache else 'TẮT'}")
         app = build_app(pk, cfg, symbol, args.start, args.end, args.precision, not args.no_ai,
-                        args.capital, args.lot, log_lines, toasts)
+                        args.capital, args.lot, log_lines, toasts, ai_cache=ai_cache)
         app._run_backtest_simulation()
         all_trades = list(app._bt_trades_cache or [])
     finally:
@@ -342,6 +354,8 @@ def run(argv=None) -> int:
         except Exception:
             pass
     elapsed = time.perf_counter() - t0
+    if ai_cache is not None:
+        print(f"[*] {ai_cache.summary()}")
 
     errors = [m for m, is_err in toasts if is_err]
     if errors:
