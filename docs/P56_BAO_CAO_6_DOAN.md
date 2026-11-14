@@ -27,3 +27,17 @@ Cache AI: các lần C/B trúng ~100% (đoạn mới mỗi A ~36-37 phút, C/B ~
 3. Cho backtest mô phỏng luật Max SL (có/không chia đôi, canh vùng) để kiểm cơ chế gây 0 lệnh đêm 13/11 trên nhiều đoạn (trung bình; backtest hiện KHÔNG có cơ chế này, nên phần này chưa đo được).
 4. Module chế độ thị trường (chỉ ghi nhãn trong backtest) để xem lệnh thua tập trung ở chế độ nào, rồi mới xét chặn (thấp-trung bình, cần dữ liệu).
 5. Chưa nên tăng lot hay lên tài khoản thật; chờ kết quả demo thật + chi phí thật.
+
+## Bổ sung: độ nhạy theo chi phí thêm (lot 0.02; 0,10$/lệnh = thêm 0,05 giá, vì 0,05 x 0,02 lot x 100)
+Tổng lãi 6 đoạn sau khi trừ thêm X $/lệnh (số đoạn lãi / 6):
+
+| Thêm $/lệnh | 0 | 0,05 | 0,10 | 0,20 | 0,30 |
+|---|---|---|---|---|---|
+| A (hiện tại) | +61,5 (3) | +37,1 (3) | +12,7 (3) | -36,1 (2) | -84,9 (2) |
+| C (analysis) | +87,4 (3) | +67,3 (3) | +47,2 (3) | +7,0 (3) | -33,2 (3) |
+| B (tắt lọc) | -58,7 (2) | -114,5 | -170,3 | -281,9 | -393,5 |
+
+- Hòa vốn: A ở ~0,126$/lệnh (= spread thật chỉ cần cao hơn 0,20 khoảng 0,063 giá); C ở ~0,217$/lệnh.
+- Vì C ít lệnh hơn và lãi/lệnh cao hơn nên chịu chi phí tốt hơn. Nếu spread + trượt giá + commission thật > ~0,26 (giá) thì A hết lãi.
+- Chưa đủ để đổi sang C (3/6 đoạn mỗi bên), nhưng đây là lý do thứ 2 nghiêng về C. Cần đo chi phí thật từ demo (cột commission/spread trong deals) trước khi quyết.
+- Công cụ: `run_backtest.py --commission-per-lot X --slippage Y` (trừ sau mô phỏng, không đổi quyết định vào/ra lệnh; cổng ngày trong mô phỏng không thấy chi phí này).

@@ -194,6 +194,22 @@ def filter_trades_by_range(trades: list, start: str, end: str):
     return kept, dropped, unparsed
 
 
+def apply_extra_costs(trades: list, commission_per_lot: float = 0.0, slippage_price: float = 0.0, contract_size: float = 100.0) -> list:
+    """Trừ thêm chi phí chưa có trong backtest (commission USD/lot khứ hồi, trượt giá tính bằng giá mỗi lệnh) vào pnl SAU khi mô phỏng.
+    Trả bản sao; không đổi quyết định vào/ra lệnh (chỉ trừ tiền sau cùng), nên cổng ngày trong mô phỏng không "thấy" chi phí này."""
+    if not commission_per_lot and not slippage_price:
+        return trades
+    out = []
+    for t in trades:
+        c = dict(t)
+        lot = float(c.get("lot", 0.0) or 0.0)
+        extra = float(commission_per_lot) * lot + float(slippage_price) * lot * float(contract_size)
+        c["pnl"] = round(float(c["pnl"]) - extra, 2)
+        c["cost_extra"] = round(extra, 2)
+        out.append(c)
+    return out
+
+
 def compute_extra_metrics(trades: list) -> dict:
     """Tổng lãi/lỗ, profit factor, kỳ vọng R theo hai cách (tính từ danh sách lệnh):
     (a) trung bình R của từng lệnh; (b) tổng lãi ròng / tổng risk_usd (chỉ các lệnh có risk_usd > 0)."""
@@ -282,6 +298,10 @@ def run(argv=None) -> int:
     ap.add_argument("--ai-cache", choices=["on", "off"], default="on",
                     help="Cache kịch bản AI thô theo nến để chạy lại nhanh khi đổi cờ/ngưỡng (mặc định on; khóa có hash dữ liệu + trọng số model)")
     ap.add_argument("--ai-cache-dir", default=None, help="Thư mục cache AI (mặc định SETTINGS_DIR\bt_ai_cache)")
+    ap.add_argument("--commission-per-lot", type=float, default=0.0,
+                    help="Commission USD mỗi lot (khứ hồi) trừ thêm vào pnl sau mô phỏng (mặc định 0)")
+    ap.add_argument("--slippage", type=float, default=0.0,
+                    help="Trượt giá (đơn vị giá, ví dụ 0.05 = 5 cent) trừ thêm mỗi lệnh, tổng cả vào+ra (mặc định 0)")
     ap.add_argument("--trend-filter", choices=["on", "off"], default=None,
                     help="Bật/tắt bộ lọc chặn ngược cấu trúc (macro_dir) CHỈ cho lần chạy này; mặc định: theo cấu hình hiện hành")
     ap.add_argument("--structure-conflict-mode", choices=["neutral", "analysis", "scalp"], default=None,
@@ -377,6 +397,9 @@ def run(argv=None) -> int:
         trades, dropped, unparsed = all_trades, [], 0
     else:
         trades, dropped, unparsed = filter_trades_by_range(all_trades, args.start, args.end)
+    if args.commission_per_lot or args.slippage:
+        trades = apply_extra_costs(trades, args.commission_per_lot, args.slippage, 1.0 if pk == "BTCUSD" else 100.0)
+        print(f"[*] Chi phí thêm      : commission {args.commission_per_lot}$/lot + trượt giá {args.slippage} (đã trừ vào pnl sau mô phỏng)")
     dropped_pnl = sum(float(t["pnl"]) for t in dropped)
 
     report = bot_mod.build_backtest_report(trades, args.capital)
