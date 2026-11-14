@@ -914,6 +914,24 @@ def is_trading_window_blocked(now_utc7=None, cfg: dict = None) -> tuple:
 _BT_WIN_EPS = 0.05  # Ngưỡng $ phân loại thắng/thua/hòa vốn, đồng bộ với thẻ Scorecards
 
 
+def calc_effective_max_sl(action: str, entry_ref: float, sl_price: float, tp_price: float, max_sl_price: float):
+    """Max SL hiệu lực của vùng canh (live). Trả (effective_max_sl, da_chia_doi).
+    Kiểm tra RR >= 2R tính tại điểm vào DỰ KIẾN (SL ± Max SL khi SL AI xa hơn Max SL), KHÔNG tính tại giá hiện tại:
+    TP đã dựng từ điểm vào dự kiến nên đo từ giá hiện tại (xa hơn) luôn cho RR thấp giả -> chia đôi Max SL vô cớ, vùng canh quá sâu."""
+    cur_sl_dist = abs(entry_ref - sl_price)
+    if action not in ("BUY", "SELL") or cur_sl_dist <= 0.001:
+        return max_sl_price, False
+    ref = entry_ref
+    if max_sl_price > 0.0 and cur_sl_dist > max_sl_price:
+        ref = (sl_price + max_sl_price) if action == "BUY" else (sl_price - max_sl_price)
+    sl_d = abs(ref - sl_price)
+    dist_tp = abs(tp_price - ref)
+    if dist_tp < 2.0 * sl_d:
+        base_sl_cap = max_sl_price if max_sl_price > 0.0 else cur_sl_dist
+        return round(base_sl_cap / 2.0, 2), True
+    return max_sl_price, False
+
+
 def build_backtest_report(trades: list, init_cap: float, n_boot: int = 2000, seed: int = 12345) -> dict:
     """Tính các chỉ số tổng kết backtest từ danh sách lệnh (chỉ đọc, không đổi logic vào/thoát lệnh)."""
     rep = {"n_trades": len(trades), "init_cap": float(init_cap), "daily": [], "warnings": []}
@@ -11371,12 +11389,10 @@ class KronosDesktopApp:
                 effective_max_sl = max_sl_price
                 sl_tightened_for_2r = False
                 if action in ("BUY", "SELL") and cur_sl_dist > 0.001:
-                    # Kiểm tra khoảng cách từ entry đến TP có đạt mức >= 2R (dist_tp >= 2.0 * cur_sl_dist) không
-                    if dist_tp < 2.0 * cur_sl_dist:
-                        # Tự động giảm SL tối đa do người dùng cài chia 2 (ví dụ 5.0 -> 2.50) để thu gọn khoảng cách & nâng tỷ lệ RR
+                    # Kiểm tra RR >= 2R tại điểm vào dự kiến (SL ± Max SL), không đo từ giá hiện tại (xem calc_effective_max_sl)
+                    effective_max_sl, sl_tightened_for_2r = calc_effective_max_sl(action, entry_ref, sl_price, tp_price, max_sl_price)
+                    if sl_tightened_for_2r:
                         base_sl_cap = max_sl_price if max_sl_price > 0.0 else cur_sl_dist
-                        effective_max_sl = round(base_sl_cap / 2.0, 2)
-                        sl_tightened_for_2r = True
                         self.log(
                             f"⚖️ [{pk} - Tối Ưu RR ≥ 2R] Khoảng cách TP ({dist_tp:.2f}$) < 2R của SL ({cur_sl_dist:.2f}$) -> "
                             f"Tự động giảm SL tối đa: {base_sl_cap:.2f}$ ÷ 2 = {effective_max_sl:.2f}$ để thu gọn khoảng cách & tối ưu RR ≥ 2R!"
