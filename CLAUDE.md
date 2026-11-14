@@ -7,7 +7,11 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 Đọc thêm: `HANDOFF.md` (trạng thái hiện tại, việc đang chạy, hàng đợi), `AUDIT.md` (danh sách lỗi A01…A44 và trạng thái xử lý).
 
 ## Vai trò và cách làm việc
-- **CLAUDE (-C)**: chỉ sửa code và chạy test mock. **GEMINI (-G)**: chỉ chạy script/backtest/thống kê; CẤM sửa `.py`, không commit.
+- **CLAUDE (-C)**: sửa code, chạy test mock, VÀ (từ 14/11/2026, người dùng ủy quyền) tự chạy backtest chỉ-đọc/replay, tự phân tích và tự quyết sửa khi có bằng chứng.
+  **GEMINI (-G)**: chỉ chạy script/backtest/thống kê; CẤM sửa `.py`, không commit. Không chạy 2 backtest song song (tranh CPU, Kernel-Power 41).
+- Ủy quyền 14/11/2026: người dùng không rành code, để Claude tự quyết thay đổi có lợi cho app, kể cả luật giao dịch, với điều kiện: có bằng chứng
+  từ nhiều đoạn dữ liệu (không dựa 1 đoạn), thay đổi nhỏ và đặt được bằng cấu hình, test đạt, commit riêng, và báo rõ điều chưa chắc chắn.
+  VẪN CẦN hỏi: chạy bot thật/`demo_check.py`, chuyển sang tài khoản thật, tăng lot, đụng license/updater/token.
 - Mỗi lúc chỉ MỘT agent được sửa file; mỗi lần giao MỘT việc. Người dùng nói tiếng Việt và muốn tiết kiệm token:
   trả lời ngắn, Grep rồi Read đúng đoạn, không đọc cả file 12.000 dòng.
 - Khi báo cáo: nêu hàm đã sửa, git diff --stat, kết quả test, và NÊU RÕ điểm chưa chắc chắn (phần nào là suy luận, chưa kiểm chứng).
