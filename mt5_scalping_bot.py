@@ -823,6 +823,7 @@ class DatePickerDialog:
 
 from trading_modules.trading_window import is_trading_window_blocked
 from trading_modules.risk import calc_effective_max_sl
+from trading_modules.scenario_scoring import score_scenarios
 from trading_modules.indicators import calculate_atr
 from trading_modules.kronos_sampling import compute_adaptive_sampling_params
 from trading_modules.backtest_report import _BT_WIN_EPS, build_backtest_report, format_backtest_report, export_backtest_csv
@@ -3917,47 +3918,16 @@ class KronosDesktopApp:
                 return None
 
             last_c = float(sub_df["close"].iloc[-1])
-            # Chấm điểm quỹ đạo đa bước (Path-Coherent Consensus)
-            bull_cnt = 0
-            bear_cnt = 0
-            for s in scenarios:
-                c_arr = s["close"].values.astype(float)
-                end_d = float(c_arr[-1]) - last_c
-                path_d = float(np.mean(c_arr)) - last_c
-                eff_d = 0.70 * end_d + 0.30 * path_d
-                if eff_d > 0.0:
-                    bull_cnt += 1
-                elif eff_d < 0.0:
-                    bear_cnt += 1
-            total_scen = len(scenarios)
-            b_pct = (bull_cnt / total_scen) * 100.0
-            s_pct = (bear_cnt / total_scen) * 100.0
-
-            # Trọng số xác suất Bayesian Log-Likelihood
-            raw_lps = np.array([float(s.attrs.get("log_prob", 0.0)) for s in scenarios], dtype=float)
-            if np.ptp(raw_lps) > 1e-6:
-                lp_shifted = np.clip((raw_lps - np.max(raw_lps)) * 0.35, -4.0, 0.0)
-                scen_weights = np.exp(lp_shifted)
-                scen_weights = scen_weights / np.sum(scen_weights)
-            else:
-                scen_weights = np.ones(total_scen, dtype=float) / max(float(total_scen), 1.0)
-
-            all_closes_mat = np.array([s["close"].values.astype(float) for s in scenarios], dtype=float)
-            mean_closes = np.average(all_closes_mat, axis=0, weights=scen_weights)
-            avg_end_close = float(mean_closes[-1])
-            exp_m = avg_end_close - last_c
-
-            # Kiểm tra độ phân tán kịch bản
-            end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
-            scenario_std = float(np.sqrt(np.average((end_closes - avg_end_close) ** 2, weights=scen_weights)))
-            dispersion_r = float(scenario_std / max(atr, 0.01))
+            # Chấm điểm kịch bản (dùng chung với live): module trading_modules/scenario_scoring.py
+            sc = score_scenarios(scenarios, last_c, atr, macro_ctx)
+            bull_cnt, bear_cnt, total_scen = sc["bull_count"], sc["bear_count"], sc["total"]
+            b_pct, s_pct = sc["bull_pct"], sc["bear_pct"]
+            avg_end_close, exp_m = sc["avg_end_close"], sc["expected_move"]
+            scenario_std, dispersion_r, best_idx = sc["scenario_std"], sc["dispersion_r"], sc["best_idx"]
+            dir_pct, ai_dom_dir, confidence_pct = sc["dir_pct"], sc["ai_dom_dir"], sc["confidence_pct"]
             if max_dispersion > 0.0 and dispersion_r > max_dispersion:
                 return None
 
-            best_idx = int(np.argmin([
-                float(np.mean(np.abs(s["close"].values.astype(float) - mean_closes))) / max(float(scen_weights[idx_s]) * total_scen, 0.35)
-                for idx_s, s in enumerate(scenarios)
-            ]))
             mean_df = scenarios[best_idx]
             pred_hi = float(mean_df["high"].max())
             pred_lo = float(mean_df["low"].min())
@@ -3972,18 +3942,6 @@ class KronosDesktopApp:
 
             base_atr_sl = max(atr * sl_atr, 8.0 if is_btc else 0.5)
 
-            dir_pct = max(b_pct, s_pct)
-            disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
-            base_conf = dir_pct * (1.0 - disp_penalty)
-            ai_dom_dir = 1 if b_pct > s_pct else (-1 if s_pct > b_pct else (1 if avg_end_close >= last_c else -1))
-            ctx_bonus = 0.0
-            if macro_ctx.get("macro_dir", 0) != 0:
-                ctx_bonus += 4.0 if macro_ctx.get("macro_dir", 0) == ai_dom_dir else -3.5
-            if macro_ctx.get("orderflow_dir", 0) != 0:
-                ctx_bonus += 3.5 if macro_ctx.get("orderflow_dir", 0) == ai_dom_dir else -2.5
-            if macro_ctx.get("wick_dir", 0) == ai_dom_dir:
-                ctx_bonus += 3.5
-            confidence_pct = max(10.0, min(99.0, base_conf + ctx_bonus))
             use_confidence_gate = bool(cfg.get("use_confidence_gate", False))
             is_bull_consensus = (confidence_pct >= min_consensus and b_pct > s_pct) if use_confidence_gate else (b_pct >= min_consensus)
             is_bear_consensus = (confidence_pct >= min_consensus and s_pct > b_pct) if use_confidence_gate else (s_pct >= min_consensus)
@@ -10569,59 +10527,14 @@ class KronosDesktopApp:
                         top_p=dyn_top_p
                     )
 
-                # Chấm điểm quỹ đạo đa bước (Path-Coherent Consensus): Kết hợp 70% giá đóng cuối + 30% xung lực trung bình toàn chuỗi
-                bull_count = 0
-                bear_count = 0
-                for s in scenarios:
-                    c_arr = s["close"].values.astype(float)
-                    end_d = float(c_arr[-1]) - last_close
-                    path_d = float(np.mean(c_arr)) - last_close
-                    eff_d = 0.70 * end_d + 0.30 * path_d
-                    if eff_d > 0.0:
-                        bull_count += 1
-                    elif eff_d < 0.0:
-                        bear_count += 1
-                total = len(scenarios)
-                bull_pct = (bull_count / total) * 100.0
-                bear_pct = (bear_count / total) * 100.0
-
-                # Trọng số Xác suất Nội tại (Bayesian Log-Likelihood Weighting từ Transformer Logits)
-                raw_lps = np.array([float(s.attrs.get("log_prob", 0.0)) for s in scenarios], dtype=float)
-                if np.ptp(raw_lps) > 1e-6:
-                    lp_shifted = np.clip((raw_lps - np.max(raw_lps)) * 0.35, -4.0, 0.0)
-                    scen_weights = np.exp(lp_shifted)
-                    scen_weights = scen_weights / np.sum(scen_weights)
-                else:
-                    scen_weights = np.ones(total, dtype=float) / max(float(total), 1.0)
-
-                # Tính đường giá đóng cửa trung bình có trọng số xác suất của các kịch bản
-                all_closes_mat = np.array([s["close"].values.astype(float) for s in scenarios], dtype=float)
-                mean_closes = np.average(all_closes_mat, axis=0, weights=scen_weights)
-                avg_end_close = float(mean_closes[-1])
-
-                # Chọn Kịch bản Đại diện Chuẩn nhất (MAP Medoid kết hợp độ khớp quỹ đạo và xác suất mô hình)
-                best_idx = int(np.argmin([
-                    float(np.mean(np.abs(s["close"].values.astype(float) - mean_closes))) / max(float(scen_weights[idx_s]) * total, 0.35)
-                    for idx_s, s in enumerate(scenarios)
-                ]))
+                # Chấm điểm kịch bản (dùng chung với backtest): module trading_modules/scenario_scoring.py
+                sc = score_scenarios(scenarios, last_close, atr, macro_ctx)
+                bull_count, bear_count, total = sc["bull_count"], sc["bear_count"], sc["total"]
+                bull_pct, bear_pct = sc["bull_pct"], sc["bear_pct"]
+                avg_end_close, scenario_std, dispersion_r = sc["avg_end_close"], sc["scenario_std"], sc["dispersion_r"]
+                best_idx = sc["best_idx"]
                 mean_df = scenarios[best_idx][["timestamps", "open", "high", "low", "close"]].copy(deep=True)
-
-                # Phân tích Độ phân tán & Bất định kịch bản + Gia cố Ngữ cảnh Đa tầng (Macro Trend & Order-Flow)
-                end_closes = np.array([float(s["close"].iloc[-1]) for s in scenarios], dtype=float)
-                scenario_std = float(np.sqrt(np.average((end_closes - avg_end_close) ** 2, weights=scen_weights)))
-                dispersion_r = float(scenario_std / max(atr, 0.01))
-                dir_pct = max(bull_pct, bear_pct)
-                disp_penalty = max(0.0, min(0.45, (dispersion_r - 1.0) * 0.25)) if dispersion_r > 1.0 else 0.0
-                base_conf = dir_pct * (1.0 - disp_penalty)
-                ai_dom_dir = 1 if bull_pct > bear_pct else (-1 if bear_pct > bull_pct else (1 if avg_end_close >= last_close else -1))
-                ctx_bonus = 0.0
-                if macro_ctx["macro_dir"] != 0:
-                    ctx_bonus += 4.0 if macro_ctx["macro_dir"] == ai_dom_dir else -3.5
-                if macro_ctx["orderflow_dir"] != 0:
-                    ctx_bonus += 3.5 if macro_ctx["orderflow_dir"] == ai_dom_dir else -2.5
-                if macro_ctx["wick_dir"] == ai_dom_dir:
-                    ctx_bonus += 3.5
-                confidence_pct = max(10.0, min(99.0, base_conf + ctx_bonus))
+                dir_pct, ai_dom_dir, confidence_pct = sc["dir_pct"], sc["ai_dom_dir"], sc["confidence_pct"]
                 is_high_uncertainty = (max_dispersion > 0.0 and dispersion_r > max_dispersion)
 
                 expected_move = avg_end_close - last_close
