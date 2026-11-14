@@ -7507,7 +7507,17 @@ class KronosDesktopApp:
             query_to = datetime.fromtimestamp(int(time.time()) + 7200)
             with self._mt5_lock:
                 deals = mt5.history_deals_get(query_from, query_to)
+                if deals is None:
+                    try:
+                        _hd_err = mt5.last_error()
+                    except Exception:
+                        _hd_err = None
+                    if _hd_err and _hd_err[0] == 1:  # None kèm mã 1 = không có deal nào (không phải lỗi đọc)
+                        deals = ()
             if deals is None:
+                if cached_entry is None:
+                    # A10: chưa từng đọc được lịch sử -> số 0 là "không xác định": chặn mở lệnh mới cho đến khi đọc được
+                    self.profile_ctx[pk]["deals_unknown"] = True
                 return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
             entry_by_pos = {}
@@ -7544,12 +7554,18 @@ class KronosDesktopApp:
                         consec_losses = 0
                         last_loss_deal = None
             res_stats = (realized, consec_losses, last_loss_deal)
+            self.profile_ctx[pk]["deals_unknown"] = False
             self._cached_deals_by_sym[sym_key] = (now_mono, res_stats)
             self._cached_deals_stats = res_stats
             self._last_deals_check_ts = now_mono
             return res_stats
         except Exception as e:
             self.log_error("GET_TODAY_DEALS_STATS", e, show_in_ui=False)
+            if cached_entry is None:
+                try:
+                    self.profile_ctx[pk]["deals_unknown"] = True  # A10: fail-closed khi chưa có số liệu
+                except Exception:
+                    pass
             return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
     def _get_closed_deals_by_range(self, symbol: str = None, start_date_str: str = None, end_date_str: str = None, use_cache: bool = True, profile_key: str = None, magic_scope: str = "PROFILE") -> list:
@@ -10370,6 +10386,9 @@ class KronosDesktopApp:
                     return False, f"Đã tự động dừng giao dịch hết hôm nay ({reason})."
                 if self._is_cooldown_active(pk):
                     return False, f"{self._get_cooldown_remaining_str(pk)} — Chưa được phép vào lệnh mới."
+                if ctx.get("deals_unknown", False):
+                    # A10: không đọc được lịch sử deals -> không kiểm được lãi/lỗ ngày và chuỗi thua -> không mở lệnh mới
+                    return False, f"⛔ [{pk}] Không đọc được lịch sử giao dịch hôm nay từ MT5, tạm chặn mở lệnh mới (an toàn)."
 
                 mt5.symbol_select(symbol, True)
                 raw_positions = self._positions_get_checked(symbol=symbol)
