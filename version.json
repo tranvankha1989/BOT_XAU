@@ -1,6 +1,6 @@
 {
-  "version": "1.3.8",
+  "version": "1.3.9",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-14",
-  "description": "Phiên bản v1.3.8:\n- [SỬA LỖI VÙNG CANH] Max SL không còn bị chia đôi vô cớ khi canh vùng (RR đo tại điểm vào dự kiến), bot vào lệnh đúng vùng hơn.\n- [AN TOÀN] Chặn mở lệnh mới khi không đọc được lịch sử giao dịch hôm nay từ MT5 (giới hạn lãi/lỗ ngày vẫn có hiệu lực).\n- [SỬA LỖI] Không ghi đè vùng canh mới khi khôi phục sau khi gửi lệnh.\n- [BACKTEST] Cache kết quả AI (chạy lại nhanh hơn ~75 lần), thêm tham số chi phí commission/trượt giá."
+  "release_date": "2026-11-15",
+  "description": "Phiên bản v1.3.9:\n- [SỬA HIỂN THỊ] Nhãn Algo giờ phản ánh đúng nút Algo Trading của MT5; tắt thì hiện chữ đỏ cảnh báo (trước đây luôn báo BẬT dù MT5 từ chối lệnh).\n- [CẤU TRÚC] Tách logic giao dịch ra trading_modules (kết quả backtest giống hệt bản cũ).\n- [BACKTEST] Công tắc thử nghiệm (mặc định tắt) và báo cáo mới."
 }
