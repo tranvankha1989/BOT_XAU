@@ -3999,8 +3999,9 @@ class KronosDesktopApp:
             exp_runner = str(cfg.get("exp_runner", "0")) in ("1", "true", "True")
             exp_daystop = int(float(cfg.get("exp_daystop", 0) or 0))
             exp_realfill = str(cfg.get("exp_realfill", "0")) in ("1", "true", "True")
+            exp_sr = float(cfg.get("exp_sr", 0) or 0)  # >0: bỏ lệnh khi cản (đỉnh/đáy swing) cách entry < exp_sr x ATR
         except Exception:
-            exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill = 0.0, False, False, 0, False
+            exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill, exp_sr = 0.0, False, False, 0, False, 0.0
         min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", "75")))
         min_move = float(cfg.get("min_move", def_cfg.get("min_move", "60.0" if is_btc else "1.2")))
         model_choice = str(cfg.get("model", def_cfg.get("model", "AI-base (102.3M - Mạnh nhất)")))
@@ -4372,6 +4373,23 @@ class KronosDesktopApp:
                             one_r_dist = max(_d, 8.0 if is_btc else 0.5)
                             _tm = max(rr, 2.0) if rr > 0 else 2.0
                             tp_price = (entry_price + one_r_dist * _tm) if signal == "BUY" else (entry_price - one_r_dist * _tm)
+
+                # Cổng THỬ NGHIỆM hỗ trợ/kháng cự (mặc định tắt): chỉ dùng nến ĐÃ ĐÓNG trước nến hiện tại (không nhìn trước)
+                if signal is not None and exp_sr > 0.0:
+                    try:
+                        _sl = rates[max(0, bar_idx - 120):bar_idx]
+                        _h = [float(r[2]) for r in _sl]
+                        _l = [float(r[3]) for r in _sl]
+                        _res = [_h[i] for i in range(2, len(_h) - 2) if _h[i] > max(_h[i-2], _h[i-1], _h[i+1], _h[i+2])]
+                        _sup = [_l[i] for i in range(2, len(_l) - 2) if _l[i] < min(_l[i-2], _l[i-1], _l[i+1], _l[i+2])]
+                        if signal == "BUY":
+                            _near = [x - entry_price for x in _res if x > entry_price]
+                        else:
+                            _near = [entry_price - x for x in _sup if x < entry_price]
+                        if _near and min(_near) < exp_sr * atr:
+                            signal = None
+                    except Exception:
+                        pass
 
                 if signal is not None:
                     be_moved = False
@@ -10286,6 +10304,19 @@ class KronosDesktopApp:
                         top_k=0,
                         top_p=dyn_top_p
                     )
+
+                # Log chẩn đoán (mỗi lần phân tích 1 dòng): dấu vân tay dữ liệu đầu vào để so sánh 2 máy có cùng kết quả hay không
+                try:
+                    _lr = df_ai.iloc[-1]
+                    _vol_sum = float(df_ai["volume"].sum()) if "volume" in df_ai.columns else -1.0
+                    _thr = torch.get_num_threads()
+                    self.log(
+                        f"🧬 [{pk}] Dấu vân tay AI: engine={locals().get('used_engine', 'Local CPU')} | nến={len(df_ai)} | "
+                        f"cuối O/H/L/C={float(_lr['open']):.2f}/{float(_lr['high']):.2f}/{float(_lr['low']):.2f}/{float(_lr['close']):.2f} | "
+                        f"tổng Vol={_vol_sum:.0f} | kịch bản={num_scenarios} T={dyn_t:.2f} top_p={dyn_top_p:.2f} | luồng torch={_thr}"
+                    )
+                except Exception:
+                    pass
 
                 # Chấm điểm kịch bản (dùng chung với backtest): module trading_modules/scenario_scoring.py
                 sc = score_scenarios(scenarios, last_close, atr, macro_ctx)
