@@ -7112,10 +7112,11 @@ class KronosDesktopApp:
                     )
 
                 if acc is not None:
-                    algo_str = "Algo:BẬT" if acc.trade_expert else "Algo:TẮT"
+                    algo_on = self._algo_trading_on(acc)
+                    algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
                     self.mt5_status_lbl.config(
                         text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
-                        fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
+                        fg=GREEN_UP if algo_on else RED_DOWN
                     )
 
                 pos_count, total_profit = self._update_open_positions_and_manage(symbol, profile_key=active_pk)
@@ -9238,6 +9239,16 @@ class KronosDesktopApp:
             return
         self._close_all_positions_for_profile(pk, symbol)
 
+    def _algo_trading_on(self, acc):
+        """Algo thật = quyền EA của tài khoản (acc.trade_expert) VÀ nút Algo Trading của terminal MT5 (terminal_info().trade_allowed)."""
+        try:
+            with self._mt5_lock:
+                ti = mt5.terminal_info()
+            term_ok = bool(ti.trade_allowed) if ti is not None else True
+            return bool(acc.trade_expert) and term_ok
+        except Exception:
+            return bool(getattr(acc, "trade_expert", False))
+
     def check_mt5_connection(self):
         if not MT5_AVAILABLE:
             self.mt5_status_lbl.config(text="Chưa cài MetaTrader5", fg=RED_DOWN)
@@ -9252,10 +9263,11 @@ class KronosDesktopApp:
         if acc is None:
             self.mt5_status_lbl.config(text="Chưa đăng nhập TK Exness", fg=RED_DOWN)
             return False
-        algo_str = "Algo:BẬT" if acc.trade_expert else "Algo:TẮT"
+        algo_on = self._algo_trading_on(acc)
+        algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
         self.mt5_status_lbl.config(
             text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
-            fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
+            fg=GREEN_UP if algo_on else RED_DOWN
         )
         self.log(f"Kết nối MT5 thành công: TK {acc.login} ({acc.server}) | Số dư {acc.balance:.2f} {acc.currency}")
         return True
