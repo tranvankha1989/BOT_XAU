@@ -52,7 +52,7 @@ def _load_packed_trading_modules():
 
 
 _load_packed_trading_modules()
-from trading_modules.structure import analyze_structure_context
+from trading_modules.structure import analyze_structure_context, nearest_swing_dist
 from trading_modules.price_action import evaluate_price_action
 import gc
 import torch
@@ -3919,6 +3919,10 @@ class KronosDesktopApp:
                 else:
                     sig_dir = "BUY"
                     raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt)
+                        _swd = nearest_swing_dist(sub_df, "BUY", last_c)
+                        if _swd is not None:
+                            raw_sl_d = max(8.0 if is_btc else 0.5, _swd) + sl_buffer
                     sl_p = last_c - raw_sl_d
             elif is_bear_consensus and (-exp_m) >= min_effective_move:
                 # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn SELL nếu Cấu trúc đang Tăng (+1)
@@ -3927,6 +3931,10 @@ class KronosDesktopApp:
                 else:
                     sig_dir = "SELL"
                     raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt)
+                        _swd = nearest_swing_dist(sub_df, "SELL", last_c)
+                        if _swd is not None:
+                            raw_sl_d = max(8.0 if is_btc else 0.5, _swd) + sl_buffer
                     sl_p = last_c + raw_sl_d
 
             if sig_dir is not None:
@@ -10378,6 +10386,10 @@ class KronosDesktopApp:
                         sig_title = f"🟢 TÍN HIỆU [{pk}]: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total}, cần ≥ {min_consensus:.0f}%) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
                     entry_ref = round(last_close, 2)
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt): SL dưới đáy swing gần nhất
+                        _swd = nearest_swing_dist(df, "BUY", entry_ref)
+                        if _swd is not None:
+                            sl_ai_raw_dist = max(tols["min_atr_sl_floor"], _swd)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
                     sl_price = round(entry_ref - total_sl_dist, 2)
                     eff_entry = min(entry_ref, round(sl_price + max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
@@ -10406,6 +10418,10 @@ class KronosDesktopApp:
                         sig_title = f"🔴 TÍN HIỆU [{pk}]: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total}, cần ≥ {min_consensus:.0f}%) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
                     entry_ref = round(last_close, 2)
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt): SL trên đỉnh swing gần nhất
+                        _swd = nearest_swing_dist(df, "SELL", entry_ref)
+                        if _swd is not None:
+                            sl_ai_raw_dist = max(tols["min_atr_sl_floor"], _swd)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
                     sl_price = round(entry_ref + total_sl_dist, 2)
                     eff_entry = max(entry_ref, round(sl_price - max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
