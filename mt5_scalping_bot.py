@@ -3992,6 +3992,15 @@ class KronosDesktopApp:
         auto_trail = bool(cfg.get("auto_trail", def_cfg.get("auto_trail", True)))
         trail_dist_r = float(cfg.get("trail_dist_r", def_cfg.get("trail_dist_r", "0.35")))
         max_hold_mins = int(float(cfg.get("max_hold_mins", def_cfg.get("max_hold_mins", "0"))))
+        # Khóa THỬ NGHIỆM (chỉ backtest chế độ nến, mặc định tắt; đặt bằng --set exp_*=...)
+        try:
+            exp_min_sl = float(cfg.get("exp_min_sl", 0) or 0)
+            exp_confirm = str(cfg.get("exp_confirm", "0")) in ("1", "true", "True")
+            exp_runner = str(cfg.get("exp_runner", "0")) in ("1", "true", "True")
+            exp_daystop = int(float(cfg.get("exp_daystop", 0) or 0))
+            exp_realfill = str(cfg.get("exp_realfill", "0")) in ("1", "true", "True")
+        except Exception:
+            exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill = 0.0, False, False, 0, False
         min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", "75")))
         min_move = float(cfg.get("min_move", def_cfg.get("min_move", "60.0" if is_btc else "1.2")))
         model_choice = str(cfg.get("model", def_cfg.get("model", "AI-base (102.3M - Mạnh nhất)")))
@@ -4307,6 +4316,7 @@ class KronosDesktopApp:
                             active_bt_zone = {"signal": "SELL", "sl_price": cur_close + raw_sl_d, "atr": atr}
 
                 signal = None
+                _zone_bak = active_bt_zone
                 if active_bt_zone is not None:
                     z_sig = active_bt_zone["signal"]
                     z_sl = active_bt_zone["sl_price"]
@@ -4316,6 +4326,8 @@ class KronosDesktopApp:
                     elif z_sig == "BUY" and (max_sl_price <= 0.0 or cur_low <= limit_p):
                         signal = "BUY"
                         entry_price = min(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
+                        if exp_realfill and max_sl_price > 0.0:
+                            entry_price = min(float(cur_bar[1]), limit_p)  # lệnh chờ khớp đúng giá vùng (hoặc giá mở nếu gap)
                         sl_price = z_sl
                         one_r_dist = max(entry_price - sl_price, 8.0 if is_btc else 0.5)
                         tp_mult = max(rr, 2.0) if rr > 0 else 2.0
@@ -4324,11 +4336,42 @@ class KronosDesktopApp:
                     elif z_sig == "SELL" and (max_sl_price <= 0.0 or cur_high >= limit_p):
                         signal = "SELL"
                         entry_price = max(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
+                        if exp_realfill and max_sl_price > 0.0:
+                            entry_price = max(float(cur_bar[1]), limit_p)
                         sl_price = z_sl
                         one_r_dist = max(sl_price - entry_price, 8.0 if is_btc else 0.5)
                         tp_mult = max(rr, 2.0) if rr > 0 else 2.0
                         tp_price = entry_price - one_r_dist * tp_mult
                         active_bt_zone = None
+
+                # Cổng THỬ NGHIỆM (mặc định tắt): SL tối thiểu / xác nhận nến / dừng ngày sau N lệnh thua liên tiếp
+                if signal is not None and (exp_min_sl > 0.0 or exp_confirm or exp_daystop > 0):
+                    if exp_min_sl > 0.0 and abs(entry_price - sl_price) < exp_min_sl:
+                        signal = None
+                    elif exp_daystop > 0:
+                        _today = [t for t in trades if t["date"] == cur_time.strftime("%Y-%m-%d")]
+                        _streak = 0
+                        for _t in reversed(_today):
+                            if _t["pnl"] < 0:
+                                _streak += 1
+                            else:
+                                break
+                        if _streak >= exp_daystop:
+                            signal = None
+                    if signal is not None and exp_confirm:
+                        _co = float(cur_bar[1])
+                        # Xác nhận SAU khi nến đóng (không nhìn trước): vào ở GIÁ ĐÓNG nến xác nhận, SL giữ nguyên,
+                        # và khoảng cách tới SL không được vượt Max SL (nếu không -> bỏ, tiếp tục canh vùng).
+                        _bad = (signal == "BUY" and cur_close <= _co) or (signal == "SELL" and cur_close >= _co)
+                        _d = (cur_close - sl_price) if signal == "BUY" else (sl_price - cur_close)
+                        if _bad or _d <= 0.0 or (max_sl_price > 0.0 and _d > max_sl_price):
+                            signal = None
+                            active_bt_zone = _zone_bak
+                        else:
+                            entry_price = cur_close
+                            one_r_dist = max(_d, 8.0 if is_btc else 0.5)
+                            _tm = max(rr, 2.0) if rr > 0 else 2.0
+                            tp_price = (entry_price + one_r_dist * _tm) if signal == "BUY" else (entry_price - one_r_dist * _tm)
 
                 if signal is not None:
                     be_moved = False
@@ -4347,7 +4390,7 @@ class KronosDesktopApp:
 
                         sl_price, be_moved, ex_price, ex_reason = step_position(
                             signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, f_high, f_low, f_close, hold_mins,
-                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins)
+                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=exp_runner)
                         if ex_price is not None:
                             out_price, exit_reason = ex_price, ex_reason
                             break

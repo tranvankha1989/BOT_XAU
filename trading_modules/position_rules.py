@@ -8,9 +8,10 @@ LƯU Ý: quản lý lệnh LIVE (_update_open_positions_and_manage) vẫn là b�
 
 def step_position(side, entry_price, sl_price, tp_price, one_r_dist, be_moved,
                   bar_high, bar_low, bar_close, hold_mins,
-                  auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins):
+                  auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=False):
     """Xử lý một thanh giá cho lệnh đang mở. side: "BUY" | "SELL".
     bar_high/bar_low/bar_close: với BUY là giá BID, với SELL là giá ASK (nến MT5 dùng giá nến chung).
+    runner_no_tp=True: lệnh đã dời BE thì bỏ TP, chỉ thoát bằng trailing/SL (thử nghiệm, mặc định False).
     Trả (sl_price_mới, be_moved_mới, giá_thoát | None, lý_do | None)."""
     if side == "BUY":
         fav_dist = bar_high - entry_price
@@ -27,7 +28,7 @@ def step_position(side, entry_price, sl_price, tp_price, one_r_dist, be_moved,
 
         if bar_low <= sl_price:
             return sl_price, be_moved, sl_price, ("Hòa vốn (BE+)" if (be_moved and sl_price >= entry_price) else "Cắt lỗ (SL)")
-        elif bar_high >= tp_price:
+        elif bar_high >= tp_price and not (runner_no_tp and be_moved):
             return sl_price, be_moved, tp_price, "Chốt lãi (TP)"
     else:
         fav_dist = entry_price - bar_low
@@ -44,6 +45,6 @@ def step_position(side, entry_price, sl_price, tp_price, one_r_dist, be_moved,
 
         if bar_high >= sl_price:
             return sl_price, be_moved, sl_price, ("Hòa vốn (BE+)" if (be_moved and sl_price <= entry_price) else "Cắt lỗ (SL)")
-        elif bar_low <= tp_price:
+        elif bar_low <= tp_price and not (runner_no_tp and be_moved):
             return sl_price, be_moved, tp_price, "Chốt lãi (TP)"
     return sl_price, be_moved, None, None
