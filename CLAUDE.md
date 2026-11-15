@@ -9,7 +9,10 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 ## Vai trò và cách làm việc
 - **CLAUDE (-C)**: sửa code, chạy test mock, VÀ (từ 14/11/2026, người dùng ủy quyền) tự chạy backtest chỉ-đọc/replay, tự phân tích và tự quyết sửa khi có bằng chứng.
   **GEMINI (-G)**: chỉ chạy script/backtest/thống kê; CẤM sửa `.py`, không commit. Không chạy 2 backtest song song (tranh CPU, Kernel-Power 41).
-- Ủy quyền 14/11/2026: người dùng không rành code, để Claude tự quyết thay đổi có lợi cho app, kể cả luật giao dịch, với điều kiện: có bằng chứng
+- Cập nhật 15/11/2026 (thay thế phần "tự quyết luật giao dịch" bên dưới): Claude ĐƯỢC tự sửa code không đổi luật giao dịch (lỗi, log chẩn đoán, hiển thị UI, test, docs)
+  và tự chạy chẩn đoán/backtest/replay chỉ-đọc, đọc log hoạt động. Với thay đổi ĐỔI LUẬT GIAO DỊCH (điều kiện vào/hủy/thoát lệnh, SL/TP, lot, giờ cấm, ngưỡng, mặc định cấu hình):
+  Claude chỉ ĐỀ XUẤT phương án (bằng chứng, diff dự kiến, rủi ro, điều chưa chắc chắn), CHỜ người dùng xác nhận rồi mới sửa.
+- Ủy quyền 14/11/2026 (cũ): người dùng không rành code, để Claude tự quyết thay đổi có lợi cho app, kể cả luật giao dịch, với điều kiện: có bằng chứng
   từ nhiều đoạn dữ liệu (không dựa 1 đoạn), thay đổi nhỏ và đặt được bằng cấu hình, test đạt, commit riêng, và báo rõ điều chưa chắc chắn.
   VẪN CẦN hỏi: chạy bot thật/`demo_check.py`, chuyển sang tài khoản thật, tăng lot, đụng license/updater/token.
 - Mỗi lúc chỉ MỘT agent được sửa file; mỗi lần giao MỘT việc. Người dùng nói tiếng Việt và muốn tiết kiệm token:
