@@ -4008,8 +4008,9 @@ class KronosDesktopApp:
             exp_daystop = int(float(cfg.get("exp_daystop", 0) or 0))
             exp_realfill = str(cfg.get("exp_realfill", "0")) in ("1", "true", "True")
             exp_sr = float(cfg.get("exp_sr", 0) or 0)  # >0: bỏ lệnh khi cản (đỉnh/đáy swing) cách entry < exp_sr x ATR
+            exp_trail_neg = str(cfg.get("exp_trail_neg", "0")) in ("1", "true", "True")  # chỉ bám SL (trailing) khi PnL ngày đang âm
         except Exception:
-            exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill, exp_sr = 0.0, False, False, 0, False, 0.0
+            exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill, exp_sr, exp_trail_neg = 0.0, False, False, 0, False, 0.0, False
         min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", "75")))
         min_move = float(cfg.get("min_move", def_cfg.get("min_move", "60.0" if is_btc else "1.2")))
         model_choice = str(cfg.get("model", def_cfg.get("model", "AI-base (102.3M - Mạnh nhất)")))
@@ -4403,6 +4404,9 @@ class KronosDesktopApp:
                     be_moved = False
                     out_price = entry_price
                     exit_reason = "Đóng cuối phiên"
+                    _trail_eff = auto_trail
+                    if exp_trail_neg:  # THỬ NGHIỆM: ngày đang thắng/hòa -> tắt trailing; ngày đang thua -> bật
+                        _trail_eff = auto_trail and sum(t["pnl"] for t in trades if t["date"] == cur_time.strftime("%Y-%m-%d")) < 0
                     close_bar_idx = bar_idx + 1
 
                     for f_idx in range(bar_idx + 1, total_bars):
@@ -4416,7 +4420,7 @@ class KronosDesktopApp:
 
                         sl_price, be_moved, ex_price, ex_reason = step_position(
                             signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, f_high, f_low, f_close, hold_mins,
-                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=exp_runner)
+                            auto_be, _trail_eff, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=exp_runner)
                         if ex_price is not None:
                             out_price, exit_reason = ex_price, ex_reason
                             break
