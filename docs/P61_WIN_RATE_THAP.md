@@ -31,3 +31,28 @@ Tỷ lệ thắng gộp 39%, kỳ vọng +0,015R/lệnh (gần 0). Chỉ 7,5% l�
 - A. Giảm rủi ro ngày xu hướng một chiều: giới hạn số lệnh ngược xu hướng liên tiếp / tạm dừng sau N lệnh thua liên tiếp (đã có `max_consec_loss`, cần đo).
 - B. Nâng chất lượng tín hiệu: chỉ vào lệnh khi AI đồng thuận cao VÀ xu hướng M15/H1 cùng chiều (thử `trend_filter` chặt hơn); cần backtest riêng.
 - C. Đánh giá lại mô hình AI (độ chính xác hướng ở 5-15 phút) trước khi tinh chỉnh luật nữa.
+
+---
+## Phần 2: nhìn như trader scalping (440 lệnh, cấu hình hiện tại; số liệu từ `tools/scratch/p61_diag2.py`)
+**Theo thời gian giữ lệnh**
+| Giữ lệnh | Số lệnh | Thắng % | R/lệnh |
+|---|---|---|---|
+| ≤1 phút | 26 | 23 | -0,07 |
+| 1-3 phút | 44 | 7 | **-0,55** |
+| 3-5 phút (hết Time-Stop) | 308 | 45 | -0,05 |
+| >5 phút (đã dời BE/trailing) | 62 | 40 | **+0,80** |
+
+**Theo độ rộng SL (rủi ro/lệnh, lot 0,02):** SL hẹp (rủi ro ≤7,9$, SL < ~4 giá): 191 lệnh, R -0,070, thắng 33%; SL rộng (>7,9$): 249 lệnh, R +0,081, thắng 44%. Nhóm hẹp kém hơn ở 6/7 đoạn (chênh ~0,15R, ~2 sai số chuẩn: có xu hướng, chưa chắc chắn). Phí spread chỉ ~5-6% rủi ro, không phải thủ phạm chính.
+
+**Theo giờ (VN):** không có giờ nào nhất quán (R từ -0,03 đến +0,09), coi là nhiễu. BUY và SELL ngang nhau (R +0,03 / 0,00).
+
+### Chẩn đoán
+1. Lợi nhuận nằm ở ~14% lệnh "chạy được" (>5 phút, +0,8R); phần còn lại gần hòa hoặc lỗ. Đây là hệ thống hòa vốn sau phí, sống nhờ vài lệnh chạy; chuỗi lỗ dài là bình thường (thua liên tiếp tối đa 8 lệnh).
+2. 44 lệnh dính SL trong 1-3 phút (-0,55R) là kiểu "bắt dao rơi": vào đúng lúc giá còn đang lao về phía ngược lại. Backtest không có xác nhận Price Action nên con số này có thể tệ hơn live; cần đo bằng log live có PA.
+3. Lệnh SL hẹp dễ bị nhiễu quét (cùng lý do với mục 2).
+
+### Phương án (xếp theo kỳ vọng, chưa làm)
+- P1. SL tối thiểu (khóa mới `min_sl_price`, mặc định 0=tắt): bỏ lệnh có SL < ~3-4 giá. Cần cài vào cả backtest và live rồi chạy lại 7 đoạn mới kết luận (lọc ngoại tuyến thì lệnh kế tiếp thay đổi nên không đáng tin).
+- P2. Chờ xác nhận đảo chiều trước khi vào (bắt buộc nến M1 đóng cùng chiều sau khi chạm vùng): nhắm vào nhóm 1-3 phút.
+- P3. Cho lệnh chạy: bỏ TP cố định 2R khi đã BE (trailing), vì lãi nằm ở nhóm >5 phút.
+- P4. Tắt giao dịch khi giá chạy một chiều (đã có `max_consec_loss`; cần đo mức phù hợp).
