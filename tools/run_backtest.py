@@ -136,6 +136,10 @@ def apply_flag_overrides(cfg: dict, def_cfg: dict, trend_filter=None, structure_
     }
 
 
+# Khóa thử nghiệm chỉ đọc trong backtest chế độ nến (mặc định tắt, không có trong cài đặt bot)
+EXPERIMENTAL_KEYS = ("exp_min_sl", "exp_confirm", "exp_runner", "exp_daystop", "exp_realfill", "exp_sr", "sl_swing")
+
+
 def apply_set_overrides(cfg: dict, def_cfg: dict, pairs) -> list:
     """Ghi đè khóa cấu hình CHỈ trong cfg của lần chạy này (--set khóa=giá_trị). Chỉ nhận khóa có trong cấu hình mặc định
     của profile (chống gõ sai); giá trị giữ dạng chuỗi như user_settings. Trả danh sách mô tả để in. Ném ValueError nếu sai."""
@@ -145,7 +149,7 @@ def apply_set_overrides(cfg: dict, def_cfg: dict, pairs) -> list:
             raise ValueError(f"--set cần dạng khóa=giá_trị, nhận '{item}'")
         k, v = item.split("=", 1)
         k, v = k.strip(), v.strip()
-        if k not in def_cfg or k in EXCLUDED_KEYS or k.startswith(EXCLUDED_PREFIXES):
+        if k not in EXPERIMENTAL_KEYS and (k not in def_cfg or k in EXCLUDED_KEYS or k.startswith(EXCLUDED_PREFIXES)):
             raise ValueError(f"--set: khóa '{k}' không hợp lệ hoặc không được phép ghi đè")
         cfg[k] = v
         out.append(f"{k}={v}")

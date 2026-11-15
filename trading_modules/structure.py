@@ -179,3 +179,26 @@ def analyze_structure_context(df_ana, df_scalp, atr: float, conflict_mode: str =
     except Exception:
         pass
     return ctx_info
+
+def nearest_swing_dist(df, side: str, ref_price: float, lookback: int = 100):
+    """Khoảng cách từ ref_price tới đáy swing gần nhất DƯỚI giá (side=BUY) hoặc đỉnh swing gần nhất TRÊN giá (side=SELL).
+    Swing = fractal 2 nến mỗi bên, chỉ dùng nến đã đóng trong `lookback` nến cuối. Trả None nếu không có swing hợp lệ (bên gọi dùng SL cũ)."""
+    try:
+        if df is None or len(df) < 7:
+            return None
+        sub = df.iloc[-lookback:]
+        h = sub["high"].astype(float).values
+        l = sub["low"].astype(float).values
+        best = None
+        for i in range(2, len(sub) - 2):
+            if side == "BUY":
+                if l[i] < min(l[i-2], l[i-1], l[i+1], l[i+2]) and l[i] < ref_price:
+                    d = ref_price - l[i]
+                    best = d if best is None else min(best, d)
+            else:
+                if h[i] > max(h[i-2], h[i-1], h[i+1], h[i+2]) and h[i] > ref_price:
+                    d = h[i] - ref_price
+                    best = d if best is None else min(best, d)
+        return best
+    except Exception:
+        return None

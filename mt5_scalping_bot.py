@@ -52,7 +52,7 @@ def _load_packed_trading_modules():
 
 
 _load_packed_trading_modules()
-from trading_modules.structure import analyze_structure_context
+from trading_modules.structure import analyze_structure_context, nearest_swing_dist
 from trading_modules.price_action import evaluate_price_action
 import gc
 import torch
@@ -257,7 +257,7 @@ PARAM_HELP_GUIDE = {
         "how_to_set": "- LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
     },
     "trend_filter": {
-        "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (Zero-Lag - Không Độ Trễ)",
+        "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (xác nhận 2 nến)",
         "what_is_it": "Loại bỏ hoàn toàn các đường MA trễ nải (như EMA34/89). Thay vào đó, bot phân tích trực tiếp Cấu Trúc Đỉnh/Đáy thực tế (Market Structure - Swing Highs/Lows), Phá vỡ cấu trúc (BOS) và Đảo chiều cấu trúc (CHoCH) theo chuẩn Price Action/SMC trên M15 và M5/M1. Khi thị trường đang phá đáy rơi tự do (Bearish BOS), bot sẽ CHẶN 100% tín hiệu BUY cản tàu. Ngược lại khi thị trường đang phá đỉnh tăng mạnh (Bullish BOS), bot sẽ CHẶN 100% tín hiệu SELL cản tàu. Khi có CHoCH đảo chiều hoặc thị trường tích lũy, bot lập tức unblock để vào lệnh không trễ 1 nhịp nến nào.",
         "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Phản ứng tức thì theo giá thực (Zero Indicator Lag, không bị trễ nến như MA), bảo vệ tài khoản tối đa."
     },
@@ -2387,7 +2387,7 @@ class KronosDesktopApp:
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
         self.trend_filter_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (Zero-Lag)", self.trend_filter_var, help_key="trend_filter")
+        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
         self.confirm_entry_pa_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
         self.pa_fail_open_var = tk.BooleanVar(value=False)
@@ -3919,6 +3919,10 @@ class KronosDesktopApp:
                 else:
                     sig_dir = "BUY"
                     raw_sl_d = max(base_atr_sl, max(last_c - pred_lo, 0.0)) + sl_buffer
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt)
+                        _swd = nearest_swing_dist(sub_df, "BUY", last_c)
+                        if _swd is not None:
+                            raw_sl_d = max(8.0 if is_btc else 0.5, _swd) + sl_buffer
                     sl_p = last_c - raw_sl_d
             elif is_bear_consensus and (-exp_m) >= min_effective_move:
                 # Cổng quyết định Cấu Trúc Zero-Lag (y hệt live): Chặn SELL nếu Cấu trúc đang Tăng (+1)
@@ -3927,6 +3931,10 @@ class KronosDesktopApp:
                 else:
                     sig_dir = "SELL"
                     raw_sl_d = max(base_atr_sl, max(pred_hi - last_c, 0.0)) + sl_buffer
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt)
+                        _swd = nearest_swing_dist(sub_df, "SELL", last_c)
+                        if _swd is not None:
+                            raw_sl_d = max(8.0 if is_btc else 0.5, _swd) + sl_buffer
                     sl_p = last_c + raw_sl_d
 
             if sig_dir is not None:
@@ -3992,6 +4000,16 @@ class KronosDesktopApp:
         auto_trail = bool(cfg.get("auto_trail", def_cfg.get("auto_trail", True)))
         trail_dist_r = float(cfg.get("trail_dist_r", def_cfg.get("trail_dist_r", "0.35")))
         max_hold_mins = int(float(cfg.get("max_hold_mins", def_cfg.get("max_hold_mins", "0"))))
+        # Khóa THỬ NGHIỆM (chỉ backtest chế độ nến, mặc định tắt; đặt bằng --set exp_*=...)
+        try:
+            exp_min_sl = float(cfg.get("exp_min_sl", 0) or 0)
+            exp_confirm = str(cfg.get("exp_confirm", "0")) in ("1", "true", "True")
+            exp_runner = str(cfg.get("exp_runner", "0")) in ("1", "true", "True")
+            exp_daystop = int(float(cfg.get("exp_daystop", 0) or 0))
+            exp_realfill = str(cfg.get("exp_realfill", "0")) in ("1", "true", "True")
+            exp_sr = float(cfg.get("exp_sr", 0) or 0)  # >0: bỏ lệnh khi cản (đỉnh/đáy swing) cách entry < exp_sr x ATR
+        except Exception:
+            exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill, exp_sr = 0.0, False, False, 0, False, 0.0
         min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", "75")))
         min_move = float(cfg.get("min_move", def_cfg.get("min_move", "60.0" if is_btc else "1.2")))
         model_choice = str(cfg.get("model", def_cfg.get("model", "AI-base (102.3M - Mạnh nhất)")))
@@ -4307,6 +4325,7 @@ class KronosDesktopApp:
                             active_bt_zone = {"signal": "SELL", "sl_price": cur_close + raw_sl_d, "atr": atr}
 
                 signal = None
+                _zone_bak = active_bt_zone
                 if active_bt_zone is not None:
                     z_sig = active_bt_zone["signal"]
                     z_sl = active_bt_zone["sl_price"]
@@ -4316,6 +4335,8 @@ class KronosDesktopApp:
                     elif z_sig == "BUY" and (max_sl_price <= 0.0 or cur_low <= limit_p):
                         signal = "BUY"
                         entry_price = min(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
+                        if exp_realfill and max_sl_price > 0.0:
+                            entry_price = min(float(cur_bar[1]), limit_p)  # lệnh chờ khớp đúng giá vùng (hoặc giá mở nếu gap)
                         sl_price = z_sl
                         one_r_dist = max(entry_price - sl_price, 8.0 if is_btc else 0.5)
                         tp_mult = max(rr, 2.0) if rr > 0 else 2.0
@@ -4324,11 +4345,59 @@ class KronosDesktopApp:
                     elif z_sig == "SELL" and (max_sl_price <= 0.0 or cur_high >= limit_p):
                         signal = "SELL"
                         entry_price = max(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
+                        if exp_realfill and max_sl_price > 0.0:
+                            entry_price = max(float(cur_bar[1]), limit_p)
                         sl_price = z_sl
                         one_r_dist = max(sl_price - entry_price, 8.0 if is_btc else 0.5)
                         tp_mult = max(rr, 2.0) if rr > 0 else 2.0
                         tp_price = entry_price - one_r_dist * tp_mult
                         active_bt_zone = None
+
+                # Cổng THỬ NGHIỆM (mặc định tắt): SL tối thiểu / xác nhận nến / dừng ngày sau N lệnh thua liên tiếp
+                if signal is not None and (exp_min_sl > 0.0 or exp_confirm or exp_daystop > 0):
+                    if exp_min_sl > 0.0 and abs(entry_price - sl_price) < exp_min_sl:
+                        signal = None
+                    elif exp_daystop > 0:
+                        _today = [t for t in trades if t["date"] == cur_time.strftime("%Y-%m-%d")]
+                        _streak = 0
+                        for _t in reversed(_today):
+                            if _t["pnl"] < 0:
+                                _streak += 1
+                            else:
+                                break
+                        if _streak >= exp_daystop:
+                            signal = None
+                    if signal is not None and exp_confirm:
+                        _co = float(cur_bar[1])
+                        # Xác nhận SAU khi nến đóng (không nhìn trước): vào ở GIÁ ĐÓNG nến xác nhận, SL giữ nguyên,
+                        # và khoảng cách tới SL không được vượt Max SL (nếu không -> bỏ, tiếp tục canh vùng).
+                        _bad = (signal == "BUY" and cur_close <= _co) or (signal == "SELL" and cur_close >= _co)
+                        _d = (cur_close - sl_price) if signal == "BUY" else (sl_price - cur_close)
+                        if _bad or _d <= 0.0 or (max_sl_price > 0.0 and _d > max_sl_price):
+                            signal = None
+                            active_bt_zone = _zone_bak
+                        else:
+                            entry_price = cur_close
+                            one_r_dist = max(_d, 8.0 if is_btc else 0.5)
+                            _tm = max(rr, 2.0) if rr > 0 else 2.0
+                            tp_price = (entry_price + one_r_dist * _tm) if signal == "BUY" else (entry_price - one_r_dist * _tm)
+
+                # Cổng THỬ NGHIỆM hỗ trợ/kháng cự (mặc định tắt): chỉ dùng nến ĐÃ ĐÓNG trước nến hiện tại (không nhìn trước)
+                if signal is not None and exp_sr > 0.0:
+                    try:
+                        _sl = rates[max(0, bar_idx - 120):bar_idx]
+                        _h = [float(r[2]) for r in _sl]
+                        _l = [float(r[3]) for r in _sl]
+                        _res = [_h[i] for i in range(2, len(_h) - 2) if _h[i] > max(_h[i-2], _h[i-1], _h[i+1], _h[i+2])]
+                        _sup = [_l[i] for i in range(2, len(_l) - 2) if _l[i] < min(_l[i-2], _l[i-1], _l[i+1], _l[i+2])]
+                        if signal == "BUY":
+                            _near = [x - entry_price for x in _res if x > entry_price]
+                        else:
+                            _near = [entry_price - x for x in _sup if x < entry_price]
+                        if _near and min(_near) < exp_sr * atr:
+                            signal = None
+                    except Exception:
+                        pass
 
                 if signal is not None:
                     be_moved = False
@@ -4347,7 +4416,7 @@ class KronosDesktopApp:
 
                         sl_price, be_moved, ex_price, ex_reason = step_position(
                             signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, f_high, f_low, f_close, hold_mins,
-                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins)
+                            auto_be, auto_trail, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=exp_runner)
                         if ex_price is not None:
                             out_price, exit_reason = ex_price, ex_reason
                             break
@@ -7069,10 +7138,11 @@ class KronosDesktopApp:
                     )
 
                 if acc is not None:
-                    algo_str = "Algo:BẬT" if acc.trade_expert else "Algo:TẮT"
+                    algo_on = self._algo_trading_on(acc)
+                    algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
                     self.mt5_status_lbl.config(
                         text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
-                        fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
+                        fg=GREEN_UP if algo_on else RED_DOWN
                     )
 
                 pos_count, total_profit = self._update_open_positions_and_manage(symbol, profile_key=active_pk)
@@ -9195,6 +9265,16 @@ class KronosDesktopApp:
             return
         self._close_all_positions_for_profile(pk, symbol)
 
+    def _algo_trading_on(self, acc):
+        """Algo thật = quyền EA của tài khoản (acc.trade_expert) VÀ nút Algo Trading của terminal MT5 (terminal_info().trade_allowed)."""
+        try:
+            with self._mt5_lock:
+                ti = mt5.terminal_info()
+            term_ok = bool(ti.trade_allowed) if ti is not None else True
+            return bool(acc.trade_expert) and term_ok
+        except Exception:
+            return bool(getattr(acc, "trade_expert", False))
+
     def check_mt5_connection(self):
         if not MT5_AVAILABLE:
             self.mt5_status_lbl.config(text="Chưa cài MetaTrader5", fg=RED_DOWN)
@@ -9209,10 +9289,11 @@ class KronosDesktopApp:
         if acc is None:
             self.mt5_status_lbl.config(text="Chưa đăng nhập TK Exness", fg=RED_DOWN)
             return False
-        algo_str = "Algo:BẬT" if acc.trade_expert else "Algo:TẮT"
+        algo_on = self._algo_trading_on(acc)
+        algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
         self.mt5_status_lbl.config(
             text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
-            fg=GREEN_UP if acc.trade_expert else GOLD_ACCENT
+            fg=GREEN_UP if algo_on else RED_DOWN
         )
         self.log(f"Kết nối MT5 thành công: TK {acc.login} ({acc.server}) | Số dư {acc.balance:.2f} {acc.currency}")
         return True
@@ -10232,6 +10313,19 @@ class KronosDesktopApp:
                         top_p=dyn_top_p
                     )
 
+                # Log chẩn đoán (mỗi lần phân tích 1 dòng): dấu vân tay dữ liệu đầu vào để so sánh 2 máy có cùng kết quả hay không
+                try:
+                    _lr = df_ai.iloc[-1]
+                    _vol_sum = float(df_ai["volume"].sum()) if "volume" in df_ai.columns else -1.0
+                    _thr = torch.get_num_threads()
+                    self.log(
+                        f"🧬 [{pk}] Dấu vân tay AI: engine={locals().get('used_engine', 'Local CPU')} | nến={len(df_ai)} | "
+                        f"cuối O/H/L/C={float(_lr['open']):.2f}/{float(_lr['high']):.2f}/{float(_lr['low']):.2f}/{float(_lr['close']):.2f} | "
+                        f"tổng Vol={_vol_sum:.0f} | kịch bản={num_scenarios} T={dyn_t:.2f} top_p={dyn_top_p:.2f} | luồng torch={_thr}"
+                    )
+                except Exception:
+                    pass
+
                 # Chấm điểm kịch bản (dùng chung với backtest): module trading_modules/scenario_scoring.py
                 sc = score_scenarios(scenarios, last_close, atr, macro_ctx)
                 bull_count, bear_count, total = sc["bull_count"], sc["bear_count"], sc["total"]
@@ -10292,6 +10386,10 @@ class KronosDesktopApp:
                         sig_title = f"🟢 TÍN HIỆU [{pk}]: BUY {symbol} ({tf_label}) — Đồng thuận {bull_pct:.0f}% ({bull_count}/{total}, cần ≥ {min_consensus:.0f}%) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
                     entry_ref = round(last_close, 2)
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_low_dist)
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt): SL dưới đáy swing gần nhất
+                        _swd = nearest_swing_dist(df, "BUY", entry_ref)
+                        if _swd is not None:
+                            sl_ai_raw_dist = max(tols["min_atr_sl_floor"], _swd)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
                     sl_price = round(entry_ref - total_sl_dist, 2)
                     eff_entry = min(entry_ref, round(sl_price + max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
@@ -10320,6 +10418,10 @@ class KronosDesktopApp:
                         sig_title = f"🔴 TÍN HIỆU [{pk}]: SELL {symbol} ({tf_label}) — Đồng thuận {bear_pct:.0f}% ({bear_count}/{total}, cần ≥ {min_consensus:.0f}%) | Tin cậy: {confidence_pct:.0f}% (Phân tán: {dispersion_r:.2f}x ATR)"
                     entry_ref = round(last_close, 2)
                     sl_ai_raw_dist = max(base_atr_sl, ai_swing_high_dist)
+                    if str(cfg.get("sl_swing", "0")) in ("1", "true", "True"):  # THỬ NGHIỆM (mặc định tắt): SL trên đỉnh swing gần nhất
+                        _swd = nearest_swing_dist(df, "SELL", entry_ref)
+                        if _swd is not None:
+                            sl_ai_raw_dist = max(tols["min_atr_sl_floor"], _swd)
                     total_sl_dist = sl_ai_raw_dist + sl_buffer
                     sl_price = round(entry_ref + total_sl_dist, 2)
                     eff_entry = max(entry_ref, round(sl_price - max_sl_price, 2)) if max_sl_price > 0.0 else entry_ref
