@@ -43,7 +43,7 @@ def evaluate_price_action(action: str, df_recent, ask: float, bid: float, atr, s
         # 2. XÁC NHẬN LỰC ĐỠ (BUY REJECTION / ABSORPTION):
         has_wick_rejection = (lower_wick_f >= 0.25 * rng_f and lower_wick_f >= spread * 1.5) or (lower_wick_c >= 0.35 * rng_c)
         is_bullish_turnaround = (c_f > o_f and c_f > (l_f + rng_f * 0.40)) or (c_c > o_c and c_f >= c_c)
-        has_tick_bounce = (cur_price - min_low_5) >= min_bounce
+        has_tick_bounce = (bid - min_low_5) >= min_bounce  # nến MT5 theo giá Bid: dùng Bid để không cộng thêm spread
 
         confirmations = []
         if has_wick_rejection:
@@ -51,13 +51,13 @@ def evaluate_price_action(action: str, df_recent, ask: float, bid: float, atr, s
         if is_bullish_turnaround:
             confirmations.append("Nến xanh đảo chiều")
         if has_tick_bounce:
-            confirmations.append(f"Bật nảy +{cur_price - min_low_5:.2f}$ từ đáy")
+            confirmations.append(f"Bật nảy +{bid - min_low_5:.2f}$ từ đáy")
 
         if len(confirmations) >= req_conf:
             reason = " + ".join(confirmations)
             return True, f"Xác nhận lực đỡ ({reason})"
 
-        detail = " + ".join(confirmations) if confirmations else f"Đang cách đáy chỉ {cur_price - min_low_5:.2f}$"
+        detail = " + ".join(confirmations) if confirmations else f"Đang cách đáy chỉ {bid - min_low_5:.2f}$"
         return False, f"Chưa đủ {req_conf} điều kiện PA (Đạt {len(confirmations)}/{req_conf}: {detail})"
 
     else:  # SELL

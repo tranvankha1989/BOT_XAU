@@ -257,7 +257,7 @@ PARAM_HELP_GUIDE = {
         "how_to_set": "- LUÔN TÍCH CHỌN (BẬT). Đây là cơ chế bảo vệ cốt lõi chống spam lệnh khi nến biến động mạnh."
     },
     "trend_filter": {
-        "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (Zero-Lag - Không Độ Trễ)",
+        "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (xác nhận 2 nến)",
         "what_is_it": "Loại bỏ hoàn toàn các đường MA trễ nải (như EMA34/89). Thay vào đó, bot phân tích trực tiếp Cấu Trúc Đỉnh/Đáy thực tế (Market Structure - Swing Highs/Lows), Phá vỡ cấu trúc (BOS) và Đảo chiều cấu trúc (CHoCH) theo chuẩn Price Action/SMC trên M15 và M5/M1. Khi thị trường đang phá đáy rơi tự do (Bearish BOS), bot sẽ CHẶN 100% tín hiệu BUY cản tàu. Ngược lại khi thị trường đang phá đỉnh tăng mạnh (Bullish BOS), bot sẽ CHẶN 100% tín hiệu SELL cản tàu. Khi có CHoCH đảo chiều hoặc thị trường tích lũy, bot lập tức unblock để vào lệnh không trễ 1 nhịp nến nào.",
         "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Phản ứng tức thì theo giá thực (Zero Indicator Lag, không bị trễ nến như MA), bảo vệ tài khoản tối đa."
     },
@@ -2387,7 +2387,7 @@ class KronosDesktopApp:
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
         self.trend_filter_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (Zero-Lag)", self.trend_filter_var, help_key="trend_filter")
+        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
         self.confirm_entry_pa_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
         self.pa_fail_open_var = tk.BooleanVar(value=False)
