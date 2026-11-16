@@ -1,6 +1,6 @@
 {
-  "version": "1.3.10",
+  "version": "1.3.11",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-15",
-  "description": "Phiên bản v1.3.10:\n- [SỬA] Price Action lệnh BUY tính độ bật nảy theo giá Bid (không cộng thêm spread), công bằng với SELL.\n- [CHẨN ĐOÁN] Log 🧬 Dấu vân tay AI mỗi lần phân tích để so sánh 2 máy.\n- [HIỂN THỊ] Nhãn Algo phản ánh đúng nút Algo Trading của MT5; đổi nhãn Zero-Lag thành xác nhận 2 nến.\n- [THỬ NGHIỆM] Công tắc backtest exp_sr, sl_swing (mặc định TẮT, không ảnh hưởng bot thật)."
+  "release_date": "2026-11-16",
+  "description": "Phiên bản v1.3.11:\n- [MỚI] Canh vùng: sau khi Price Action chặn vì nến đang rơi tự do / dựng cột tăng mạnh, bot chờ cây nến đó đóng mới xét vào lại (chống mua/bán ngay giữa nến lực). Công tắc pa_wait_bar_close, mặc định BẬT.\n- [THỬ NGHIỆM] Công tắc backtest exp_trail_neg (mặc định TẮT, không ảnh hưởng bot thật)."
 }
