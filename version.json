@@ -1,6 +1,6 @@
 {
-  "version": "1.3.16",
+  "version": "1.3.17",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-16",
-  "description": "Phiên bản v1.3.16:\n- [ĐỔI LUẬT VÀO LỆNH] Vùng canh vào lệnh nay neo theo SL AI GỐC + 'SL tối đa' (chia đôi nếu R:R theo Entry AI/SL AI/TP AI < 2R). 'Giá an toàn vào SL' chỉ kéo SL thật xa thêm, KHÔNG còn dời điểm vào xuống thấp hơn.\n- [ĐỔI LUẬT HỦY VÙNG] Hủy vùng canh khi nến khung vào lệnh ĐÓNG CỬA vượt SL AI; râu nến đâm xuyên mà nến đóng trong vùng an toàn thì vẫn giữ (trước đây hủy ngay khi giá chạm SL).\n- [LƯU Ý RỦI RO] Lỗ tối đa mỗi lệnh có thể tăng (SL tối đa + Giá an toàn). Nên chạy lot nhỏ vài ngày để theo dõi. Backtest: số lệnh tăng khoảng 2 lần; khi TẮT 'Giữ lệnh tối đa' kết quả kém hơn bản cũ.\n- [BACKTEST] Mô phỏng vùng canh khớp logic mới."
+  "description": "Phiên bản v1.3.17:\n- [ĐỔI LUẬT VÀO LỆNH] Khi bật 'Lọc cấu trúc thị trường BOS/CHoCH', bot xét LẠI cấu trúc ngay trước khi khớp lệnh canh vùng. Nếu cấu trúc đã quay ngược chiều (BUY gặp cấu trúc Giảm, SELL gặp cấu trúc Tăng) thì chưa vào lệnh, vẫn giữ canh vùng. Trước đây chỉ xét 1 lần lúc AI ra tín hiệu.\n- [SỬA] Chế độ 'Xử lý xung đột cấu trúc' nay đọc đúng cài đặt của từng mã (XAUUSD/BTCUSD), không lấy theo tab đang mở.\n- [SỬA HƯỚNG DẪN] Chế độ neutral: khi M5 và M15 ngược chiều thì KHÔNG chặn lệnh nào. Muốn chặn chặt hơn dùng 'analysis'.\n- [CHẨN ĐOÁN] Ghi log khi phân tích cấu trúc bị lỗi (trước đây im lặng).\n- [LƯU Ý] Backtest chưa mô phỏng bước xét lại cấu trúc này."
 }

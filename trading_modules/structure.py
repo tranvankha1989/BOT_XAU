@@ -176,8 +176,9 @@ def analyze_structure_context(df_ana, df_scalp, atr: float, conflict_mode: str =
             tags.append("RútChân:Dưới" if ctx_info["wick_dir"] > 0 else "RútChân:Trên")
         if tags:
             ctx_info["summary_tag"] = " | ".join(tags)
-    except Exception:
-        pass
+    except Exception as e:
+        # Không nuốt lỗi im lặng: bên gọi đọc trường "error" để ghi log (kết quả vẫn trả về như cũ)
+        ctx_info["error"] = f"{type(e).__name__}: {e}"
     return ctx_info
 
 def nearest_swing_dist(df, side: str, ref_price: float, lookback: int = 100):

@@ -20,6 +20,7 @@ def mk(tp, ask=101.0, rr=2.0):
                                      "max_pos": 3, "confirm_entry_pa": False},
         _get_symbol_tolerances=lambda *a, **k: {"sl_break_tol": 0.0, "max_sl_tol": 0.0, "eps_equal": 0.05},
         _get_bot_positions=lambda *a, **k: [],
+        _pb_structure_blocks=lambda *a, **k: (False, ""),
         execute_mt5_order=mock.Mock(return_value=(True, "ok")))
     tick = SimpleNamespace(ask=ask, bid=ask - 0.1)
     return s, p, tick
