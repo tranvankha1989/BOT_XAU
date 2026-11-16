@@ -167,6 +167,15 @@ def apply_set_overrides(cfg: dict, def_cfg: dict, pairs) -> list:
         k, v = k.strip(), v.strip()
         if k not in EXPERIMENTAL_KEYS and (k not in def_cfg or k in EXCLUDED_KEYS or k.startswith(EXCLUDED_PREFIXES)):
             raise ValueError(f"--set: khóa '{k}' không hợp lệ hoặc không được phép ghi đè")
+        if isinstance(def_cfg.get(k), bool):
+            # Khóa bật/tắt: đổi sang bool thật (bot đọc bool("False") = True -> ghi đè "False" từng KHÔNG có tác dụng)
+            lv = v.lower()
+            if lv in ("true", "1", "on", "yes"):
+                v = True
+            elif lv in ("false", "0", "off", "no"):
+                v = False
+            else:
+                raise ValueError(f"--set: khóa '{k}' cần True/False, nhận '{v}'")
         cfg[k] = v
         out.append(f"{k}={v}")
     return out

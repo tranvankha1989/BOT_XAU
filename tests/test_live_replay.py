@@ -115,6 +115,17 @@ class TestFakeBroker(unittest.TestCase):
         lr.FakeThreadingModule().Thread(target=lambda x: out.append(x), args=(5,), daemon=True).start()
         self.assertEqual(out, [5])
 
+    def test_set_bool_doi_dung_kieu(self):
+        import run_backtest as rb
+        d = {"trend_filter": True, "confirm_entry_pa": False, "tf": "M5"}
+        cfg = {}
+        rb.apply_set_overrides(cfg, d, ["trend_filter=False", "confirm_entry_pa=on", "tf=M1"])
+        self.assertIs(cfg["trend_filter"], False)   # bot đọc bool(...) -> phải là bool thật, không phải chuỗi "False"
+        self.assertIs(cfg["confirm_entry_pa"], True)
+        self.assertEqual(cfg["tf"], "M1")
+        with self.assertRaises(ValueError):
+            rb.apply_set_overrides({}, d, ["trend_filter=tat"])
+
     def test_summarize(self):
         s = lr.summarize([{"profit": 2.0}, {"profit": -1.0}, {"profit": -1.0}, {"profit": 3.0}])
         self.assertEqual(s["n"], 4)
