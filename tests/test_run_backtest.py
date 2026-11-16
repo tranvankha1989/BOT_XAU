@@ -117,6 +117,48 @@ class TestRunBacktest(unittest.TestCase):
         code, out = self.run_cli()
         self.assertNotIn(SECRET, out)
 
+    def _write_other_cfg(self):
+        path = os.path.join(self.tmp.name, "may_khac.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"hf_token": SECRET, "telegram_bot_token": SECRET, "profiles": {"XAUUSD": {
+                "rr": "1.7", "lot": "0.05", "tf": "M5", "analysis_tf": "M5", "max_sl_price": "0", "max_hold_mins": "0",
+                "hf_token": SECRET, "telegram_bot_token": SECRET, "magic_number": "777",
+            }}}, f)
+        return path
+
+    def test_config_file_may_khac_duoc_dung_thay_user_settings(self):
+        path = self._write_other_cfg()
+        cfg, loaded, note = rb.load_strategy_cfg("XAUUSD", path)
+        self.assertEqual(cfg["rr"], "1.7")  # lấy từ file máy khác, không phải user_settings (3.5)
+        self.assertNotEqual(cfg["hf_token"], SECRET)
+        self.assertNotEqual(str(cfg["magic_number"]), "777")
+        self.assertIn("may_khac.json", note)
+        code, out = self.run_cli("--config", path)
+        self.assertEqual(code, 0, out)
+        self.assertIn("FILE may_khac.json", out)
+        self.assertIn("rr=1.7", out)
+        self.assertIn("Lot backtest     : 0.05", out)
+        self.assertNotIn(SECRET, out)
+
+    def test_config_file_lot_tay_uu_tien(self):
+        path = self._write_other_cfg()
+        code, out = self.run_cli("--config", path, "--lot", "0.01")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Lot backtest     : 0.01", out)
+
+    def test_config_file_khong_ton_tai_bao_loi(self):
+        code, out = self.run_cli("--config", os.path.join(self.tmp.name, "khong_co.json"))
+        self.assertEqual(code, 2)
+        self.assertIn("Không thấy file cấu hình", out)
+
+    def test_config_file_thieu_profile_bao_loi(self):
+        path = os.path.join(self.tmp.name, "thieu.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"profiles": {"BTCUSD": {"rr": "2"}}}, f)
+        code, out = self.run_cli("--config", path)
+        self.assertEqual(code, 2)
+        self.assertIn("profiles/XAUUSD", out)
+
     def test_read_only_proxy_blocks_order_functions(self):
         proxy = rb.ReadOnlyMT5(self.m)
         with self.assertRaises(RuntimeError):

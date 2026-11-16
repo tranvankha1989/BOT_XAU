@@ -55,11 +55,27 @@ class ReadOnlyMT5:
         return getattr(self._inner, name)
 
 
-def load_strategy_cfg(profile_key: str):
-    """Trả (cfg, số khóa lấy từ user_settings.json, ghi chú). Không bao giờ trả/in token."""
+def load_strategy_cfg(profile_key: str, config_path: str = None):
+    """Trả (cfg, số khóa lấy từ file cấu hình, ghi chú). Không bao giờ trả/in token.
+    config_path: file cấu hình xuất từ app (cùng dạng user_settings.json, ví dụ máy khác); None = user_settings.json máy này.
+    Có config_path mà không đọc được -> ném FileNotFoundError/ValueError (không âm thầm dùng cấu hình khác)."""
     cfg = dict(bot_mod.DEFAULT_PROFILE_SETTINGS[profile_key])
     loaded = 0
     note = "dùng DEFAULT_PROFILE_SETTINGS (không có user_settings.json)"
+    if config_path:
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Không thấy file cấu hình: {config_path}")
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        saved = (data.get("profiles") or {}).get(profile_key)
+        del data
+        if not isinstance(saved, dict):
+            raise ValueError(f"File cấu hình không có mục profiles/{profile_key}")
+        for k, v in saved.items():
+            if k in cfg and k not in EXCLUDED_KEYS and not k.startswith(EXCLUDED_PREFIXES):
+                cfg[k] = v
+                loaded += 1
+        return cfg, loaded, f"đã nạp {loaded} khóa chiến lược từ FILE {os.path.basename(config_path)} (không đọc token)"
     path = bot_mod.SETTINGS_FILE
     if os.path.exists(path):
         try:
@@ -309,7 +325,9 @@ def run(argv=None) -> int:
     ap.add_argument("--precision", choices=["CANDLE", "S1"], default="CANDLE", help="CANDLE = nến MT5, S1 = tick 1 giây")
     ap.add_argument("--no-ai", action="store_true", help="Tắt Não AI Kronos, dùng thuật toán kỹ thuật")
     ap.add_argument("--capital", type=float, default=1000.0)
-    ap.add_argument("--lot", type=float, default=0.02)
+    ap.add_argument("--lot", type=float, default=None, help="Mặc định: lot trong --config nếu có, ngược lại 0.02")
+    ap.add_argument("--config", default=None, metavar="FILE_JSON",
+                    help="Chạy theo file cấu hình xuất từ app (ví dụ cấu hình máy khác/tài khoản thật). Không đọc token.")
     ap.add_argument("--seed", type=int, default=1, help="Seed cho random/numpy/torch (mặc định 1)")
     ap.add_argument("--keep-warmup-trades", action="store_true",
                     help="Giữ cả lệnh vào ngoài [start, end] (khởi động/warm-up); mặc định các lệnh này bị loại khỏi thống kê")
@@ -338,7 +356,16 @@ def run(argv=None) -> int:
     print(f"threads: {n_threads} (vật lý {phys}, logic {logical})")
 
     pk = args.profile
-    cfg, _, cfg_note = load_strategy_cfg(pk)
+    try:
+        cfg, _, cfg_note = load_strategy_cfg(pk, args.config)
+    except (OSError, ValueError) as ce:
+        print(f"[ERROR] {ce}")
+        return 2
+    if args.lot is None:
+        try:
+            args.lot = float(cfg.get("lot", 0.02)) if args.config else 0.02
+        except (ValueError, TypeError):
+            args.lot = 0.02
     eff_flags = apply_flag_overrides(cfg, bot_mod.DEFAULT_PROFILE_SETTINGS.get(pk, {}), args.trend_filter, args.structure_conflict_mode)
     try:
         set_notes = apply_set_overrides(cfg, bot_mod.DEFAULT_PROFILE_SETTINGS.get(pk, {}), args.set)
@@ -368,6 +395,12 @@ def run(argv=None) -> int:
     print(f"[*] Khoảng ngày      : {args.start} -> {args.end}")
     print(f"[*] Chế độ yêu cầu   : {'Tick S1 (1 giây)' if args.precision == 'S1' else 'Nến MT5'} | Não AI: {'TẮT' if args.no_ai else 'BẬT'}")
     print(f"[*] Cấu hình         : {cfg_note}")
+    if args.config:
+        _keys = ["tf", "analysis_tf", "lot", "consensus", "max_dispersion", "min_move", "sl_buffer", "max_sl_price", "rr",
+                 "min_entry_spacing", "max_hold_mins", "max_hold_action", "trend_filter", "structure_conflict_mode",
+                 "confirm_entry_pa", "pa_min_confirmations", "pred_len"]
+        print("[*] Thông số chính   : " + ", ".join(f"{k}={cfg.get(k)}" for k in _keys))
+        print(f"[*] Lot backtest     : {args.lot}")
     print(f"[*] Seed             : {args.seed}")
     for ln in format_effective_flags(eff_flags):
         print(f"[*] {ln}")
