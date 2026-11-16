@@ -476,6 +476,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
+        "pa_wait_bar_close": True,
         "pa_fail_open": False,
         "pa_min_confirmations": "1",
         "expected_move_k": "3",
@@ -535,6 +536,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
+        "pa_wait_bar_close": True,
         "pa_fail_open": False,
         "pa_min_confirmations": "1",
         "expected_move_k": "3",
@@ -8406,6 +8408,19 @@ class KronosDesktopApp:
             if confirm_pa_on:
                 p_atr = float(p.get("atr", 1.5))
                 is_confirmed, pa_msg = self._check_price_action_entry_confirmation(symbol, action, scalp_tf, atr=p_atr, profile_key=pk)
+                # Chờ nến đóng sau khi PA chặn vì nến lực (rơi tự do / dựng cột): không vào lại trong cùng cây nến
+                if bool(cfg.get("pa_wait_bar_close", True)):
+                    try:
+                        _tf_sec = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600}.get(scalp_tf.upper(), 60)
+                        _bar_id = int(getattr(tick, "time", 0) or 0) // _tf_sec
+                        _pa_txt = str(pa_msg or "")
+                        if not is_confirmed and ("rơi tự do" in _pa_txt or "dựng cột tăng mạnh" in _pa_txt):
+                            ctx["pa_momo_block"] = (action, _bar_id)
+                        elif is_confirmed and _bar_id > 0 and ctx.get("pa_momo_block") == (action, _bar_id):
+                            is_confirmed = False
+                            pa_msg = f"Chờ nến {scalp_tf} đóng (vừa bị chặn vì nến lực, không vào lại trong cùng nến)"
+                    except Exception:
+                        pass
                 if not is_confirmed:
                     now_ts_pa = time.time()
                     if (now_ts_pa - getattr(self, f"_last_pa_log_ts_{pk}", 0)) >= 10.0:
