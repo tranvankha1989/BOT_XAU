@@ -42,14 +42,15 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **214 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **218 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
 - **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
   1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".
-  2. Cấu hình backtest phải giống cấu hình live đang chạy (hỏi người dùng hoặc đọc file cấu hình họ xuất; không in token).
-     Nêu rõ mọi tham số đã ghi đè bằng `--set`/cờ.
+  2. Cấu hình backtest phải giống cấu hình live đang chạy. Khi người dùng đưa file cấu hình (xuất từ app, chép từ máy khác,
+     ví dụ `Cấu Hình 1/1.json` = cấu hình TÀI KHOẢN THẬT) thì BẮT BUỘC chạy `--config "<file>"` (không ghi đè tay từng khóa);
+     lot lấy theo file trừ khi truyền `--lot`. Báo cáo phải chép dòng "Thông số chính" in ra. Nêu rõ mọi tham số đã ghi đè bằng `--set`/cờ.
   3. Mỗi báo cáo backtest phải có mục **"Phần chưa giống live"**: liệt kê các khác biệt bên dưới có ảnh hưởng tới kết quả lần đó.
   4. Nếu luật đang thử nằm trong phần backtest CHƯA mô phỏng (ví dụ Price Action) thì KHÔNG kết luận từ backtest;
      nói thẳng điều đó và dùng log live / replay tick để đánh giá.
