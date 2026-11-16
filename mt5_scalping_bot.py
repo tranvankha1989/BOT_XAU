@@ -264,7 +264,7 @@ PARAM_HELP_GUIDE = {
     },
     "trend_filter": {
         "title": "Lọc Cấu Trúc Thị Trường BOS/CHoCH (xác nhận 2 nến)",
-        "what_is_it": "Loại bỏ hoàn toàn các đường MA trễ nải (như EMA34/89). Thay vào đó, bot phân tích trực tiếp Cấu Trúc Đỉnh/Đáy thực tế (Market Structure - Swing Highs/Lows), Phá vỡ cấu trúc (BOS) và Đảo chiều cấu trúc (CHoCH) theo chuẩn Price Action/SMC trên M15 và M5/M1. Khi thị trường đang phá đáy rơi tự do (Bearish BOS), bot sẽ CHẶN 100% tín hiệu BUY cản tàu. Ngược lại khi thị trường đang phá đỉnh tăng mạnh (Bullish BOS), bot sẽ CHẶN 100% tín hiệu SELL cản tàu. Khi có CHoCH đảo chiều hoặc thị trường tích lũy, bot lập tức unblock để vào lệnh không trễ 1 nhịp nến nào.",
+        "what_is_it": "Loại bỏ hoàn toàn các đường MA trễ nải (như EMA34/89). Thay vào đó, bot phân tích trực tiếp Cấu Trúc Đỉnh/Đáy thực tế (Market Structure - Swing Highs/Lows), Phá vỡ cấu trúc (BOS) và Đảo chiều cấu trúc (CHoCH) theo chuẩn Price Action/SMC trên M15 và M5/M1. Khi thị trường đang phá đáy rơi tự do (Bearish BOS), bot sẽ CHẶN 100% tín hiệu BUY cản tàu. Ngược lại khi thị trường đang phá đỉnh tăng mạnh (Bullish BOS), bot sẽ CHẶN 100% tín hiệu SELL cản tàu. Khi có CHoCH đảo chiều hoặc thị trường tích lũy, bot lập tức unblock để vào lệnh không trễ 1 nhịp nến nào. Khi đang canh vùng, bot xét LẠI cấu trúc ngay trước khi khớp lệnh: nếu cấu trúc đã quay ngược chiều thì chưa vào lệnh (vẫn giữ canh vùng).",
         "how_to_set": "- LUÔN BẬT (Khuyên dùng chuẩn): Phản ứng tức thì theo giá thực (Zero Indicator Lag, không bị trễ nến như MA), bảo vệ tài khoản tối đa."
     },
     "confirm_entry_pa": {
@@ -285,7 +285,7 @@ PARAM_HELP_GUIDE = {
     "structure_conflict_mode": {
         "title": "Xử lý xung đột Cấu Trúc Đa Khung (M5 vs M15)",
         "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
-        "how_to_set": "- neutral (Khuyên dùng - Mặc định): Trả về Trung Lập để bảo toàn vốn, không chặn oan và không vào lệnh rủi ro.\n- scalp: Ưu tiên khung M5.\n- analysis: Ưu tiên khung M15."
+        "how_to_set": "- neutral (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- scalp: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- analysis: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn neutral khi thị trường lệch pha giữa 2 khung."
     },
     "use_confidence_gate": {
         "title": "Cổng độ tin cậy AI (AI Confidence Gate)",
@@ -8296,6 +8296,40 @@ class KronosDesktopApp:
         except Exception:
             return False
 
+    def _pb_structure_blocks(self, pk: str, symbol: str, action: str, cfg: dict, ctx: dict):
+        """Bộ lọc cấu trúc (trend_filter) xét LẠI ngay trước khi khớp lệnh canh vùng (cấu trúc có thể đổi trong lúc chờ giá hồi).
+        Trả (True, lý do) nếu cấu trúc hiện tại ngược chiều lệnh. Cache 5 giây. Lỗi đọc nến -> (False, "") (giữ hành vi cũ), có log."""
+        if not bool(cfg.get("trend_filter", True)):
+            return False, ""
+        try:
+            now_m = time.monotonic()
+            cache = ctx.get("pb_struct_cache")
+            if cache is not None and (now_m - cache[0]) < 5.0:
+                macro_ctx = cache[1]
+            else:
+                scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
+                analysis_tf = str(cfg.get("analysis_tf", scalp_tf)).strip() or scalp_tf
+                chart_bars = max(int(cfg.get("lookback", 450)), 450)
+                df_ana = self.fetch_mt5_candles(symbol, analysis_tf, chart_bars, include_forming=False)
+                df_sc = self.fetch_mt5_candles(symbol, scalp_tf, 60, include_forming=False)
+                atr_sc = self.calculate_atr(df_sc, 14)
+                atr_an = self.calculate_atr(df_ana, 14) if analysis_tf != scalp_tf else atr_sc
+                macro_ctx = self._analyze_scalping_micro_macro_context(df_ana, df_sc, max(atr_sc, atr_an * 0.65), profile_key=pk)
+                ctx["pb_struct_cache"] = (now_m, macro_ctx)
+            m_dir = macro_ctx.get("macro_dir", 0)
+            if (action == "BUY" and m_dir == -1) or (action == "SELL" and m_dir == 1):
+                return True, str(macro_ctx.get("structure_reason", ""))
+            return False, ""
+        except Exception as e:
+            now_ts = time.time()
+            if (now_ts - getattr(self, f"_last_pb_struct_err_ts_{pk}", 0)) >= 60.0:
+                setattr(self, f"_last_pb_struct_err_ts_{pk}", now_ts)
+                try:
+                    self.log(f"⚠️ [{pk} - Canh vùng] Không xét lại được cấu trúc trước khi khớp lệnh ({e}) -> bỏ qua bước này.")
+                except Exception:
+                    pass
+            return False, ""
+
     PB_DIAG_INTERVAL_SEC = 10.0   # log chẩn đoán canh vùng: tối đa 1 lần / 10 giây / (profile, cổng)
     PB_HEARTBEAT_SEC = 60.0       # nhịp "đang canh" khi có pending
 
@@ -8561,6 +8595,16 @@ class KronosDesktopApp:
                     setattr(self, f"_last_rr_log_ts_{pk}", now_ts_rr)
                     self.log(f"⏳ [{pk} - Canh Vùng {action}] RR thực tế {real_rr:.2f}R < {req_rr:.2f}R yêu cầu (TP {tp_price:.2f}, SL cách {cur_sl_dist:.2f}$) -> giữ canh vùng, chưa vào lệnh.")
                 self._pb_gate_log(pk, "rr_thuc", symbol, tick, n_open=len(open_positions) if open_positions else 0, note=f"RR thực={real_rr:.2f} < {req_rr:.2f}")
+                return
+
+            # 4. Bộ lọc cấu trúc xét LẠI trước khi khớp (tín hiệu tạo từ nến phân tích trước, cấu trúc có thể đã đổi): chặn, giữ canh vùng
+            struct_block, struct_reason = self._pb_structure_blocks(pk, symbol, action, cfg, ctx)
+            if struct_block:
+                now_ts_st = time.time()
+                if (now_ts_st - getattr(self, f"_last_struct_log_ts_{pk}", 0)) >= 10.0:
+                    setattr(self, f"_last_struct_log_ts_{pk}", now_ts_st)
+                    self.log(f"🛡️ [{pk} - Canh Vùng {action}] Giá ({cur_price:.2f}) đã vào vùng nhưng Cấu Trúc hiện tại ngược chiều ({struct_reason}) -> chưa vào lệnh.")
+                self._pb_gate_log(pk, "cau_truc", symbol, tick, n_open=len(open_positions) if open_positions else 0, note=f"Cấu trúc: {struct_reason[:80]}")
                 return
 
             # Thu hồi nguyên tử (Atomic Pop) pending_pullback_order TRƯỚC khi gửi lệnh để tuyệt đối không vào đúp 2 lệnh
@@ -9594,16 +9638,26 @@ class KronosDesktopApp:
         """Nhiệt độ/top-p thích ứng của Kronos. Logic ở trading_modules/kronos_sampling.py."""
         return compute_adaptive_sampling_params(df_ai, analysis_tf)
 
-    def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float) -> dict:
-        """Cấu trúc thị trường (BOS/CHoCH, order-flow, râu nến). Logic nằm ở trading_modules/structure.py; hàm này chỉ đọc cấu hình rồi gọi module."""
+    def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float, profile_key: str = None) -> dict:
+        """Cấu trúc thị trường (BOS/CHoCH, order-flow, râu nến). Logic nằm ở trading_modules/structure.py; hàm này chỉ đọc cấu hình rồi gọi module.
+        profile_key: profile đang phân tích (đọc đúng structure_conflict_mode của profile đó, không lấy theo tab đang mở)."""
         conflict_mode = "neutral"
         try:
-            pk = getattr(self, "active_profile_key", "XAUUSD")
+            pk = profile_key or getattr(self, "active_profile_key", "XAUUSD")
             cfg = self._get_profile_cfg(pk) if hasattr(self, "_get_profile_cfg") else {}
             conflict_mode = str(cfg.get("structure_conflict_mode", "neutral")).strip().lower()
         except Exception:
             conflict_mode = "neutral"
-        return analyze_structure_context(df_ana, df_scalp, atr, conflict_mode)
+        res = analyze_structure_context(df_ana, df_scalp, atr, conflict_mode)
+        if res.get("error"):
+            try:
+                now_ts = time.time()
+                if (now_ts - getattr(self, "_last_struct_err_log_ts", 0)) >= 60.0:
+                    self._last_struct_err_log_ts = now_ts
+                    self.log(f"⚠️ [Cấu trúc thị trường] Lỗi khi phân tích ({res['error']}) -> tạm coi là Cân bằng (bộ lọc cấu trúc không chặn lần này).")
+            except Exception:
+                pass
+        return res
 
     def _fast_predict_scenarios(self, predictor, df_in: pd.DataFrame, x_timestamp: pd.Series, y_timestamp: pd.Series, pred_len: int = 6, num_scenarios: int = 8, T: float = 1.0, top_k: int = 0, top_p: float = 0.9):
         """Sinh N kịch bản Kronos (lõi AI). Logic ở trading_modules/kronos_engine.py; hàm này chỉ truyền khóa suy luận và hàm dọn bộ nhớ."""
@@ -10449,7 +10503,7 @@ class KronosDesktopApp:
                 scenarios = None
                 used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local (KV-Cache)"
                 dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(df_ai, analysis_tf)
-                macro_ctx = self._analyze_scalping_micro_macro_context(df, df_scalp, atr)
+                macro_ctx = self._analyze_scalping_micro_macro_context(df, df_scalp, atr, profile_key=pk)
 
                 if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
                     try:
