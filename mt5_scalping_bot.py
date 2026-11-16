@@ -6239,7 +6239,21 @@ class KronosDesktopApp:
 
     def _on_close_window(self):
         self._app_closing = True
-        self.save_user_settings()
+        # Chốt an toàn: dù bước dọn dẹp nào bị treo (vd. MT5 không phản hồi), tiến trình vẫn tự thoát sau 8s, không chạy ngầm
+        try:
+            _wd = threading.Timer(8.0, os._exit, args=(0,))
+            _wd.daemon = True
+            _wd.start()
+        except Exception:
+            pass
+        try:
+            self.root.withdraw()
+        except Exception:
+            pass
+        try:
+            self.save_user_settings()
+        except Exception:
+            pass
         self.auto_loop_running = False
         for pk in self.profile_ctx:
             self.profile_ctx[pk]["auto_loop_running"] = False
@@ -6249,9 +6263,11 @@ class KronosDesktopApp:
         except Exception:
             pass
         try:
-            if MT5_AVAILABLE:
-                with self._mt5_lock:
+            if MT5_AVAILABLE and self._mt5_lock.acquire(timeout=3.0):  # không chờ mãi nếu luồng khác đang kẹt trong lệnh MT5
+                try:
                     mt5.shutdown()
+                finally:
+                    self._mt5_lock.release()
         except Exception:
             pass
         self._write_file_log("Đã đóng ứng dụng an toàn và giải phóng toàn bộ tiến trình chạy ngầm.")
@@ -7173,7 +7189,7 @@ class KronosDesktopApp:
                     algo_on = self._algo_trading_on(acc)
                     algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
                     self.mt5_status_lbl.config(
-                        text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
+                        text=f"TK: {acc.login} ({'THẬT' if getattr(acc, 'trade_mode', 0) == 2 else 'DEMO'}) | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
                         fg=GREEN_UP if algo_on else RED_DOWN
                     )
 
@@ -9337,7 +9353,7 @@ class KronosDesktopApp:
         algo_on = self._algo_trading_on(acc)
         algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
         self.mt5_status_lbl.config(
-            text=f"TK: {acc.login} | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
+            text=f"TK: {acc.login} ({'THẬT' if getattr(acc, 'trade_mode', 0) == 2 else 'DEMO'}) | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
             fg=GREEN_UP if algo_on else RED_DOWN
         )
         self.log(f"Kết nối MT5 thành công: TK {acc.login} ({acc.server}) | Số dư {acc.balance:.2f} {acc.currency}")
