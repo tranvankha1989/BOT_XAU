@@ -3854,7 +3854,10 @@ class KronosDesktopApp:
             except (ValueError, TypeError):
                 _ha_n = 0
             if _ha_n > 0:
-                _hc = heikin_ashi_colors(sub_df["open"], sub_df["high"], sub_df["low"], sub_df["close"])[-_ha_n:]
+                _ha_df = sub_df
+                if str(cfg.get("exp_ha_src", "ana")).strip().lower() == "scalp" and sub_scalp_df is not None and len(sub_scalp_df) >= _ha_n + 2:
+                    _ha_df = sub_scalp_df  # THỬ NGHIỆM: xu hướng HA trên khung scalp thay vì khung phân tích
+                _hc = heikin_ashi_colors(_ha_df["open"], _ha_df["high"], _ha_df["low"], _ha_df["close"])[-_ha_n:]
                 macro_dir = 1 if all(x == 1 for x in _hc) else (-1 if all(x == -1 for x in _hc) else 0)
                 macro_ctx = {"macro_dir": macro_dir, "structure_reason": f"Heikin Ashi {_ha_n} nến"}
 
