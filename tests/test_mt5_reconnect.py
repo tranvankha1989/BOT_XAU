@@ -16,7 +16,8 @@ def make_app():
     root = mock.Mock()
     root.after.side_effect = lambda ms, fn: scheduled.append((ms, fn))
     app.__dict__.update(_mt5_lock=threading.RLock(), root=root, mt5_status_lbl=mock.Mock(),
-                        log_error=mock.Mock(), log=mock.Mock(), _algo_trading_on=lambda acc: True)
+                        log_error=mock.Mock(), log=mock.Mock(), _algo_trading_on=lambda acc: True,
+                        _get_profile_cfg=lambda pk: {"mt5_path": ""})
     return app, scheduled
 
 
@@ -28,7 +29,7 @@ class TestReconnect(unittest.TestCase):
         fake.initialize.side_effect = [False, False, True]
         fake.last_error.return_value = (-6, "Terminal: Authorization failed")
         fake.account_info.return_value = acc
-        with mock.patch.object(b, "mt5", fake), mock.patch.object(b, "MT5_AVAILABLE", True):
+        with mock.patch.object(b, "mt5", fake), mock.patch.object(b, "MT5_AVAILABLE", True),                 mock.patch.object(b, "_running_mt5_terminal_paths", return_value=[]):
             self.assertFalse(app.check_mt5_connection())
             self.assertEqual(len(scheduled), 1)
             self.assertEqual(scheduled[0][0], 5000)
@@ -47,9 +48,63 @@ class TestReconnect(unittest.TestCase):
         fake = mock.Mock()
         fake.initialize.return_value = False
         fake.last_error.return_value = (-6, "x")
-        with mock.patch.object(b, "mt5", fake), mock.patch.object(b, "MT5_AVAILABLE", True):
+        with mock.patch.object(b, "mt5", fake), mock.patch.object(b, "MT5_AVAILABLE", True),                 mock.patch.object(b, "_running_mt5_terminal_paths", return_value=[]):
             app.check_mt5_connection()
         self.assertEqual(scheduled, [])
+
+
+class TestFindTerminal(unittest.TestCase):
+    def test_loi_6_gan_vao_mt5_dang_dang_nhap(self):
+        app, scheduled = make_app()
+        demo = SimpleNamespace(login=1, trade_mode=0, balance=1.0, equity=1.0, server="Trial", currency="USD")
+        real = SimpleNamespace(login=2, trade_mode=2, balance=9.0, equity=9.0, server="Real", currency="USD")
+        state = {"path": None}
+
+        def init(path=None):
+            state["path"] = path
+            return path is not None
+
+        fake = mock.Mock()
+        fake.initialize.side_effect = init
+        fake.last_error.return_value = (-6, "Terminal: Authorization failed")
+        fake.account_info.side_effect = lambda: {"B": demo}.get(state["path"])  # A: không đăng nhập; B: đang đăng nhập DEMO
+        fake.terminal_info.return_value = SimpleNamespace(path="B")
+        with mock.patch.object(b, "mt5", fake), mock.patch.object(b, "MT5_AVAILABLE", True),                 mock.patch.object(b, "_running_mt5_terminal_paths", return_value=["A", "B"]):
+            self.assertTrue(app.check_mt5_connection())
+        self.assertEqual(state["path"], "B")
+        self.assertEqual(scheduled, [])
+        self.assertIn("DEMO", app.mt5_status_lbl.config.call_args.kwargs["text"])
+
+    def test_khong_co_mt5_nao_van_thu_lai(self):
+        app, scheduled = make_app()
+        fake = mock.Mock()
+        fake.initialize.return_value = False
+        fake.last_error.return_value = (-6, "x")
+        with mock.patch.object(b, "mt5", fake), mock.patch.object(b, "MT5_AVAILABLE", True),                 mock.patch.object(b, "_running_mt5_terminal_paths", return_value=[]):
+            self.assertFalse(app.check_mt5_connection())
+        self.assertEqual(len(scheduled), 1)
+        self.assertTrue(any("không thấy terminal64.exe" in str(c.args[0]) for c in app.log.call_args_list))
+
+
+class TestMt5Path(unittest.TestCase):
+    def test_dung_duong_dan_cau_hinh(self):
+        app, _ = make_app()
+        exe = os.path.abspath(__file__)  # file có thật, đóng vai terminal64.exe
+        app._get_profile_cfg = lambda pk: {"mt5_path": f'"{exe}"'}
+        fake = mock.Mock()
+        fake.initialize.return_value = True
+        with mock.patch.object(b, "mt5", fake):
+            self.assertTrue(app._mt5_initialize())
+        fake.initialize.assert_called_once_with(path=exe)
+
+    def test_duong_dan_khong_ton_tai_dung_mac_dinh(self):
+        app, _ = make_app()
+        app._get_profile_cfg = lambda pk: {"mt5_path": r"Z:\khong_co	erminal64.exe"}
+        fake = mock.Mock()
+        fake.initialize.return_value = True
+        with mock.patch.object(b, "mt5", fake):
+            self.assertTrue(app._mt5_initialize())
+        fake.initialize.assert_called_once_with()
 
 
 if __name__ == "__main__":
