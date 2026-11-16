@@ -234,20 +234,20 @@ class FakeBroker:
         if arr is None or len(arr) == 0:
             return None
         n_closed = int(np.searchsorted(arr["time"] + tf_sec, now, side="right"))
-        closed = arr[max(0, n_closed - count - 1):n_closed]
+        closed = arr[max(0, n_closed - count - start_pos - 1):n_closed]
+        # Như MT5 thật: vị trí 0 = nến MỚI NHẤT đang tồn tại. Nến đang chạy chỉ tồn tại khi đã có tick trong chu kỳ;
+        # chưa có tick (giờ nghỉ của vàng, cuối tuần, đầu nến chưa có giá) thì vị trí 0 là nến đã đóng gần nhất
+        # (trước đây luôn coi vị trí 0 là nến đang chạy -> giờ nghỉ phát hiện "nến mới" lặp vô hạn).
         out = closed
-        if start_pos == 0:
-            fs = int(now // tf_sec) * tf_sec
-            i0 = int(np.searchsorted(self.ms, fs * 1000, side="left"))
-            i1 = self._idx(now) + 1
-            if i1 > i0:
-                b = self.bid[i0:i1]
-                forming = np.array([(fs, b[0], b.max(), b.min(), b[-1], i1 - i0, 0, 0)], dtype=RATE_DTYPE)
-                out = np.concatenate([closed, forming])
-            return out[-count:] if count > 0 else out
-        # start_pos >= 1: bỏ (start_pos - 1) nến đóng mới nhất
-        end = len(closed) - (start_pos - 1)
-        return closed[max(0, end - count):max(0, end)]
+        fs = int(now // tf_sec) * tf_sec
+        i0 = int(np.searchsorted(self.ms, fs * 1000, side="left"))
+        i1 = self._idx(now) + 1
+        if i1 > i0:
+            b = self.bid[i0:i1]
+            forming = np.array([(fs, b[0], b.max(), b.min(), b[-1], i1 - i0, 0, 0)], dtype=RATE_DTYPE)
+            out = np.concatenate([closed, forming])
+        end = len(out) - start_pos
+        return out[max(0, end - count):max(0, end)] if count > 0 else out[:max(0, end)]
 
     def copy_rates_from_pos(self, symbol, tf, start_pos, count):
         return self._rates_until_now(self._TF_ENUM_SEC.get(tf, 300), int(count), int(start_pos))

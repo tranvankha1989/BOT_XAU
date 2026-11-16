@@ -99,6 +99,16 @@ class TestFakeBroker(unittest.TestCase):
         self.assertAlmostEqual(float(withf["close"][-1]), prices[90])  # tick cuối <= now
         self.assertLessEqual(float(withf["high"][-1]), prices[90])
 
+    def test_gio_nghi_khong_co_nen_dang_chay_vi_tri_0_la_nen_cuoi(self):
+        """Như MT5: không có tick trong chu kỳ hiện tại -> vị trí 0 là nến cuối cùng (không có nến đang chạy)."""
+        b, clk = make_broker([100.0 + i * 0.1 for i in range(100)])  # tick tới T0+99
+        clk.now = T0 + 150.0  # chu kỳ T0+120 chưa có tick
+        p0 = b.copy_rates_from_pos("BTCUSDm", b.TIMEFRAME_M1, 0, 3)
+        p1 = b.copy_rates_from_pos("BTCUSDm", b.TIMEFRAME_M1, 1, 3)
+        self.assertEqual(int(p0["time"][-1]), T0 + 60)
+        self.assertEqual(int(p1["time"][-1]), T0)
+        self.assertEqual(len(p1), 3)
+
     def test_tick_va_dong_ho(self):
         b, clk = make_broker([100.0, 101.0, 102.0])
         clk.now = T0 + 1.5
