@@ -42,10 +42,15 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **218 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **226 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
+- **Bộ phát lại live (CÔNG CỤ CHÍNH để đánh giá luật, từ 16/11/2026)**: `python -u tools/live_replay.py --profile BTCUSD --config "<file>" --start YYYY-MM-DD --end YYYY-MM-DD --threads 4`.
+  Chạy CHÍNH code bot live (vòng tick + vòng nến + phân tích AI) trên tick quá khứ với sàn giả lập; mọi thông số cấu hình có hiệu lực.
+  Đã đối chiếu 16/11: tín hiệu 18:45 và lệnh 19:00 khớp live (giá vào trùng 64387.48). Báo cáo phải nêu số "Lỗi ghi nhận trong code bot" (phải = 0).
+  Khi sửa `_realtime_tick_loop`/`_auto_loop_worker` hoặc dùng hàm MT5 mới: cập nhật `tools/live_replay.py` (Replayer/FakeBroker) trong cùng việc.
+  Giới hạn: lệnh khớp ở tick tại thời điểm quyết định (không có trễ mạng); AI ngẫu nhiên nên không trùng từng lệnh với live.
 - **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
   1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".
   2. Cấu hình backtest phải giống cấu hình live đang chạy. Khi người dùng đưa file cấu hình (xuất từ app, chép từ máy khác,
