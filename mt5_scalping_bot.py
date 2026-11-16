@@ -52,7 +52,7 @@ def _load_packed_trading_modules():
 
 
 _load_packed_trading_modules()
-from trading_modules.structure import analyze_structure_context, nearest_swing_dist
+from trading_modules.structure import analyze_structure_context, nearest_swing_dist, heikin_ashi_colors
 from trading_modules.price_action import evaluate_price_action
 import gc
 import torch
@@ -3848,6 +3848,15 @@ class KronosDesktopApp:
                 atr = max(atr_scalp, atr_ana * 0.65)
                 macro_ctx = self._analyze_scalping_micro_macro_context(sub_df, sub_scalp_df, atr)
                 macro_dir = macro_ctx.get("macro_dir", 0)
+            # THỬ NGHIỆM (mặc định tắt): thay xu hướng SMC/BOS bằng N nến Heikin Ashi đã đóng cùng màu (khung phân tích)
+            try:
+                _ha_n = int(float(cfg.get("exp_ha_trend", 0) or 0))
+            except (ValueError, TypeError):
+                _ha_n = 0
+            if _ha_n > 0:
+                _hc = heikin_ashi_colors(sub_df["open"], sub_df["high"], sub_df["low"], sub_df["close"])[-_ha_n:]
+                macro_dir = 1 if all(x == 1 for x in _hc) else (-1 if all(x == -1 for x in _hc) else 0)
+                macro_ctx = {"macro_dir": macro_dir, "structure_reason": f"Heikin Ashi {_ha_n} nến"}
 
             x_ts = sub_df["timestamps"].copy().reset_index(drop=True)
             dt_step = x_ts.iloc[-1] - x_ts.iloc[-2] if len(x_ts) >= 2 else pd.Timedelta(minutes=5)
@@ -4011,8 +4020,11 @@ class KronosDesktopApp:
             exp_realfill = str(cfg.get("exp_realfill", "0")) in ("1", "true", "True")
             exp_sr = float(cfg.get("exp_sr", 0) or 0)  # >0: bỏ lệnh khi cản (đỉnh/đáy swing) cách entry < exp_sr x ATR
             exp_trail_neg = str(cfg.get("exp_trail_neg", "0")) in ("1", "true", "True")  # chỉ bám SL (trailing) khi PnL ngày đang âm
+            exp_ha_exit = int(float(cfg.get("exp_ha_exit", 0) or 0))  # >0: bỏ TP/trailing, gồng tới khi N nến HA (khung vào lệnh) ngược màu (sau BE)
         except Exception:
+            exp_ha_exit = 0
             exp_min_sl, exp_confirm, exp_runner, exp_daystop, exp_realfill, exp_sr, exp_trail_neg = 0.0, False, False, 0, False, 0.0, False
+        _ha_cols = None
         min_consensus = float(cfg.get("consensus", def_cfg.get("consensus", "75")))
         min_move = float(cfg.get("min_move", def_cfg.get("min_move", "60.0" if is_btc else "1.2")))
         model_choice = str(cfg.get("model", def_cfg.get("model", "AI-base (102.3M - Mạnh nhất)")))
@@ -4410,6 +4422,11 @@ class KronosDesktopApp:
                     if exp_trail_neg:  # THỬ NGHIỆM: ngày đang thắng/hòa -> tắt trailing; ngày đang thua -> bật
                         _trail_eff = auto_trail and sum(t["pnl"] for t in trades if t["date"] == cur_time.strftime("%Y-%m-%d")) < 0
                     close_bar_idx = bar_idx + 1
+                    if exp_ha_exit > 0:
+                        _trail_eff = False
+                        if _ha_cols is None:
+                            _ha_cols = heikin_ashi_colors([r[1] for r in rates], [r[2] for r in rates], [r[3] for r in rates], [r[4] for r in rates])
+                    _ha_opp = 0
 
                     for f_idx in range(bar_idx + 1, total_bars):
                         close_bar_idx = f_idx
@@ -4422,10 +4439,16 @@ class KronosDesktopApp:
 
                         sl_price, be_moved, ex_price, ex_reason = step_position(
                             signal, entry_price, sl_price, tp_price, one_r_dist, be_moved, f_high, f_low, f_close, hold_mins,
-                            auto_be, _trail_eff, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=exp_runner)
+                            auto_be, _trail_eff, be_trigger_r, trail_dist_r, be_plus_price, max_hold_mins, runner_no_tp=(exp_runner or exp_ha_exit > 0))
                         if ex_price is not None:
                             out_price, exit_reason = ex_price, ex_reason
                             break
+                        if exp_ha_exit > 0 and be_moved:  # THỬ NGHIỆM: gồng lãi theo Heikin Ashi (nến f_idx đã đóng)
+                            _opp = -1 if signal == "BUY" else 1
+                            _ha_opp = _ha_opp + 1 if _ha_cols[f_idx] == _opp else 0
+                            if _ha_opp >= exp_ha_exit:
+                                out_price, exit_reason = f_close, f"Heikin Ashi đổi màu ({exp_ha_exit} nến)"
+                                break
 
                     spread_pts = 6.4 if is_btc else 0.20
                     if signal == "BUY":

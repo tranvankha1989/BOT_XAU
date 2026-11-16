@@ -202,3 +202,17 @@ def nearest_swing_dist(df, side: str, ref_price: float, lookback: int = 100):
         return best
     except Exception:
         return None
+
+
+def heikin_ashi_colors(opens, highs, lows, closes):
+    """Màu nến Heikin Ashi (+1 xanh, -1 đỏ, 0 doji) cho từng nến, chỉ dùng dữ liệu quá khứ (nhân quả)."""
+    o = [float(x) for x in opens]; h = [float(x) for x in highs]
+    l = [float(x) for x in lows]; c = [float(x) for x in closes]
+    out = []
+    ha_o = None
+    for i in range(len(c)):
+        ha_c = (o[i] + h[i] + l[i] + c[i]) / 4.0
+        ha_o = (o[i] + c[i]) / 2.0 if ha_o is None else (ha_o + prev_c) / 2.0
+        prev_c = ha_c
+        out.append(1 if ha_c > ha_o else (-1 if ha_c < ha_o else 0))
+    return out
