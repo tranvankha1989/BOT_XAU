@@ -1,6 +1,6 @@
 {
-  "version": "1.3.11",
+  "version": "1.3.12",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-16",
-  "description": "Phiên bản v1.3.11:\n- [MỚI] Canh vùng: sau khi Price Action chặn vì nến đang rơi tự do / dựng cột tăng mạnh, bot chờ cây nến đó đóng mới xét vào lại (chống mua/bán ngay giữa nến lực). Công tắc pa_wait_bar_close, mặc định BẬT.\n- [THỬ NGHIỆM] Công tắc backtest exp_trail_neg (mặc định TẮT, không ảnh hưởng bot thật)."
+  "description": "Phiên bản v1.3.12:\n- [SỬA] Tắt app không còn chạy ngầm: ẩn cửa sổ ngay, không chờ mãi khi MT5 bị kẹt, tự thoát hẳn sau tối đa 8 giây.\n- [HIỂN THỊ] Dòng TK hiện rõ tài khoản DEMO hay THẬT để tránh gắn nhầm MT5.\n- [THỬ NGHIỆM] Công tắc backtest Heikin Ashi (exp_ha_trend, exp_ha_exit, exp_ha_src), mặc định TẮT."
 }
