@@ -137,7 +137,7 @@ def apply_flag_overrides(cfg: dict, def_cfg: dict, trend_filter=None, structure_
 
 
 # Khóa thử nghiệm chỉ đọc trong backtest chế độ nến (mặc định tắt, không có trong cài đặt bot)
-EXPERIMENTAL_KEYS = ("exp_min_sl", "exp_confirm", "exp_runner", "exp_daystop", "exp_realfill", "exp_sr", "sl_swing")
+EXPERIMENTAL_KEYS = ("exp_min_sl", "exp_confirm", "exp_runner", "exp_daystop", "exp_realfill", "exp_sr", "sl_swing", "exp_trail_neg")
 
 
 def apply_set_overrides(cfg: dict, def_cfg: dict, pairs) -> list:
