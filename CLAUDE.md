@@ -42,11 +42,23 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **129 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **214 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
-  Mặc định chế độ nến. **Backtest KHÔNG giống 100% live**: không có xác nhận Price Action, cooldown, `max_pos`/nhồi lệnh, giới hạn lãi/lỗ ngày, khung giờ cấm,
-  kiểm spread/`order_check`; TP luôn = 2R (live dùng TP của AI); không chia đôi Max SL; chỉ 1 lệnh mỗi lúc. Đừng tối ưu tham số theo số backtest.
+  Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
+- **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
+  1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".
+  2. Cấu hình backtest phải giống cấu hình live đang chạy (hỏi người dùng hoặc đọc file cấu hình họ xuất; không in token).
+     Nêu rõ mọi tham số đã ghi đè bằng `--set`/cờ.
+  3. Mỗi báo cáo backtest phải có mục **"Phần chưa giống live"**: liệt kê các khác biệt bên dưới có ảnh hưởng tới kết quả lần đó.
+  4. Nếu luật đang thử nằm trong phần backtest CHƯA mô phỏng (ví dụ Price Action) thì KHÔNG kết luận từ backtest;
+     nói thẳng điều đó và dùng log live / replay tick để đánh giá.
+  5. Khi có log live cùng khoảng ngày: đối chiếu số lệnh, giờ vào, chiều lệnh giữa backtest và live, báo tỉ lệ khớp.
+  6. Khi sửa luật vào/hủy/thoát lệnh ở live: sửa phần mô phỏng backtest tương ứng trong cùng việc; nếu chưa làm được thì thêm vào danh sách dưới.
+- **Backtest còn KHÁC live (cập nhật mỗi khi thu hẹp được):** không có xác nhận Price Action; không xét lại cấu trúc lúc khớp lệnh canh vùng (v1.3.17);
+  TP luôn = 2R (live dùng TP AI); không chia đôi SL tối đa; chỉ 1 lệnh mỗi lúc (không `max_pos`/nhồi lệnh); không cooldown, giới hạn lãi/lỗ ngày, khung giờ cấm,
+  kiểm spread/`order_check`; hết giờ giữ lệnh đóng theo giá nến (live xử lý theo hành động cấu hình); không commission/slippage/swap;
+  chế độ nến không thấy diễn biến trong nến (dùng S1).
 - Replay cổng canh vùng: `python tools/replay_gate.py [--poll-ms 100] [--grid]` phát lại tick CSV (`%APPDATA%\Kronos_MT5_Bot\replay_data`) vào
   `_check_pending_pullback_order`; chỉ đọc file, không MT5. Mẫu 1 đêm: không dùng để chọn luật.
 - Kiểm tra demo thật: `python tools/demo_check.py` (MT5 thật, CHỈ tài khoản DEMO, có chốt an toàn); chỉ chạy khi người dùng yêu cầu rõ.
