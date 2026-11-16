@@ -1966,6 +1966,38 @@ class KronosDesktopApp:
         except Exception:
             pass
 
+        # Khởi động lại MƯỢT: ẩn cửa sổ ngay rồi mở tiến trình mới, bỏ bước dựng lại UI tại chỗ
+        # (trước đây dựng lại UI rồi 300ms sau vẫn khởi động lại -> app chớp tắt nhiều lần)
+        if getattr(self, "updater", None) is not None:
+            try:
+                self._app_closing = True
+                self.auto_loop_running = False
+                for pk in self.profile_ctx:
+                    self.profile_ctx[pk]["auto_loop_running"] = False
+                    self._auto_worker_token[pk] = self._auto_worker_token.get(pk, 0) + 1
+                self.log(f"🎉 [CẬP NHẬT] Đã nâng cấp lên v{v_str}, đang khởi động lại ứng dụng...")
+            except Exception:
+                pass
+            try:
+                self.root.withdraw()
+                self.root.update_idletasks()
+            except Exception:
+                pass
+            try:
+                if MT5_AVAILABLE and self._mt5_lock.acquire(timeout=3.0):
+                    try:
+                        mt5.shutdown()
+                    finally:
+                        self._mt5_lock.release()
+            except Exception:
+                pass
+            try:
+                self._release_active_instance_lock()
+            except Exception:
+                pass
+            self.updater.restart_application()
+            return
+
         # 2. Hot-Reload toàn bộ module phụ trợ & mã nguồn chính mới vào RAM (từ file .py hoặc giải mã core_engine.bin)
         try:
             import importlib
@@ -9343,8 +9375,14 @@ class KronosDesktopApp:
         with self._mt5_lock:
             if not mt5.initialize():
                 err_c = mt5.last_error()
-                self.mt5_status_lbl.config(text=f"Chưa mở MT5 Exness ({err_c})", fg=RED_DOWN)
-                self.log_error("MT5_INIT", extra_info=f"Chưa mở MT5 Exness ({err_c})", show_in_ui=False)
+                try:
+                    _auth_fail = int(err_c[0]) == -6
+                except Exception:
+                    _auth_fail = False
+                _mt5_msg = (f"MT5 đã mở nhưng CHƯA ĐĂNG NHẬP được tài khoản ({err_c})" if _auth_fail
+                            else f"Chưa mở MT5 Exness ({err_c})")
+                self.mt5_status_lbl.config(text=_mt5_msg, fg=RED_DOWN)
+                self.log_error("MT5_INIT", extra_info=_mt5_msg, show_in_ui=False)
                 return False
             acc = mt5.account_info()
         if acc is None:
