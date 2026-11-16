@@ -1,6 +1,6 @@
 {
-  "version": "1.3.12",
+  "version": "1.3.13",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-16",
-  "description": "Phiên bản v1.3.12:\n- [SỬA] Tắt app không còn chạy ngầm: ẩn cửa sổ ngay, không chờ mãi khi MT5 bị kẹt, tự thoát hẳn sau tối đa 8 giây.\n- [HIỂN THỊ] Dòng TK hiện rõ tài khoản DEMO hay THẬT để tránh gắn nhầm MT5.\n- [THỬ NGHIỆM] Công tắc backtest Heikin Ashi (exp_ha_trend, exp_ha_exit, exp_ha_src), mặc định TẮT."
+  "description": "Phiên bản v1.3.13:\n- [SỬA] Sau khi cập nhật: ẩn cửa sổ và khởi động lại thẳng, không còn chớp tắt nhiều lần (có hiệu lực từ lần cập nhật SAU bản này).\n- [HIỂN THỊ] Lỗi MT5 -6 báo rõ: MT5 đã mở nhưng chưa đăng nhập được tài khoản (thay vì 'Chưa mở MT5')."
 }
