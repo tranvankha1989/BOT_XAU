@@ -20,3 +20,15 @@ def calc_effective_max_sl(action: str, entry_ref: float, sl_price: float, tp_pri
         base_sl_cap = max_sl_price if max_sl_price > 0.0 else cur_sl_dist
         return round(base_sl_cap / 2.0, 2), True
     return max_sl_price, False
+
+
+def calc_effective_max_sl_ai(action: str, entry_ref: float, sl_ai_price: float, tp_price: float, max_sl_price: float):
+    """Max SL hiệu lực theo ý người dùng: RR đo tại Entry AI (entry_ref) với SL AI GỐC (chưa cộng Giá an toàn) và TP AI.
+    RR < 2R thì chia đôi Max SL. Trả (effective_max_sl, da_chia_doi)."""
+    sl_d = abs(entry_ref - sl_ai_price)
+    if action not in ("BUY", "SELL") or sl_d <= 0.001:
+        return max_sl_price, False
+    if abs(tp_price - entry_ref) < 2.0 * sl_d:
+        base_sl_cap = max_sl_price if max_sl_price > 0.0 else sl_d
+        return round(base_sl_cap / 2.0, 2), True
+    return max_sl_price, False
