@@ -9368,6 +9368,24 @@ class KronosDesktopApp:
         except Exception:
             return bool(getattr(acc, "trade_expert", False))
 
+    def _schedule_mt5_reconnect(self):
+        """Tự thử kết nối MT5 lại khi lỗi (MT5 đang khởi động/đăng nhập): 5s/lần trong 2 phút đầu, sau đó 30s/lần."""
+        try:
+            if getattr(self, "_app_closing", False) or getattr(self, "_mt5_retry_pending", False):
+                return
+            self._mt5_retry_count = getattr(self, "_mt5_retry_count", 0) + 1
+            delay_ms = 5000 if self._mt5_retry_count <= 24 else 30000
+            self._mt5_retry_pending = True
+
+            def _retry():
+                self._mt5_retry_pending = False
+                if not getattr(self, "_app_closing", False):
+                    self.check_mt5_connection()
+
+            self.root.after(delay_ms, _retry)
+        except Exception:
+            self._mt5_retry_pending = False
+
     def check_mt5_connection(self):
         if not MT5_AVAILABLE:
             self.mt5_status_lbl.config(text="Chưa cài MetaTrader5", fg=RED_DOWN)
@@ -9382,12 +9400,18 @@ class KronosDesktopApp:
                 _mt5_msg = (f"MT5 đã mở nhưng CHƯA ĐĂNG NHẬP được tài khoản ({err_c})" if _auth_fail
                             else f"Chưa mở MT5 Exness ({err_c})")
                 self.mt5_status_lbl.config(text=_mt5_msg, fg=RED_DOWN)
-                self.log_error("MT5_INIT", extra_info=_mt5_msg, show_in_ui=False)
+                if getattr(self, "_mt5_retry_count", 0) % 20 == 0:  # giới hạn tần suất ghi log lỗi khi tự thử lại
+                    self.log_error("MT5_INIT", extra_info=_mt5_msg, show_in_ui=False)
+                self._schedule_mt5_reconnect()
                 return False
             acc = mt5.account_info()
         if acc is None:
             self.mt5_status_lbl.config(text="Chưa đăng nhập TK Exness", fg=RED_DOWN)
+            self._schedule_mt5_reconnect()
             return False
+        if getattr(self, "_mt5_retry_count", 0) > 0:
+            self.log(f"🔌 [MT5] Tự kết nối lại thành công sau {self._mt5_retry_count} lần thử.")
+        self._mt5_retry_count = 0
         algo_on = self._algo_trading_on(acc)
         algo_str = "Algo:BẬT" if algo_on else "Algo:TẮT (bật nút Algo Trading trên MT5!)"
         self.mt5_status_lbl.config(
