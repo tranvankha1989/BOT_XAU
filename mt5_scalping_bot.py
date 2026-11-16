@@ -9343,8 +9343,14 @@ class KronosDesktopApp:
         with self._mt5_lock:
             if not mt5.initialize():
                 err_c = mt5.last_error()
-                self.mt5_status_lbl.config(text=f"Chưa mở MT5 Exness ({err_c})", fg=RED_DOWN)
-                self.log_error("MT5_INIT", extra_info=f"Chưa mở MT5 Exness ({err_c})", show_in_ui=False)
+                try:
+                    _auth_fail = int(err_c[0]) == -6
+                except Exception:
+                    _auth_fail = False
+                _mt5_msg = (f"MT5 đã mở nhưng CHƯA ĐĂNG NHẬP được tài khoản ({err_c})" if _auth_fail
+                            else f"Chưa mở MT5 Exness ({err_c})")
+                self.mt5_status_lbl.config(text=_mt5_msg, fg=RED_DOWN)
+                self.log_error("MT5_INIT", extra_info=_mt5_msg, show_in_ui=False)
                 return False
             acc = mt5.account_info()
         if acc is None:
