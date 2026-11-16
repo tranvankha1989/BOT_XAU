@@ -72,6 +72,25 @@ try:
 except Exception:
     pass
 
+AI_THREAD_CHOICES = ["Auto", "2", "4", "6", "8"]
+
+
+def resolve_ai_threads(value, cpu_count=None) -> tuple:
+    """Số luồng PyTorch cho phân tích AI theo ô 'Số luồng AI'. Không bao giờ vượt mức an toàn min(4, CPU logic // 2)
+    (chống Kernel-Power 41). Trả (số luồng, bị hạ về mức an toàn hay không). 'Auto'/rỗng/sai -> mức an toàn."""
+    cpu = cpu_count or os.cpu_count() or 4
+    cap = min(4, max(1, cpu // 2))
+    try:
+        n = int(str(value).strip())
+    except (ValueError, TypeError):
+        return cap, False
+    if n < 1:
+        return cap, False
+    if n > cap:
+        return cap, True
+    return n, False
+
+
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
@@ -189,6 +208,11 @@ PARAM_HELP_GUIDE = {
         "title": "Đường dẫn MT5 (terminal64.exe)",
         "what_is_it": "Vị trí chương trình MetaTrader 5 mà bot sẽ mở và kết nối. Bot dùng tài khoản đang đăng nhập trên MT5 này (DEMO hay THẬT tùy bạn đăng nhập).",
         "how_to_set": "- Mặc định: C:\\Program Files\\MetaTrader 5\\terminal64.exe\n- Nếu cài MT5 ở thư mục khác (vd. bản MT5 riêng của Exness): bấm chuột phải biểu tượng MT5 > Open file location, rồi dán đường dẫn đầy đủ tới terminal64.exe vào đây và bấm Kết nối MT5.\n- Đường dẫn sai/không tồn tại: bot tự tìm MT5 đang chạy trên máy."
+    },
+    "ai_threads": {
+        "title": "Số luồng AI (CPU)",
+        "what_is_it": "Số luồng CPU dùng để chạy phân tích AI. Chỉ ảnh hưởng TỐC ĐỘ, không làm AI chính xác hơn. Hai máy đặt CÙNG số luồng sẽ cho kết quả phân tích AI giống nhau (khác số luồng thì sai số làm tròn khác, đôi khi đổi kịch bản AI). Áp dụng chung cho cả XAUUSD và BTCUSD.",
+        "how_to_set": "- Auto (mặc định): bot tự chọn mức an toàn của máy (tối đa 4 luồng và không quá 1/2 số luồng CPU).\n- Muốn 2 máy ra cùng kết quả: đặt cùng một số trên cả 2 máy, chọn số mà máy YẾU hơn chạy được (vd. 2).\n- Chọn vượt mức an toàn của máy (vd. 6, 8 trên máy 4 luồng): bot tự hạ về mức an toàn và ghi log, để chống quá tải/sập nguồn."
     },
     "magic_number": {
         "title": "Mã định danh lệnh (Magic Number)",
@@ -469,6 +493,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "max_pos": "3",
         "magic_number": "20260501",
         "mt5_path": DEFAULT_MT5_PATH,
+        "ai_threads": "Auto",
         "scenarios": "8",
         "consensus": "75",
         "max_dispersion": "2.5",
@@ -530,6 +555,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "max_pos": "3",
         "magic_number": "20260502",
         "mt5_path": DEFAULT_MT5_PATH,
+        "ai_threads": "Auto",
         "scenarios": "8",
         "consensus": "75",
         "max_dispersion": "2.5",
@@ -2387,6 +2413,7 @@ class KronosDesktopApp:
         self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "3", help_key="max_pos")
         self.magic_number_var = self._add_labeled_entry(sec1.content, "Magic Number (Mã lệnh):", "20260501", help_key="magic_number")
         self.mt5_path_var = self._add_labeled_entry(sec1.content, "Đường dẫn MT5:", DEFAULT_MT5_PATH, entry_width=18, help_key="mt5_path")
+        self.ai_threads_var = self._add_labeled_combo(sec1.content, "Số luồng AI (CPU):", AI_THREAD_CHOICES, "Auto", help_key="ai_threads")
         tk.Button(
             sec1.content, text="↺ Khôi phục mặc định Mục 1 (Cài đặt cơ bản)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -5030,6 +5057,7 @@ class KronosDesktopApp:
             "max_pos": self.max_pos_var,
             "magic_number": self.magic_number_var,
             "mt5_path": self.mt5_path_var,
+            "ai_threads": self.ai_threads_var,
             "scenarios": self.scenarios_var,
             "consensus": self.consensus_var,
             "max_dispersion": self.max_dispersion_var,
@@ -5313,6 +5341,7 @@ class KronosDesktopApp:
                     self.profile_settings[pk]["hf_token"] = token_val
                     self.profile_settings[pk]["hf_space"] = space_val
                     self.profile_settings[pk]["mt5_path"] = str(self.mt5_path_var.get()).strip()
+                    self.profile_settings[pk]["ai_threads"] = str(self.ai_threads_var.get()).strip() or "Auto"
 
             payload = dict(self.profile_settings.get(self.active_profile_key, cur_data))
             payload["hf_token"] = token_val
@@ -5505,7 +5534,7 @@ class KronosDesktopApp:
     def reset_section_settings(self, section_num: int):
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
-            1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path"]),
+            1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
             2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
@@ -10574,6 +10603,17 @@ class KronosDesktopApp:
                     predictor = self.get_local_predictor(model_choice)
                     if pk == self.active_profile_key:
                         self._set_loading_stage(82.0, f"Đang phân tích {num_scenarios} kịch bản xu hướng AI ({symbol} | T={dyn_t:.2f})...")
+                    # Ô 'Số luồng AI': 2 máy đặt cùng số luồng -> kết quả AI giống nhau (khác số luồng: sai số làm tròn khác)
+                    try:
+                        _req_thr = cfg.get("ai_threads", "Auto")
+                        _n_thr, _clamped = resolve_ai_threads(_req_thr)
+                        if torch.get_num_threads() != _n_thr:
+                            torch.set_num_threads(_n_thr)
+                        if _clamped and getattr(self, "_ai_threads_warned", None) != str(_req_thr):
+                            self._ai_threads_warned = str(_req_thr)
+                            self.log(f"⚠️ [{pk}] Số luồng AI chọn {_req_thr} vượt mức an toàn của máy này -> dùng {_n_thr} luồng (chống quá tải/sập nguồn).")
+                    except Exception:
+                        pass
                     scenarios = self._fast_predict_scenarios(
                         predictor=predictor,
                         df_in=df_ai,
