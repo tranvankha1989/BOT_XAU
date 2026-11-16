@@ -9394,30 +9394,19 @@ class KronosDesktopApp:
             _init_ok = mt5.initialize()
             if not _init_ok:
                 err_c = mt5.last_error()
-                # Máy có thể có nhiều bộ cài MT5: thử gắn thẳng vào từng terminal64.exe ĐANG CHẠY (ưu tiên tài khoản THẬT)
+                # Máy có thể có nhiều bộ cài MT5: thử gắn thẳng vào từng terminal64.exe ĐANG CHẠY,
+                # dùng MT5 nào đang đăng nhập được tài khoản (tài khoản người dùng đang bật trên MT5, DEMO hay THẬT đều được)
                 _diag = []
-                _fallback = None
                 for _pth in _running_mt5_terminal_paths():
                     try:
                         mt5.shutdown()
-                        if mt5.initialize(path=_pth):
-                            _acc_try = mt5.account_info()
+                        if mt5.initialize(path=_pth) and mt5.account_info() is not None:
                             _diag.append(f"{_pth}: OK")
-                            if _acc_try is not None and getattr(_acc_try, "trade_mode", 0) == 2:
-                                _init_ok, _fallback = True, None
-                                break
-                            if _fallback is None:
-                                _fallback = _pth
-                        else:
-                            _diag.append(f"{_pth}: {mt5.last_error()}")
+                            _init_ok = True
+                            break
+                        _diag.append(f"{_pth}: {mt5.last_error()}")
                     except Exception as _e:
                         _diag.append(f"{_pth}: {_e}")
-                if not _init_ok and _fallback is not None:
-                    try:
-                        mt5.shutdown()
-                        _init_ok = bool(mt5.initialize(path=_fallback))
-                    except Exception:
-                        _init_ok = False
                 if getattr(self, "_mt5_retry_count", 0) % 20 == 0:
                     try:
                         self.log(f"🔎 [MT5] Kết nối mặc định lỗi {err_c}. MT5 đang chạy trên máy: {'; '.join(_diag) if _diag else 'không thấy terminal64.exe nào'}")
