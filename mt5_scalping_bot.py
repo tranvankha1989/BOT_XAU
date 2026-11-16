@@ -9391,8 +9391,39 @@ class KronosDesktopApp:
             self.mt5_status_lbl.config(text="Chưa cài MetaTrader5", fg=RED_DOWN)
             return False
         with self._mt5_lock:
-            if not mt5.initialize():
+            _init_ok = mt5.initialize()
+            if not _init_ok:
                 err_c = mt5.last_error()
+                # Máy có thể có nhiều bộ cài MT5: thử gắn thẳng vào từng terminal64.exe ĐANG CHẠY (ưu tiên tài khoản THẬT)
+                _diag = []
+                _fallback = None
+                for _pth in _running_mt5_terminal_paths():
+                    try:
+                        mt5.shutdown()
+                        if mt5.initialize(path=_pth):
+                            _acc_try = mt5.account_info()
+                            _diag.append(f"{_pth}: OK")
+                            if _acc_try is not None and getattr(_acc_try, "trade_mode", 0) == 2:
+                                _init_ok, _fallback = True, None
+                                break
+                            if _fallback is None:
+                                _fallback = _pth
+                        else:
+                            _diag.append(f"{_pth}: {mt5.last_error()}")
+                    except Exception as _e:
+                        _diag.append(f"{_pth}: {_e}")
+                if not _init_ok and _fallback is not None:
+                    try:
+                        mt5.shutdown()
+                        _init_ok = bool(mt5.initialize(path=_fallback))
+                    except Exception:
+                        _init_ok = False
+                if getattr(self, "_mt5_retry_count", 0) % 20 == 0:
+                    try:
+                        self.log(f"🔎 [MT5] Kết nối mặc định lỗi {err_c}. MT5 đang chạy trên máy: {'; '.join(_diag) if _diag else 'không thấy terminal64.exe nào'}")
+                    except Exception:
+                        pass
+            if not _init_ok:
                 try:
                     _auth_fail = int(err_c[0]) == -6
                 except Exception:
@@ -9405,6 +9436,10 @@ class KronosDesktopApp:
                 self._schedule_mt5_reconnect()
                 return False
             acc = mt5.account_info()
+            try:
+                _term_path = str(getattr(mt5.terminal_info(), "path", "") or "")
+            except Exception:
+                _term_path = ""
         if acc is None:
             self.mt5_status_lbl.config(text="Chưa đăng nhập TK Exness", fg=RED_DOWN)
             self._schedule_mt5_reconnect()
@@ -9418,7 +9453,7 @@ class KronosDesktopApp:
             text=f"TK: {acc.login} ({'THẬT' if getattr(acc, 'trade_mode', 0) == 2 else 'DEMO'}) | Dư: {acc.balance:.2f}$ | Eq: {acc.equity:.2f}$ | {algo_str}",
             fg=GREEN_UP if algo_on else RED_DOWN
         )
-        self.log(f"Kết nối MT5 thành công: TK {acc.login} ({acc.server}) | Số dư {acc.balance:.2f} {acc.currency}")
+        self.log(f"Kết nối MT5 thành công: TK {acc.login} ({acc.server}) | Số dư {acc.balance:.2f} {acc.currency} | MT5: {_term_path}")
         return True
 
     def get_local_predictor(self, model_choice: str):
@@ -11605,6 +11640,46 @@ def run_first_time_setup():
         )
     except Exception:
         pass
+
+
+def _running_mt5_terminal_paths() -> list:
+    """Đường dẫn đầy đủ các terminal64.exe (MT5) đang chạy, chỉ dùng Win32 API (không bật console). Lỗi -> []."""
+    paths = []
+    try:
+        import ctypes.wintypes as wt
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD), ("th32ProcessID", wt.DWORD),
+                        ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wt.DWORD), ("cntThreads", wt.DWORD),
+                        ("th32ParentProcessID", wt.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wt.DWORD),
+                        ("szExeFile", ctypes.c_wchar * 260)]
+
+        k32 = ctypes.windll.kernel32
+        k32.CreateToolhelp32Snapshot.restype = wt.HANDLE
+        snap = k32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+        if not snap or snap == wt.HANDLE(-1).value:
+            return []
+        try:
+            pe = PROCESSENTRY32W()
+            pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            ok = k32.Process32FirstW(snap, ctypes.byref(pe))
+            while ok:
+                if pe.szExeFile.lower() == "terminal64.exe":
+                    h = k32.OpenProcess(0x1000, False, pe.th32ProcessID)  # PROCESS_QUERY_LIMITED_INFORMATION
+                    if h:
+                        try:
+                            buf = ctypes.create_unicode_buffer(1024)
+                            size = wt.DWORD(1024)
+                            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)) and buf.value not in paths:
+                                paths.append(buf.value)
+                        finally:
+                            k32.CloseHandle(h)
+                ok = k32.Process32NextW(snap, ctypes.byref(pe))
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        return paths
+    return paths
 
 
 def _find_other_running_bot_pids() -> list:
