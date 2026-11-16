@@ -16,7 +16,8 @@ def make_app():
     root = mock.Mock()
     root.after.side_effect = lambda ms, fn: scheduled.append((ms, fn))
     app.__dict__.update(_mt5_lock=threading.RLock(), root=root, mt5_status_lbl=mock.Mock(),
-                        log_error=mock.Mock(), log=mock.Mock(), _algo_trading_on=lambda acc: True)
+                        log_error=mock.Mock(), log=mock.Mock(), _algo_trading_on=lambda acc: True,
+                        _get_profile_cfg=lambda pk: {"mt5_path": ""})
     return app, scheduled
 
 
@@ -83,6 +84,27 @@ class TestFindTerminal(unittest.TestCase):
             self.assertFalse(app.check_mt5_connection())
         self.assertEqual(len(scheduled), 1)
         self.assertTrue(any("không thấy terminal64.exe" in str(c.args[0]) for c in app.log.call_args_list))
+
+
+class TestMt5Path(unittest.TestCase):
+    def test_dung_duong_dan_cau_hinh(self):
+        app, _ = make_app()
+        exe = os.path.abspath(__file__)  # file có thật, đóng vai terminal64.exe
+        app._get_profile_cfg = lambda pk: {"mt5_path": f'"{exe}"'}
+        fake = mock.Mock()
+        fake.initialize.return_value = True
+        with mock.patch.object(b, "mt5", fake):
+            self.assertTrue(app._mt5_initialize())
+        fake.initialize.assert_called_once_with(path=exe)
+
+    def test_duong_dan_khong_ton_tai_dung_mac_dinh(self):
+        app, _ = make_app()
+        app._get_profile_cfg = lambda pk: {"mt5_path": r"Z:\khong_co	erminal64.exe"}
+        fake = mock.Mock()
+        fake.initialize.return_value = True
+        with mock.patch.object(b, "mt5", fake):
+            self.assertTrue(app._mt5_initialize())
+        fake.initialize.assert_called_once_with()
 
 
 if __name__ == "__main__":

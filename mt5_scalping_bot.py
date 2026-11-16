@@ -102,6 +102,7 @@ VN_TZ = timezone(timedelta(hours=7))
 # Đường dẫn lưu cấu hình người dùng, Nhật ký (Logs) & Icon trong AppData (không tạo file phụ trong thư mục dự án)
 SETTINGS_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Kronos_MT5_Bot")
 SETTINGS_FILE = os.path.join(SETTINGS_DIR, "user_settings.json")
+DEFAULT_MT5_PATH = r"C:\Program Files\MetaTrader 5\terminal64.exe"  # đường dẫn cài đặt MT5 mặc định
 INSTANCE_LOCK_FILE = os.path.join(SETTINGS_DIR, "app_instance.json")
 LOG_DIR = os.path.join(SETTINGS_DIR, "logs")
 ERROR_LOG_FILE = os.path.join(LOG_DIR, "app_error.log")
@@ -183,6 +184,11 @@ PARAM_HELP_GUIDE = {
         "title": "Số lệnh chưa BE tối đa (Max At-Risk Positions)",
         "what_is_it": "Giới hạn số lượng vị thế ĐANG CHỊU RỦI RO (chưa dời SL về hòa vốn BE) mở đồng thời tối đa của cặp tiền này.\n- QUY TẮC BẢO VỆ: Các lệnh ĐÃ DỜI BE (Risk-Free) sẽ tự động được LOẠI BỎ KHỎI BỘ ĐẾM, cho phép bot tiếp tục nhồi thêm lệnh pullback mới mà vẫn kiểm soát rủi ro tài khoản an toàn tuyệt đối!",
         "how_to_set": "- Đánh an toàn: Đặt 1 đến 2 lệnh chưa BE.\n- Đánh nhồi sóng dài: Đặt 3 đến 4 lệnh (khi lệnh cũ dời BE, bot sẽ tự động giải phóng hạn mức để mở thêm lệnh mới theo sóng).\n- Cảnh báo: Không nên đặt quá nhiều lệnh chưa BE để tránh rủi ro ký quỹ khi thị trường biến động giật mạnh."
+    },
+    "mt5_path": {
+        "title": "Đường dẫn MT5 (terminal64.exe)",
+        "what_is_it": "Vị trí chương trình MetaTrader 5 mà bot sẽ mở và kết nối. Bot dùng tài khoản đang đăng nhập trên MT5 này (DEMO hay THẬT tùy bạn đăng nhập).",
+        "how_to_set": "- Mặc định: C:\\Program Files\\MetaTrader 5\\terminal64.exe\n- Nếu cài MT5 ở thư mục khác (vd. bản MT5 riêng của Exness): bấm chuột phải biểu tượng MT5 > Open file location, rồi dán đường dẫn đầy đủ tới terminal64.exe vào đây và bấm Kết nối MT5.\n- Đường dẫn sai/không tồn tại: bot tự tìm MT5 đang chạy trên máy."
     },
     "magic_number": {
         "title": "Mã định danh lệnh (Magic Number)",
@@ -462,6 +468,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "lot": "0.01",
         "max_pos": "3",
         "magic_number": "20260501",
+        "mt5_path": DEFAULT_MT5_PATH,
         "scenarios": "8",
         "consensus": "75",
         "max_dispersion": "2.5",
@@ -522,6 +529,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "lot": "0.01",
         "max_pos": "3",
         "magic_number": "20260502",
+        "mt5_path": DEFAULT_MT5_PATH,
         "scenarios": "8",
         "consensus": "75",
         "max_dispersion": "2.5",
@@ -1331,7 +1339,7 @@ class KronosDesktopApp:
         # Cập nhật ngay giá Live, bảng lệnh đang mở và thông tin nhanh cho Tab vừa chọn
         try:
             with self._mt5_lock:
-                mt5_ready = bool(MT5_AVAILABLE and mt5.initialize())
+                mt5_ready = bool(MT5_AVAILABLE and self._mt5_initialize())
             if mt5_ready:
                 sym = self.symbol_var.get().strip()
                 tf_s = self.tf_var.get().strip()
@@ -2378,6 +2386,7 @@ class KronosDesktopApp:
         self.lot_var = self._add_labeled_entry(sec1.content, "Khối lượng (Lot):", "0.01", help_key="lot")
         self.max_pos_var = self._add_labeled_entry(sec1.content, "Số lệnh tối đa:", "3", help_key="max_pos")
         self.magic_number_var = self._add_labeled_entry(sec1.content, "Magic Number (Mã lệnh):", "20260501", help_key="magic_number")
+        self.mt5_path_var = self._add_labeled_entry(sec1.content, "Đường dẫn MT5:", DEFAULT_MT5_PATH, entry_width=18, help_key="mt5_path")
         tk.Button(
             sec1.content, text="↺ Khôi phục mặc định Mục 1 (Cài đặt cơ bản)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -5017,6 +5026,7 @@ class KronosDesktopApp:
             "lot": self.lot_var,
             "max_pos": self.max_pos_var,
             "magic_number": self.magic_number_var,
+            "mt5_path": self.mt5_path_var,
             "scenarios": self.scenarios_var,
             "consensus": self.consensus_var,
             "max_dispersion": self.max_dispersion_var,
@@ -5299,6 +5309,7 @@ class KronosDesktopApp:
                 if pk in self.profile_settings:
                     self.profile_settings[pk]["hf_token"] = token_val
                     self.profile_settings[pk]["hf_space"] = space_val
+                    self.profile_settings[pk]["mt5_path"] = str(self.mt5_path_var.get()).strip()
 
             payload = dict(self.profile_settings.get(self.active_profile_key, cur_data))
             payload["hf_token"] = token_val
@@ -5491,7 +5502,7 @@ class KronosDesktopApp:
     def reset_section_settings(self, section_num: int):
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
-            1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number"]),
+            1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path"]),
             2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
@@ -7189,7 +7200,7 @@ class KronosDesktopApp:
         self._mt5_lock.release()
         try:
             with self._mt5_lock:
-                mt5_ok = bool(MT5_AVAILABLE and (mt5.terminal_info() is not None or mt5.initialize()))
+                mt5_ok = bool(MT5_AVAILABLE and (mt5.terminal_info() is not None or self._mt5_initialize()))
             if mt5_ok:
                 active_pk = self.active_profile_key
                 symbol = self.symbol_var.get().strip()
@@ -9368,6 +9379,19 @@ class KronosDesktopApp:
         except Exception:
             return bool(getattr(acc, "trade_expert", False))
 
+    def _mt5_initialize(self) -> bool:
+        """mt5.initialize theo 'Đường dẫn MT5' trong cài đặt (mặc định DEFAULT_MT5_PATH); nếu file không tồn tại thì
+        dùng MT5 đã gắn được lần trước (tự tìm), cuối cùng là initialize() mặc định. Gọi bên trong _mt5_lock."""
+        try:
+            cfg_path = str(self._get_profile_cfg(getattr(self, "active_profile_key", "XAUUSD")).get("mt5_path", DEFAULT_MT5_PATH) or "").strip().strip('"')
+        except Exception:
+            cfg_path = DEFAULT_MT5_PATH
+        for pth in (cfg_path, getattr(self, "_mt5_found_path", "")):
+            if pth and os.path.isfile(pth):
+                if mt5.initialize(path=pth):
+                    return True
+        return bool(mt5.initialize())
+
     def _schedule_mt5_reconnect(self):
         """Tự thử kết nối MT5 lại khi lỗi (MT5 đang khởi động/đăng nhập): 5s/lần trong 2 phút đầu, sau đó 30s/lần."""
         try:
@@ -9391,7 +9415,7 @@ class KronosDesktopApp:
             self.mt5_status_lbl.config(text="Chưa cài MetaTrader5", fg=RED_DOWN)
             return False
         with self._mt5_lock:
-            _init_ok = mt5.initialize()
+            _init_ok = self._mt5_initialize()
             if not _init_ok:
                 err_c = mt5.last_error()
                 # Máy có thể có nhiều bộ cài MT5: thử gắn thẳng vào từng terminal64.exe ĐANG CHẠY,
@@ -9403,6 +9427,7 @@ class KronosDesktopApp:
                         if mt5.initialize(path=_pth) and mt5.account_info() is not None:
                             _diag.append(f"{_pth}: OK")
                             _init_ok = True
+                            self._mt5_found_path = _pth
                             break
                         _diag.append(f"{_pth}: {mt5.last_error()}")
                     except Exception as _e:
@@ -9562,7 +9587,7 @@ class KronosDesktopApp:
         rates = None
         for attempt in range(3):
             with self._mt5_lock:
-                if not mt5.initialize():
+                if not self._mt5_initialize():
                     raise RuntimeError("Không kết nối được phần mềm MT5 Exness.")
                 if not mt5.symbol_select(symbol, True):
                     raise RuntimeError(f"Không tìm thấy mã '{symbol}' trên MT5.")
@@ -9770,7 +9795,7 @@ class KronosDesktopApp:
 
         try:
             with self._mt5_lock:
-                if not mt5.initialize():
+                if not self._mt5_initialize():
                     self.log_error(f"OPEN_{action}_{pk}", extra_info="Chưa kết nối MT5", show_in_ui=False)
                     return False, "Chưa kết nối MT5."
                 if self._is_daily_limit_locked(pk):
