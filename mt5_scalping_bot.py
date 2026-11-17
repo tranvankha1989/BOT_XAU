@@ -8931,7 +8931,9 @@ class KronosDesktopApp:
             is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
             type_str = "BUY" if is_buy else "SELL"
             open_time = datetime.fromtimestamp(pos.time).strftime("%H:%M:%S")
-            elapsed_sec = max(0, int(time.time()) - int(pos.time))
+            # A38: pos.time là giờ SERVER; quy đổi về UTC bằng độ lệch server trước khi tính thời gian giữ
+            srv_off = self._server_offset_sec(pos.symbol)
+            elapsed_sec = max(0, int(time.time() + srv_off - pos.time))
             dur_str = self._format_duration(elapsed_sec)
             price_move = (pos.price_current - pos.price_open) if is_buy else (pos.price_open - pos.price_current)
 
@@ -9271,6 +9273,21 @@ class KronosDesktopApp:
         if age > self.TICK_MAX_AGE_SEC:
             return None
         return tick
+
+    def _server_offset_sec(self, symbol: str) -> float:
+        """A38: độ lệch giờ server MT5 so với UTC (giây), ước lượng từ tick.time - time.time() làm tròn về bội 900 giây.
+        Không có tick / lỗi -> 0.0 (giữ hành vi cũ, không chặn luồng quản lý lệnh)."""
+        try:
+            with self._mt5_lock:
+                tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                return 0.0
+            t_srv = float(getattr(tick, "time", 0) or 0)
+            if t_srv <= 0:
+                return 0.0
+            return round((t_srv - time.time()) / 900.0) * 900.0
+        except Exception:
+            return 0.0
 
     def _modify_position_sltp(self, pos, new_sl: float, new_tp: float, allow_widen_sl: bool = False) -> bool:
         with self._mt5_lock:
