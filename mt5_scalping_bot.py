@@ -7702,7 +7702,9 @@ class KronosDesktopApp:
             if consec_losses >= max_consec_loss and last_loss_deal is not None:
                 if ctx["last_cooldown_deal_ticket"] != last_loss_deal.ticket:
                     now_ts = int(time.time())
-                    elapsed_sec = max(0, now_ts - int(last_loss_deal.time))
+                    # A45: last_loss_deal.time là giờ SERVER; đổi về UTC trước khi so với now_ts
+                    srv_off_cd = int(self._server_offset_sec(symbol))
+                    elapsed_sec = max(0, now_ts - (int(last_loss_deal.time) - srv_off_cd))
                     total_cd_sec = cooldown_mins * 60.0
                     ctx["last_cooldown_deal_ticket"] = last_loss_deal.ticket
                     if elapsed_sec < total_cd_sec:
@@ -7737,8 +7739,10 @@ class KronosDesktopApp:
                     last_ticket = cd.get("ticket")
                     if ctx.get("last_fast_sl_deal_ticket") != last_ticket:
                         now_ts = int(time.time())
-                        close_ts = cd.get("close_ts", now_ts)
-                        elapsed_sec = max(0, now_ts - close_ts)
+                        # A45: close_ts là giờ SERVER; đổi về UTC (mặc định = bây giờ theo giờ server)
+                        srv_off_fs = int(self._server_offset_sec(symbol))
+                        close_ts = cd.get("close_ts", now_ts + srv_off_fs)
+                        elapsed_sec = max(0, now_ts - (int(close_ts) - srv_off_fs))
                         total_cd_sec = fast_sl_cd_candles * ana_tf_mins * 60.0
                         ctx["last_fast_sl_deal_ticket"] = last_ticket
                         if elapsed_sec < total_cd_sec:
@@ -9119,7 +9123,8 @@ class KronosDesktopApp:
 
                     # CHỈ gửi thông báo nếu lệnh đóng TỪ THỜI ĐIỂM BẬT APP TRỞ ĐI
                     close_ts = cd.get("close_ts", 0)
-                    if close_ts >= app_start_ts:
+                    # A45: close_ts là giờ SERVER; đổi về UTC trước khi so với giờ bật app
+                    if close_ts - int(self._server_offset_sec(cd.get("symbol") or "")) >= app_start_ts:
                         try:
                             self._telegram_notify_order_closed(cd)
                         except Exception:
