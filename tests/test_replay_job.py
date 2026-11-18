@@ -141,6 +141,9 @@ class TestHelpers(unittest.TestCase):
 
     def test_reason_labels(self):
         self.assertEqual(lr.close_reason_label({"reason": "TP"}), "Chốt lãi (TP)")
+        self.assertEqual(lr.close_reason_label({"reason": "SL", "profit": -4.0}), "Cắt lỗ (SL)")
+        self.assertEqual(lr.close_reason_label({"reason": "SL", "profit": 0.66}), "SL đã dời (có lãi)")
+        self.assertEqual(lr.close_reason_label({"reason": "SL", "profit": 0.0}), "SL tại hòa vốn")
         self.assertEqual(lr.close_reason_label({"reason": "Bot đóng", "comment": "KR_TIMEALL"}), "Hết giờ giữ lệnh (đóng tất)")
         self.assertEqual(lr.close_reason_label({"reason": "Đóng cuối kỳ", "comment": "AI_XAUUSD"}), "Đóng cuối kỳ")
 

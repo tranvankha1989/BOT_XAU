@@ -820,7 +820,12 @@ def close_reason_label(c: dict) -> str:
     """Nhãn lý do đóng lệnh tiếng Việt: SL/TP của sàn, mã KR_<mã> của bot, đóng cuối kỳ."""
     rsn = str(c.get("reason", ""))
     if rsn == "SL":
-        return "Cắt lỗ (SL)"
+        try:
+            pf = float(c.get("profit", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pf = 0.0
+        # SL đã được dời (BE/trailing) thì chạm SL có thể lãi hoặc hòa: không gọi là "cắt lỗ"
+        return "SL đã dời (có lãi)" if pf > 0.005 else ("SL tại hòa vốn" if pf >= -0.005 else "Cắt lỗ (SL)")
     if rsn == "TP":
         return "Chốt lãi (TP)"
     cmt = str(c.get("comment", "")).upper()
