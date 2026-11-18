@@ -1,6 +1,6 @@
 {
-  "version": "1.3.19",
+  "version": "1.3.20",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-18",
-  "description": "Phiên bản v1.3.19:\n- [MỚI] Ô 'Ghi nhật ký debug theo nến' trong Mục 2 (mặc định TẮT). Khi bật, bot ghi file JSONL trong thư mục logs\trace: số liệu AI và quyết định mỗi nến, lý do từng cổng canh vùng, và trạng thái lệnh đang mở. Chỉ phục vụ chẩn đoán, không đổi luật giao dịch.\n- [CÔNG CỤ] Backtest mặc định chạy chính code bot live (tools/run_backtest.py --engine live), cho kết quả khớp hơn với bot live.\n- [SỬA] Cập nhật logic giờ server MT5 (A38) và cooldown chuỗi thua / SL nhanh (A45).\n- Không đổi luật giao dịch mặc định."
+  "description": "Phiên bản v1.3.20:\n- [THAY ĐỔI] Mặc định 'Giữ lệnh tối đa' = 15 phút (trước là 0 = tắt). Máy đã lưu cấu hình giữ nguyên giá trị cũ; muốn dùng 15 phút thì sửa ô trong Mục 3 rồi lưu. Kiểm thử phát lại 17-18/11: lãi ròng +43.98$ so với -41.97$ khi giữ 5 phút.\n- [MỚI] Ô 'Gỡ vốn' trong Mục 3 (mặc định TẮT): khi đã lỗ ròng trong ngày, đóng lệnh đang lãi (chưa BE) có lãi >= phần lỗ.\n- [THỬ NGHIỆM] Ô 'Hướng vào lệnh theo cấu trúc đỉnh/đáy' trong Mục 2 (mặc định TẮT). Chưa đủ bằng chứng, chưa khuyên bật.\n- Không đổi các luật giao dịch khác."
 }
