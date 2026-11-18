@@ -71,7 +71,7 @@ class TestRunBacktest(unittest.TestCase):
 
     def run_cli(self, *extra):
         argv = ["--profile", "XAUUSD", "--symbol", "XAUUSDm", "--start", "2023-11-14", "--end", "2023-11-15",
-                "--no-ai", "--out", self.out, *extra]
+                "--no-ai", "--out", self.out, "--engine", "legacy", *extra]
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             code = rb.run(argv)
@@ -396,7 +396,8 @@ class TestTrendFilterFlags(unittest.TestCase):
         fake_mt5 = SimpleNamespace(initialize=lambda: False, last_error=lambda: (1, "x"))
         buf = io.StringIO()
         with mock.patch.object(rb, "load_strategy_cfg", return_value=(cfg, 0, "mock")), mock.patch.object(rb, "mt5", fake_mt5),                 mock.patch.object(rb, "apply_threads"), contextlib.redirect_stdout(buf):
-            code = rb.run(["--profile", "XAUUSD", "--symbol", "XAUUSDm", "--start", "2026-11-12", "--end", "2026-11-12", *flags])
+            code = rb.run(["--profile", "XAUUSD", "--symbol", "XAUUSDm", "--start", "2026-11-12", "--end", "2026-11-12",
+                           "--engine", "legacy", *flags])
         return code, buf.getvalue(), cfg
 
     def test_cli_in_gia_tri_hieu_luc_o_dau_log(self):
