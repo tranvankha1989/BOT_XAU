@@ -350,7 +350,14 @@ class FakeBroker:
         profit = self._profit(pos.type, vol, pos.price_open, px)
         oid, did = self._new_id(), self._new_id()
         dtype = 1 if pos.type == self.POSITION_TYPE_BUY else 0
-        deal = self._deal(did, oid, ms, dtype, self.DEAL_ENTRY_OUT, pos.magic, pos.ticket, reason, vol, px, profit, pos.symbol, pos.comment)
+        # MT5 thật ghi comment deal đóng do sàn là "[sl giá]" / "[tp giá]"; bot dựa vào đó nhận biết SL (vd. nghỉ SL nhanh)
+        if reason == self.DEAL_REASON_SL:
+            d_cmt = f"[sl {px:.2f}]"
+        elif reason == self.DEAL_REASON_TP:
+            d_cmt = f"[tp {px:.2f}]"
+        else:
+            d_cmt = pos.comment
+        deal = self._deal(did, oid, ms, dtype, self.DEAL_ENTRY_OUT, pos.magic, pos.ticket, reason, vol, px, profit, pos.symbol, d_cmt)
         self.deals.append(deal)
         self.orders.append(self._order(oid, ms, 1 if pos.type == self.POSITION_TYPE_BUY else 0, pos.magic, pos.ticket,
                                        vol, px, 0.0, 0.0, pos.symbol, pos.comment))
