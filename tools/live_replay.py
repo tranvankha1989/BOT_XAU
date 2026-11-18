@@ -312,7 +312,7 @@ class FakeBroker:
                 return self._result(self.TRADE_RETCODE_POSITION_CLOSED, "Position doesn't exist")
             px = bid if pos.type == self.POSITION_TYPE_BUY else ask
             vol = min(float(req.get("volume", pos.volume)), pos.volume)
-            deal = self._close(pos, px, ms, self.DEAL_REASON_EXPERT, vol, "bot")
+            deal = self._close(pos, px, ms, self.DEAL_REASON_EXPERT, vol, "bot", comment=req.get("comment"))
             return self._result(self.TRADE_RETCODE_DONE, "Request executed", order=deal.order, deal=deal.ticket, price=px, volume=vol)
         otype = req.get("type")
         ptype = self.POSITION_TYPE_BUY if otype == self.ORDER_TYPE_BUY else self.POSITION_TYPE_SELL
@@ -346,7 +346,7 @@ class FakeBroker:
                                      volume_initial=vol, volume_current=0.0, price_open=px, sl=sl, tp=tp,
                                      price_current=px, symbol=sym, comment=comment, reason=self.DEAL_REASON_EXPERT)
 
-    def _close(self, pos, px, ms, reason, vol, how):
+    def _close(self, pos, px, ms, reason, vol, how, comment=None):
         profit = self._profit(pos.type, vol, pos.price_open, px)
         oid, did = self._new_id(), self._new_id()
         dtype = 1 if pos.type == self.POSITION_TYPE_BUY else 0
@@ -356,7 +356,7 @@ class FakeBroker:
         elif reason == self.DEAL_REASON_TP:
             d_cmt = f"[tp {px:.2f}]"
         else:
-            d_cmt = pos.comment
+            d_cmt = comment or pos.comment  # MT5 thật: deal đóng do bot mang comment của lệnh đóng (KR_<mã>)
         deal = self._deal(did, oid, ms, dtype, self.DEAL_ENTRY_OUT, pos.magic, pos.ticket, reason, vol, px, profit, pos.symbol, d_cmt)
         self.deals.append(deal)
         self.orders.append(self._order(oid, ms, 1 if pos.type == self.POSITION_TYPE_BUY else 0, pos.magic, pos.ticket,
