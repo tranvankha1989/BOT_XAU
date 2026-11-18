@@ -55,7 +55,7 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 | `confirm_entry_pa` | `pa_min_confirmations`, `pa_fail_open` |
 `be_plus_price` dùng chung cho BE, giữ lệnh, đảo chiều nên không là con của mục nào.
 
-**Thông số mới gần đây** (mặc định, Mục): `debug_trace` (tắt, 2: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3: gỡ vốn),
+**Thông số mới gần đây** (mặc định, Mục): `debug_trace` (tắt, 4: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3 nhóm giới hạn ngày: gỡ vốn),
 `structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `max_hold_mins` mặc định 15,
 `max_hold_action` mặc định "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)".
 Mã lý do đóng lệnh ghi vào comment MT5 `KR_<mã>` (TIME, TIMEALL, BE, GOV, REV, REVCUT, BASKET, DAILY, MANUAL, ALL):
