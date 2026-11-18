@@ -1,6 +1,6 @@
 {
-  "version": "1.3.18",
+  "version": "1.3.19",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-16",
-  "description": "Phiên bản v1.3.18:\n- [MỚI] Ô 'Số luồng AI (CPU)' trong Mục 1 (Auto/2/4/6/8). Chỉ ảnh hưởng tốc độ, không đổi độ chính xác. Hai máy đặt CÙNG số luồng (vd. 2) sẽ cho kết quả phân tích AI giống nhau. Bot không bao giờ vượt mức an toàn của máy (tối đa 4 luồng, không quá 1/2 CPU); chọn cao hơn sẽ tự hạ và ghi log.\n- [CÔNG CỤ] Bộ phát lại (live replay) chạy chính code bot trên dữ liệu quá khứ để đánh giá luật sát thực tế; công cụ backtest nhận file cấu hình máy khác (--config).\n- Không đổi luật giao dịch."
+  "release_date": "2026-11-18",
+  "description": "Phiên bản v1.3.19:\n- [MỚI] Ô 'Ghi nhật ký debug theo nến' trong Mục 2 (mặc định TẮT). Khi bật, bot ghi file JSONL trong thư mục logs\trace: số liệu AI và quyết định mỗi nến, lý do từng cổng canh vùng, và trạng thái lệnh đang mở. Chỉ phục vụ chẩn đoán, không đổi luật giao dịch.\n- [CÔNG CỤ] Backtest mặc định chạy chính code bot live (tools/run_backtest.py --engine live), cho kết quả khớp hơn với bot live.\n- [SỬA] Cập nhật logic giờ server MT5 (A38) và cooldown chuỗi thua / SL nhanh (A45).\n- Không đổi luật giao dịch mặc định."
 }
