@@ -531,7 +531,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rev_loss_mode": "wait_be",
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
-        "max_hold_mins": "0",
+        "max_hold_mins": "15",
         "max_hold_action": "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
@@ -596,7 +596,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rev_loss_mode": "wait_be",
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
-        "max_hold_mins": "0",
+        "max_hold_mins": "15",
         "max_hold_action": "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
@@ -2536,7 +2536,7 @@ class KronosDesktopApp:
         self.recovery_close_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec3.content, "Gỡ vốn: đóng lệnh đang lãi (chưa BE) khi lãi ≥ lỗ ròng đã chốt trong ngày", self.recovery_close_var)
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
-        self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "0", help_key="max_hold_mins")
+        self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "15", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
             sec3.content, "   Xử lý khi vượt thời gian:",
             [
