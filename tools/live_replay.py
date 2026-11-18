@@ -174,6 +174,7 @@ class FakeBroker:
         self.deals = []
         self.orders = []
         self.closed = []              # tổng kết từng lệnh đã đóng (báo cáo)
+        self.sltp_log = []            # (ms, ticket, sl, tp): lúc mở lệnh + mỗi lần sửa SL/TP (trình phát lại trong app)
         self._next_id = 100000
         self.rejects = []
 
@@ -303,6 +304,7 @@ class FakeBroker:
                 self.rejects.append((self.clock.now, "SLTP", pos.ticket, sl, tp, bid, ask))
                 return self._result(self.TRADE_RETCODE_INVALID_STOPS, "Invalid stops")
             pos.sl, pos.tp, pos.time_update = sl, tp, ms // 1000
+            self.sltp_log.append((int(ms), int(pos.ticket), sl, tp))
             return self._result(self.TRADE_RETCODE_DONE, "Request executed", order=self._new_id())
         if act != self.TRADE_ACTION_DEAL:
             return self._result(10013, "Invalid request")
@@ -329,6 +331,7 @@ class FakeBroker:
             price_current=px, swap=0.0, profit=0.0, symbol=req.get("symbol", self.symbol), comment=str(req.get("comment", "")),
             external_id="", _sl0=sl, _tp0=tp)
         self.positions.append(pos)
+        self.sltp_log.append((int(ms), int(oid), sl, tp))
         did = self._new_id()
         self.deals.append(self._deal(did, oid, ms, 0 if ptype == self.POSITION_TYPE_BUY else 1, self.DEAL_ENTRY_IN,
                                      pos.magic, oid, self.DEAL_REASON_EXPERT, vol, px, 0.0, pos.symbol, pos.comment))
@@ -365,7 +368,7 @@ class FakeBroker:
         self.closed.append({"ticket": pos.ticket, "type": "BUY" if pos.type == self.POSITION_TYPE_BUY else "SELL",
                             "open_ms": pos.time_msc, "close_ms": ms, "price_open": pos.price_open, "price_close": px,
                             "sl0": pos._sl0, "tp0": pos._tp0, "sl_last": pos.sl, "volume": vol, "profit": profit,
-                            "reason": rsn})
+                            "reason": rsn, "comment": str(d_cmt or "")})
         if vol >= pos.volume - 1e-9:
             self.positions.remove(pos)
         else:
@@ -587,7 +590,7 @@ class Replayer:
     (các hàm vòng tick khi đó không làm gì)."""
 
     def __init__(self, bot_mod, app, broker: FakeBroker, clock: SimClock, pk: str, cfg: dict,
-                 ai_latency: float = 8.5, auto_step: float = 2.0, detect_delay: float = 1.6, progress=None):
+                 ai_latency: float = 8.5, auto_step: float = 2.0, detect_delay: float = 1.6, progress=None, progress_step: int = 5):
         self.bot, self.app, self.broker, self.clock, self.pk, self.cfg = bot_mod, app, broker, clock, pk, cfg
         self.ai_latency, self.auto_step, self.detect_delay = float(ai_latency), float(auto_step), float(detect_delay)
         self.symbol = str(cfg.get("symbol", "")).strip()
@@ -596,6 +599,7 @@ class Replayer:
         self.analysis_due = None
         self.analysis_ts = None
         self.progress = progress
+        self.progress_step = max(1, int(progress_step))
         self.n_analyses = 0
 
     def _ctx(self):
@@ -681,7 +685,7 @@ class Replayer:
             last = t
             if self.progress:
                 pct = int((t - start_utc) * 100 / max(end_utc - start_utc, 1))
-                if pct != last_pct and pct % 5 == 0:
+                if pct != last_pct and pct % self.progress_step == 0:
                     last_pct = pct
                     self.progress(pct, t)
             if not self._busy():
@@ -694,9 +698,32 @@ class Replayer:
         self.broker.process_ticks(last, end_utc)
 
 
+class _AttrPatch:
+    """Thay tạm 1 thuộc tính module rồi trả lại (như mock.patch.object, không cần unittest trong bản .exe)."""
+
+    def __init__(self, obj, name, new):
+        self.obj, self.name, self.new = obj, name, new
+        self.had, self.old = False, None
+
+    def start(self):
+        self.had = hasattr(self.obj, self.name)
+        self.old = getattr(self.obj, self.name, None)
+        setattr(self.obj, self.name, self.new)
+
+    def stop(self):
+        if self.had:
+            setattr(self.obj, self.name, self.old)
+        else:
+            try:
+                delattr(self.obj, self.name)
+            except AttributeError:
+                pass
+
+
 # ───────────────────────── Báo cáo ─────────────────────────
 def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc: float, capital: float = 1000.0,
-             seed: int = 1, ai_latency: float = 8.5, detect_delay: float = 1.6, use_cache: bool = True, progress=None) -> dict:
+             seed: int = 1, ai_latency: float = 8.5, detect_delay: float = 1.6, use_cache: bool = True, progress=None,
+             progress_step: int = 5) -> dict:
     """Phát lại CHÍNH code bot live trên tick MT5 (chỉ đọc). cfg đã được nạp và ghi đè (rb.load_strategy_cfg + --set).
     Trả dict: closed (lệnh đã đóng, có cả lệnh đóng cuối kỳ), rejects, logs, errors, n_analyses, cache, end_utc.
     progress(pct, t_sec, n_closed, n_analyses, cache) được gọi định kỳ nếu có."""
@@ -724,13 +751,12 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
     if cache is not None:
         install_ai_cache(app, cache)
 
-    from unittest import mock
     patches = [
-        mock.patch.object(bot_mod, "mt5", broker), mock.patch.object(bot_mod, "MT5_AVAILABLE", True),
-        mock.patch.object(bot_mod, "time", FakeTimeModule(clock)),
-        mock.patch.object(bot_mod, "datetime", make_fake_datetime(clock)),
-        mock.patch.object(tw_mod, "datetime", make_fake_datetime(clock)),
-        mock.patch.object(bot_mod, "threading", FakeThreadingModule()),
+        _AttrPatch(bot_mod, "mt5", broker), _AttrPatch(bot_mod, "MT5_AVAILABLE", True),
+        _AttrPatch(bot_mod, "time", FakeTimeModule(clock)),
+        _AttrPatch(bot_mod, "datetime", make_fake_datetime(clock)),
+        _AttrPatch(tw_mod, "datetime", make_fake_datetime(clock)),
+        _AttrPatch(bot_mod, "threading", FakeThreadingModule()),
     ]
     rp_holder = {}
 
@@ -739,7 +765,8 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
             rp = rp_holder["rp"]
             progress(pct, t, len(broker.closed), rp.n_analyses, cache)
 
-    rp = Replayer(bot_mod, app, broker, clock, pk, cfg, ai_latency=ai_latency, detect_delay=detect_delay, progress=_progress)
+    rp = Replayer(bot_mod, app, broker, clock, pk, cfg, ai_latency=ai_latency, detect_delay=detect_delay, progress=_progress,
+                  progress_step=progress_step)
     rp_holder["rp"] = rp
     app.enqueue_ai_scan = rp.request_scan
     for p in patches:
@@ -759,7 +786,8 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
             broker.closed[-1]["reason"] = "Đóng cuối kỳ"
     return {"closed": broker.closed, "rejects": broker.rejects, "logs": logs, "errors": errors,
             "n_analyses": rp.n_analyses, "cache": cache, "end_utc": end_utc,
-            "contract": float(sym_info.get("trade_contract_size", 100.0) or 100.0)}
+            "contract": float(sym_info.get("trade_contract_size", 100.0) or 100.0),
+            "sltp": list(broker.sltp_log), "ticks_ms": ms, "ticks_bid": bid}
 
 
 def summarize(closed: list) -> dict:
@@ -781,6 +809,139 @@ def summarize(closed: list) -> dict:
             "max_loss_streak": max_streak}
 
 
+KR_REASON_LABELS = {
+    "KR_TIMEALL": "Hết giờ giữ lệnh (đóng tất)", "KR_TIME": "Hết giờ giữ lệnh", "KR_BE": "Về Entry (BE)",
+    "KR_GOV": "Gỡ vốn", "KR_REVCUT": "AI đảo chiều - cắt lỗ", "KR_REV": "AI đảo chiều - chốt",
+    "KR_BASKET": "Chốt chùm lệnh", "KR_DAILY": "Giới hạn lãi/lỗ ngày", "KR_MANUAL": "Đóng tay", "KR_ALL": "Đóng tất cả",
+}
+
+
+def close_reason_label(c: dict) -> str:
+    """Nhãn lý do đóng lệnh tiếng Việt: SL/TP của sàn, mã KR_<mã> của bot, đóng cuối kỳ."""
+    rsn = str(c.get("reason", ""))
+    if rsn == "SL":
+        return "Cắt lỗ (SL)"
+    if rsn == "TP":
+        return "Chốt lãi (TP)"
+    cmt = str(c.get("comment", "")).upper()
+    for k in sorted(KR_REASON_LABELS, key=len, reverse=True):
+        if cmt.startswith(k):
+            return KR_REASON_LABELS[k]
+    return rsn or "Bot đóng"
+
+
+def build_player_data(ms, bid, start_utc: float, end_utc: float, context_sec: int = 6 * 3600) -> dict:
+    """Nến 1 giây (O/H/L/C theo giá Bid) từ tick, từ (start - context_sec) tới end: trình phát lại dựng nến M1/M5 mượt từ đây."""
+    ms = np.asarray(ms, dtype=np.int64)
+    bid = np.asarray(bid, dtype=np.float64)
+    lo, hi = int((start_utc - context_sec) * 1000), int(end_utc * 1000) + 999
+    sel = (ms >= lo) & (ms <= hi)
+    ms, bid = ms[sel], bid[sel]
+    if len(ms) == 0:
+        z = np.zeros(0)
+        return {"sec": z.astype(np.int64), "o": z, "h": z, "l": z, "c": z}
+    sec = ms // 1000
+    starts = np.r_[0, np.nonzero(np.diff(sec))[0] + 1]
+    ends = np.r_[starts[1:], len(sec)]
+    return {"sec": sec[starts].astype(np.int64), "o": bid[starts].astype(np.float32),
+            "h": np.maximum.reduceat(bid, starts).astype(np.float32), "l": np.minimum.reduceat(bid, starts).astype(np.float32),
+            "c": bid[ends - 1].astype(np.float32)}
+
+
+class ReplayCancelled(Exception):
+    pass
+
+
+def run_replay_job(job_path: str) -> int:
+    """Một lượt backtest cho tab Backtest của app, chạy ở TIẾN TRÌNH RIÊNG (không đụng bot live đang chạy).
+    job JSON: profile, cfg (cấu hình backtest đã gộp, không token), symbol, start, end (YYYY-MM-DD giờ VN), capital, threads, seed, out_dir.
+    Ghi vào out_dir: progress.jsonl (tiến độ), result.json (lệnh + tóm tắt + lịch sử SL/TP), player.npz (nến 1 giây), log.txt.
+    Có file out_dir/cancel -> dừng sớm. Trả mã thoát: 0 xong, 3 bị hủy, 1 lỗi."""
+    import json as _json
+    import traceback as _tb
+    with open(job_path, "r", encoding="utf-8") as f:
+        job = _json.load(f)
+    out_dir = job["out_dir"]
+    os.makedirs(out_dir, exist_ok=True)
+    prog_path = os.path.join(out_dir, "progress.jsonl")
+    cancel_path = os.path.join(out_dir, "cancel")
+
+    def emit(**kw):
+        kw["wall"] = round(_real_time.time(), 2)
+        with open(prog_path, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(kw, ensure_ascii=False) + "\n")
+
+    try:
+        import run_backtest as rb
+        import mt5_scalping_bot as bot_mod
+        pk = job["profile"]
+        cfg_file = os.path.join(out_dir, "config.json")
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            _json.dump({"profiles": {pk: job.get("cfg", {})}}, f, ensure_ascii=False, indent=1)
+        cfg, n_loaded, note = rb.load_strategy_cfg(pk, cfg_file)  # cùng cách nạp như dòng lệnh: chỉ khóa chiến lược, không token
+        cfg["engine"] = "Chạy trực tiếp máy Local"
+        cfg["telegram_enabled"] = False
+        symbol = str(job.get("symbol") or cfg.get("symbol") or bot_mod.DEFAULT_PROFILE_SETTINGS[pk]["symbol"]).strip()
+        cfg["symbol"] = symbol
+        lot = str(job.get("cfg", {}).get("lot", "")).strip()
+        if lot:
+            cfg["lot"] = lot
+        d0 = datetime.strptime(job["start"], "%Y-%m-%d").replace(tzinfo=VN_TZ)
+        d1 = datetime.strptime(job["end"], "%Y-%m-%d").replace(tzinfo=VN_TZ) + timedelta(days=1) - timedelta(seconds=1)
+        start_utc, end_utc = d0.timestamp(), d1.timestamp()
+        n_thr = max(1, int(job.get("threads", 2)))
+        rb.apply_threads(n_thr)
+        seed = int(job.get("seed", 1))
+        rb.set_seed(seed)
+        keys = ["tf", "analysis_tf", "lot", "scenarios", "consensus", "max_dispersion", "min_move", "sl_buffer", "max_sl_price", "rr",
+                "min_entry_spacing", "max_pos", "entry_mode", "max_hold_mins", "max_hold_action", "confirm_entry_pa",
+                "pa_min_confirmations", "lookback", "pred_len", "daily_tp_usd", "daily_sl_usd", "blocked_trading_windows"]
+        params = {k: cfg.get(k) for k in keys}
+        emit(type="start", note=note, symbol=symbol, threads=n_thr, params=params)
+        t_wall = _real_time.perf_counter()
+
+        def progress(pct, t, n_closed, n_an, cache):
+            if os.path.exists(cancel_path):
+                raise ReplayCancelled()
+            emit(type="progress", pct=int(pct), t=float(t), closed=int(n_closed), analyses=int(n_an),
+                 mins=round((_real_time.perf_counter() - t_wall) / 60.0, 2))
+
+        emit(type="progress", pct=0, t=start_utc, closed=0, analyses=0, mins=0.0, stage="Đang đọc dữ liệu tick từ MT5 (chỉ đọc)...")
+        res = simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=float(job.get("capital", 1000.0)), seed=seed,
+                       progress=progress, progress_step=1)
+        closed = res["closed"]
+        for c in closed:
+            c["reason_label"] = close_reason_label(c)
+        with open(os.path.join(out_dir, "log.txt"), "w", encoding="utf-8") as f:
+            for t, msg in res["logs"]:
+                f.write(f"[{vn(t, is_ms=False)}] {msg}\n")
+            if res["errors"]:
+                f.write("\n===== LỖI =====\n")
+                for t, msg in res["errors"]:
+                    f.write(f"[{vn(t, is_ms=False)}] {msg}\n")
+        pdata = build_player_data(res["ticks_ms"], res["ticks_bid"], start_utc, res["end_utc"])
+        np.savez_compressed(os.path.join(out_dir, "player.npz"), **pdata)
+        cache = res["cache"]
+        out = {"status": "done", "profile": pk, "symbol": symbol, "start_utc": start_utc, "end_utc": res["end_utc"],
+               "capital": float(job.get("capital", 1000.0)), "note": note, "params": params, "summary": summarize(closed),
+               "closed": closed, "sltp": res["sltp"], "n_analyses": res["n_analyses"], "rejects": len(res["rejects"]),
+               "errors": [m for _t, m in res["errors"]][:50], "n_errors": len(res["errors"]),
+               "cache_hits": getattr(cache, "hits", 0), "cache_misses": getattr(cache, "misses", 0),
+               "minutes": round((_real_time.perf_counter() - t_wall) / 60.0, 2), "tf": cfg.get("tf"), "analysis_tf": cfg.get("analysis_tf")}
+        tmp = os.path.join(out_dir, "result.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(out, f, ensure_ascii=False, default=float)
+        os.replace(tmp, os.path.join(out_dir, "result.json"))
+        emit(type="done", n=len(closed))
+        return 0
+    except ReplayCancelled:
+        emit(type="cancelled")
+        return 3
+    except BaseException as e:  # noqa: BLE001 - mọi lỗi phải báo về app qua file
+        emit(type="error", msg=f"{type(e).__name__}: {e}", tb=_tb.format_exc()[-3000:])
+        return 1
+
+
 def vn(ms_or_s, is_ms=True) -> str:
     s = ms_or_s / 1000.0 if is_ms else ms_or_s
     return datetime.fromtimestamp(s, VN_TZ).strftime("%d/%m %H:%M:%S")
@@ -800,6 +961,12 @@ def main(argv=None) -> int:
     ap.add_argument("--detect-delay", type=float, default=1.6, help="Giây sau mốc đóng nến phân tích mà vòng nến phát hiện (log live: 1.2-2.1s)")
     ap.add_argument("--no-cancel-pending", action="store_true", help="So sánh: tắt hủy lệnh chờ cũ khi nến mới (hành vi trước 18/11)")
     ap.add_argument("--out", default=None, help="Thư mục xuất (mặc định SETTINGS_DIR\\replays)")
+    ap.add_argument("--job", default=None, help="(Dùng bởi app) chạy 1 tác vụ backtest từ file JSON, kết quả ghi ra thư mục của tác vụ")
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--job" in argv:  # tác vụ của app: không cần --profile/--start/--end
+        i = argv.index("--job")
+        return run_replay_job(argv[i + 1])
     args = ap.parse_args(argv)
 
     import run_backtest as rb

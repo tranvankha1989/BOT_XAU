@@ -134,6 +134,9 @@ if __name__ == "__main__":
     # Các module giao dịch tách riêng (trading_modules/*.py): gói cùng container; bot tự nạp chúng khi chạy từ core_engine.bin
     for _f in sorted((ROOT_DIR / "trading_modules").glob("*.py")):
         src["trading_modules" if _f.stem == "__init__" else f"trading_modules.{_f.stem}"] = _f
+    # Công cụ phát lại (backtest bằng CODE LIVE trong tab Backtest): tiến trình con của .exe nạp các module này từ container
+    for _name in ("bt_ai_cache", "run_backtest", "live_replay"):
+        src[_name] = ROOT_DIR / "tools" / f"{_name}.py"
     if len(sys.argv) > 1:  # python tools/binary_packer.py <đường_dẫn_xuất>: ghi ra nơi khác (không đè core_engine.bin đang dùng)
         out_file = Path(sys.argv[1])
     print("[*] Đang băm và mã hóa toàn bộ mã nguồn sang file nhị phân (core_engine.bin)...")
