@@ -3673,12 +3673,6 @@ class KronosDesktopApp:
             command=self._copy_menu_settings_to_bt
         ).pack(side=tk.RIGHT, padx=2)
 
-        tk.Button(
-            ctrl_frame, text="⚙️ Thông số Backtest", bg="#3a2a0b", fg=GOLD_ACCENT,
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=1, cursor="hand2",
-            command=self._open_bt_settings_window
-        ).pack(side=tk.RIGHT, padx=2)
-
         # 2. THANH TRẠNG THÁI & TIẾN ĐỘ KIỂM THỬ (PROGRESS BAR)
         status_box = tk.Frame(self.bt_main_frame, bg="#0e131b", padx=8, pady=2)
         status_box.pack(fill=tk.X, padx=6, pady=(0, 2))
@@ -3699,11 +3693,19 @@ class KronosDesktopApp:
         ).pack(side=tk.RIGHT, padx=(4, 4))
         if not hasattr(self, "bt_engine_var"):
             self.bt_engine_var = tk.StringVar(value=self.BT_LIVE_ENGINE_LABEL)
-        ttk.Combobox(
+        eng_cb = ttk.Combobox(
             status_box, textvariable=self.bt_engine_var, values=[self.BT_LIVE_ENGINE_LABEL, self.BT_LEGACY_ENGINE_LABEL],
-            width=26, state="readonly"
-        ).pack(side=tk.RIGHT, padx=(4, 2))
+            width=25, state="readonly"
+        )
+        eng_cb.pack(side=tk.RIGHT, padx=(4, 2))
+        eng_cb.bind("<<ComboboxSelected>>", lambda e: self._bt_on_engine_changed())
         tk.Label(status_box, text="Engine:", bg="#0e131b", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.RIGHT)
+        tk.Button(
+            status_box, text="⚙️ Thông số Backtest", bg="#3a2a0b", fg=GOLD_ACCENT,
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=0, cursor="hand2",
+            command=self._open_bt_settings_window
+        ).pack(side=tk.RIGHT, padx=(4, 8))
+        self._bt_on_engine_changed()
 
         # 3. DÃY 6 THẺ KPI SCORECARDS CHỈ SỐ TÀI CHÍNH
         kpi_frame = tk.Frame(self.bt_main_frame, bg=PANEL_BG)
@@ -4207,9 +4209,20 @@ class KronosDesktopApp:
     # Engine "Code Live" chạy tools/live_replay (CHÍNH code bot live trên tick quá khứ, sàn giả lập) ở tiến trình con:
     # live_replay thay mt5/time/datetime cấp module nên KHÔNG được chạy chung tiến trình với bot live.
     # Tiến trình con: độ ưu tiên thấp, ít luồng AI; báo tiến độ qua file progress.jsonl, kết quả result.json + player.npz.
-    BT_LIVE_ENGINE_LABEL = "🧠 Code Live (chuẩn, giống bot live)"
-    BT_LEGACY_ENGINE_LABEL = "⚡ Engine cũ (nhanh, KHÁC live)"
+    BT_LIVE_ENGINE_LABEL = "🧠 Code Live (giống bot live)"
+    BT_LEGACY_ENGINE_LABEL = "⚡ Engine cũ (nhanh, khác live)"
     BT_RUNS_KEEP = 10
+
+    def _bt_on_engine_changed(self):
+        """Engine Code Live luôn dùng tick thật + AI: làm mờ 2 ô chỉ dùng cho engine cũ (Dữ liệu, Não AI)."""
+        live = self._bt_engine_is_live()
+        for name, on_state in (("bt_prec_combo", "readonly"), ("bt_ai_chk", "normal")):
+            w = getattr(self, name, None)
+            try:
+                if w is not None and w.winfo_exists():
+                    w.config(state="disabled" if live else on_state)
+            except Exception:
+                pass
 
     def _bt_engine_is_live(self) -> bool:
         try:
