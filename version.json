@@ -1,6 +1,6 @@
 {
-  "version": "1.3.20",
+  "version": "1.3.21",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-18",
-  "description": "Phiên bản v1.3.20:\n- [THAY ĐỔI] Mặc định 'Giữ lệnh tối đa' = 15 phút (trước là 0 = tắt). Máy đã lưu cấu hình giữ nguyên giá trị cũ; muốn dùng 15 phút thì sửa ô trong Mục 3 rồi lưu. Kiểm thử phát lại 17-18/11: lãi ròng +43.98$ so với -41.97$ khi giữ 5 phút.\n- [MỚI] Ô 'Gỡ vốn' trong Mục 3 (mặc định TẮT): khi đã lỗ ròng trong ngày, đóng lệnh đang lãi (chưa BE) có lãi >= phần lỗ.\n- [THỬ NGHIỆM] Ô 'Hướng vào lệnh theo cấu trúc đỉnh/đáy' trong Mục 2 (mặc định TẮT). Chưa đủ bằng chứng, chưa khuyên bật.\n- Không đổi các luật giao dịch khác."
+  "description": "Phiên bản v1.3.21:\n- [THAY ĐỔI] Hết thời gian giữ lệnh: lệnh đang LÃI không còn bị đóng, bot dời SL về Entry+ (BE+) và để lệnh chạy tiếp tới TP; lệnh đang lỗ vẫn dời TP về hòa vốn. Lựa chọn cũ 'Chốt lời (nếu lãi)' đã bỏ, cấu hình cũ tự chuyển sang cách mới.\n- [MỚI] Cột Trạng thái hiện rõ lý do đóng lệnh (hết giờ giữ lệnh, về Entry, gỡ vốn, AI đảo chiều, chốt chùm, giới hạn ngày, đóng tay...). Áp dụng cho lệnh đóng từ bản này.\n- [SỬA] Lệnh thoát quanh hòa vốn (lỗ rất nhỏ, >= -0.1R) xếp BE+, không tính là lệnh thua. Telegram đếm và báo đúng lệnh hòa vốn.\n- [GIAO DIỆN] Ô được tích đổi màu nổi bật; thông số con thụt vào và mờ đi khi thông số cha tắt; thêm giải thích (?) cho thông số mới; cột Trạng thái rộng hơn; bấm vào lệnh không còn phóng to biểu đồ; xem lại được lệnh cũ tới 5000 nến."
 }
