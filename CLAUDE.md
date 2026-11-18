@@ -52,11 +52,12 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 | `basket_tp_usd` (> 0) | `basket_cooldown_mins` |
 | `max_hold_mins` (> 0) | `max_hold_action` |
 | `max_consec_loss` (> 0) | `cooldown_mins` |
+| `fast_sl_cooldown_candles` (> 0) | `fast_sl_same_dir` |
 | `confirm_entry_pa` | `pa_min_confirmations`, `pa_fail_open` |
 `be_plus_price` dùng chung cho BE, giữ lệnh, đảo chiều nên không là con của mục nào.
 
 **Thông số mới gần đây** (mặc định, Mục): `debug_trace` (tắt, 4: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3 nhóm giới hạn ngày: gỡ vốn),
-`structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `max_hold_mins` mặc định 15,
+`structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `fast_sl_same_dir` (tắt, 3: SL nhanh chỉ nghỉ chiều vừa thua), `allow_opposite_entry` (tắt, 2: vẫn vào lệnh ngược chiều khi lệnh cũ đang âm), `max_hold_mins` mặc định 15,
 `max_hold_action` mặc định "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)".
 Mã lý do đóng lệnh ghi vào comment MT5 `KR_<mã>` (TIME, TIMEALL, BE, GOV, REV, REVCUT, BASKET, DAILY, MANUAL, ALL):
 thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` và thêm nhãn vào `_kr_reasons`.
