@@ -315,7 +315,7 @@ PARAM_HELP_GUIDE = {
     "structure_conflict_mode": {
         "title": "Xử lý xung đột Cấu Trúc Đa Khung (M5 vs M15)",
         "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
-        "how_to_set": "- Trung lập (không chặn) (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- Theo khung vào lệnh: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- Theo khung phân tích AI: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn Trung lập khi thị trường lệch pha giữa 2 khung."
+        "how_to_set": "- Trung lập (không chặn) (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- Theo khung vào lệnh: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- Theo khung AI: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn Trung lập khi thị trường lệch pha giữa 2 khung."
     },
     "debug_trace": {
         "title": "Ghi nhật ký debug theo nến (Debug Trace)",
@@ -391,8 +391,8 @@ PARAM_HELP_GUIDE = {
     },
     "rev_loss_mode": {
         "title": "Chế độ xử lý lệnh đang lỗ khi AI đảo chiều (Reverse Loss Mode)",
-        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'Chờ giá hồi về Entry rồi thoát' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'Cắt lỗ khi đảo chiều mạnh': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'Siết SL còn 50%': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
-        "how_to_set": "- 'Chờ giá hồi về Entry rồi thoát' (Mặc định - An toàn theo sóng hồi).\n- 'Cắt lỗ khi đảo chiều mạnh' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'Siết SL còn 50%' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
+        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'Chờ hồi về Entry' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'Cắt khi đảo mạnh': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'Siết SL 50%': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
+        "how_to_set": "- 'Chờ hồi về Entry' (Mặc định - An toàn theo sóng hồi).\n- 'Cắt khi đảo mạnh' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'Siết SL 50%' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
     },
     "basket_tp_usd": {
         "title": "Chốt lời chùm lệnh tổng (Basket TP USD)",
@@ -2505,11 +2505,11 @@ class KronosDesktopApp:
         self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
         self.structure_conflict_mode_var = self._add_coded_combo(
             sec2.content,
-            "Xử lý xung đột Cấu Trúc (M5 vs M15):",
+            "Xung đột cấu trúc 2 khung:",
             {
                 "neutral": "Trung lập (không chặn)",
                 "scalp": "Theo khung vào lệnh",
-                "analysis": "Theo khung phân tích AI",
+                "analysis": "Theo khung AI",
             },
             "neutral",
             help_key="structure_conflict_mode"
@@ -2567,9 +2567,9 @@ class KronosDesktopApp:
         self.rev_loss_mode_var = self._add_coded_combo(
             sec3.content, "   Chế độ xử lý lệnh đang lỗ:",
             {
-                "wait_be": "Chờ giá hồi về Entry rồi thoát",
-                "close_if_strong": "Cắt lỗ khi đảo chiều mạnh",
-                "tighten_sl": "Siết SL còn 50%",
+                "wait_be": "Chờ hồi về Entry",
+                "close_if_strong": "Cắt khi đảo mạnh",
+                "tighten_sl": "Siết SL 50%",
             },
             "wait_be",
             help_key="rev_loss_mode"
