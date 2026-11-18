@@ -514,6 +514,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "expected_move_k": "3",
         "use_confidence_gate": False,
         "debug_trace": False,
+        "recovery_close": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -577,6 +578,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "expected_move_k": "3",
         "use_confidence_gate": False,
         "debug_trace": False,
+        "recovery_close": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -2526,6 +2528,8 @@ class KronosDesktopApp:
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), pady=4
         ).pack(fill=tk.X)
         self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
+        self.recovery_close_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec3.content, "Gỡ vốn: đóng lệnh đang lãi (chưa BE) khi lãi ≥ lỗ ròng đã chốt trong ngày", self.recovery_close_var)
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
         self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "0", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
@@ -5082,6 +5086,7 @@ class KronosDesktopApp:
             "structure_conflict_mode": self.structure_conflict_mode_var,
             "use_confidence_gate": self.use_confidence_gate_var,
             "debug_trace": self.debug_trace_var,
+            "recovery_close": self.recovery_close_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
@@ -8913,6 +8918,40 @@ class KronosDesktopApp:
         else:
             return pos.sl <= (pos.price_open + eps_eq)
 
+    def _recovery_close_step(self, pk: str, symbol: str, positions: list, cfg: dict):
+        """Gỡ vốn (khóa recovery_close, mặc định TẮT): nếu lỗ ròng đã chốt trong ngày > 0 thì đóng 1 lệnh đang lãi
+        có lãi >= phần lỗ cần gỡ và CHƯA dời BE. Không đổi các luật khác. Lỗi trong hàm không ảnh hưởng luồng chính."""
+        try:
+            ctx = self.profile_ctx[pk]
+            now_m = time.monotonic()
+            # Vừa đóng 1 lệnh gỡ vốn: chờ cache lãi/lỗ đã chốt (10s) cập nhật, tránh đóng đúp
+            if now_m - ctx.get("_recovery_last_ts", -1e9) < 20.0:
+                return
+            with self._mt5_lock:
+                realized, _, _ = self._get_today_deals_stats(symbol=symbol, profile_key=pk)
+            debt = -float(realized)
+            if debt <= 0.05:
+                return
+            eps_eq = self._get_symbol_tolerances(symbol).get("eps_equal", 0.05)
+            cands = [pos for pos in positions if float(pos.profit) >= debt and not self._is_pos_at_be(pos, eps_eq)]
+            if not cands:
+                return
+            pos = max(cands, key=lambda x: float(x.profit))
+            ctx["_recovery_last_ts"] = now_m
+            self.log(f"🧩 [{pk} - Gỡ vốn] Lỗ ròng đã chốt hôm nay {realized:+.2f}$ -> đóng lệnh #{pos.ticket} đang lãi {pos.profit:+.2f}$ (chưa BE) để gỡ vốn")
+            if bool(cfg.get("debug_trace", False)):
+                self._write_trace(pk, {"event": "recovery_close", "ticket": pos.ticket, "realized": round(realized, 2),
+                                       "debt": round(debt, 2), "pos_profit": round(float(pos.profit), 2),
+                                       "sl": pos.sl, "tp": pos.tp})
+            if threading.current_thread() is threading.main_thread():
+                self._dispatch_pos_action_async(("RECOVERY_CLOSE", pos.ticket), self._close_single_pos, pos,
+                                                log_prefix=f"[{pk} - Gỡ vốn] Lệnh #{pos.ticket} -> ")
+            else:
+                ok_r, msg_r = self._close_single_pos(pos)
+                self.log(f"[{pk} - Gỡ vốn] Lệnh #{pos.ticket} -> {msg_r}")
+        except Exception as e:
+            self._write_file_log(f"[{pk}] Lỗi gỡ vốn (recovery_close): {e}", is_error=True)
+
     def _update_open_positions_and_manage(self, symbol: str, profile_key: str = None):
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
@@ -8925,6 +8964,8 @@ class KronosDesktopApp:
             return 0, 0.0
 
         positions = self._get_bot_positions(symbol, profile_key=pk)
+        if positions and bool(cfg.get("recovery_close", False)):
+            self._recovery_close_step(pk, symbol, positions, cfg)
 
         selected_tickets = [tree_widget.item(item, "values")[0] for item in tree_widget.selection()]
         target_rows = []
