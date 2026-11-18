@@ -73,7 +73,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **293 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **312 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
@@ -93,10 +93,16 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
      Giới hạn luồng để không tranh CPU với bot live (Kernel-Power 41).
   5. Giao diện xem lại backtest: biểu đồ nến phát lại kiểu TradingView (tua 1x/2x/5x/10x..., tạm dừng, từng bước), thấy rõ điểm vào/SL/TP/thoát.
      Phải MƯỢT, không giật: phát lại từ kết quả đã tính sẵn (không chạy AI lúc phát), vẽ theo khung hình cố định, chỉ cập nhật phần thay đổi.
-  Trạng thái: [XONG 18/11] mục 3 - nút "⚙️ Thông số Backtest" mở bảng riêng (dựng từ `SETTINGS_SECTION_MAP` + `_param_meta` của menu,
-  nên thông số mới thêm đúng 6 bước tự có trong bảng), lưu `%APPDATA%/Kronos_MT5_Bot/backtest_settings.json` (không token), đọc bằng `_get_bt_cfg(pk)`.
-  CHƯA: mục 1, 4, 5 - tab Backtest vẫn dùng engine cũ `_run_backtest_simulation` (khác live; vài hàm con như PA/cấu trúc còn đọc cấu hình live).
-  Test có app thật + thanh Backtest phải patch `SETTINGS_DIR` sang thư mục tạm (không ghi APPDATA thật).
+  Trạng thái 19/11: ĐÃ LÀM cả 5 mục.
+  - Mục 3: nút "⚙️ Thông số Backtest" = bảng riêng dựng từ `SETTINGS_SECTION_MAP` + `_param_meta` của menu (thông số mới thêm đúng 6 bước tự có),
+    lưu `%APPDATA%/Kronos_MT5_Bot/backtest_settings.json` (không token), đọc bằng `_get_bt_cfg(pk)`.
+  - Mục 1/4: tab Backtest mặc định engine "🧠 Code Live": `_start_live_engine_backtest` ghi job.json vào `backtest_runs/run_*`, chạy tiến trình con
+    (mã nguồn: `python tools/live_replay.py --job`; bản .exe: chạy lại chính .exe với biến môi trường `KRONOS_REPLAY_JOB`,
+    hook `_run_packed_replay_job_from_env` ở CUỐI mt5_scalping_bot.py nạp bt_ai_cache/run_backtest/live_replay từ core_engine.bin -> KHÔNG sửa launcher).
+    Con: ưu tiên thấp, `_bt_child_threads()` luồng; tiến độ `progress.jsonl`, kết quả `result.json` + `player.npz` + `log.txt`; hủy = file `cancel`.
+    `tools/binary_packer.py` phải gói 3 công cụ đó (đã thêm). Engine cũ vẫn chọn được ("⚡ Engine cũ", khác live).
+  - Mục 5: `trading_modules/replay_player.py` (Tk Canvas, bộ hình nến dùng lại, ~60 khung/giây, đo ~5ms/khung). Nút "🎬 Xem phát lại", bấm đúp 1 lệnh.
+  - Test có app thật + thanh Backtest phải patch `SETTINGS_DIR` sang thư mục tạm (không ghi APPDATA thật).
 - **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
   1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".
   2. Cấu hình backtest phải giống cấu hình live đang chạy. Khi người dùng đưa file cấu hình (xuất từ app, chép từ máy khác,
