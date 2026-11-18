@@ -122,7 +122,7 @@ class TestExecuteOrder(Base):
         return make_app(
             _order_guard_lock=threading.Lock(), _order_in_flight={PK: False}, _last_order_open_mono={PK: -1e9},
             _last_order_candle_ts={}, active_profile_key=PK, profile_ctx={PK: {}},
-            _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk: False,
+            _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk=None, action=None: False,
             _get_profile_cfg=lambda pk: {"max_sl_price": 5.0, "magic_number": MAGIC},
             _get_symbol_tolerances=lambda *a, **k: {"eps_equal": 0.05, "min_stop_dist": 0.5, "max_sl_tol": 0.0},
             _is_pos_at_be=lambda p, e=None: False,

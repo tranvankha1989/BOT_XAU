@@ -21,7 +21,7 @@ def app():
         _resolve_position_magic=lambda pid, e=None: t1.MAGIC,
         _order_guard_lock=threading.Lock(), _order_in_flight={PK: False}, _last_order_open_mono={},
         _get_profile_cfg=lambda pk: {}, _is_daily_limit_locked=lambda pk=None: False,
-        _is_cooldown_active=lambda pk=None: False)
+        _is_cooldown_active=lambda pk=None, action=None: False)
     return a
 
 

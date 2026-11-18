@@ -258,7 +258,7 @@ def make_app(fake: FakeMT5, cfg: dict, clock: Clock, logs: list):
     app.__dict__.update(
         _mt5_lock=threading.RLock(), _order_in_flight={}, active_profile_key=PK, profile_ctx={PK: ctx},
         profile_settings={PK: dict(cfg)}, pending_pullback_order=None, auto_loop_running=True, cached_tp=None,
-        _last_order_candle_ts={}, _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk: False,
+        _last_order_candle_ts={}, _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk=None, action=None: False,
         _get_profile_cfg=lambda pk=None: dict(cfg), _get_profile_magic_number=lambda pk=None: MAGIC,
         _write_file_log=lambda *a, **k: None, log=lambda msg, *a, **k: logs.append((clock.now, str(msg))),
         log_error=lambda *a, **k: None,

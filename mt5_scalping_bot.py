@@ -434,6 +434,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Nếu một lệnh vừa mở chưa đầy 1 cây nến AI đã bị quét cắn SL, chứng tỏ thị trường vừa có biến động giật mạnh bất thường. Bot sẽ tự ngắt tạm thời số cây nến AI tiếp theo để tránh bị quét liên hoàn.",
         "how_to_set": "- Cài theo số cây nến của khung AI phân tích (Ví dụ AI chạy M5 thì 1 = 1 nến 5p, 2 = 2 nến 10p; AI chạy M15 thì 1 = 15p, 2 = 30p).\n- Đặt 0 để tắt."
     },
+    "fast_sl_same_dir": {
+        "title": "SL nhanh: chỉ nghỉ chiều vừa thua",
+        "what_is_it": "Áp dụng cho 'Nghỉ nếu SL nhanh'. Khi BẬT: lệnh dính SL nhanh là BUY thì chỉ tạm ngừng vào BUY trong thời gian nghỉ; lệnh SELL nếu có tín hiệu vẫn vào bình thường (và ngược lại). Khi TẮT: nghỉ cả hai chiều như cũ.",
+        "how_to_set": "- TẮT (Mặc định): nghỉ cả BUY lẫn SELL.\n- BẬT: chỉ nghỉ chiều vừa bị SL nhanh. Chưa có đủ phát lại để kết luận tốt hơn."
+    },
     "fast_sl_cooldown_mins": {
         "title": "Nghỉ nếu dính SL nhanh (Số nến AI)",
         "what_is_it": "Nếu một lệnh vừa mở chưa đầy 1 cây nến AI đã bị quét cắn SL, chứng tỏ thị trường vừa có biến động giật mạnh bất thường. Bot sẽ tự ngắt tạm thời số cây nến AI tiếp theo để tránh bị quét liên hoàn.",
@@ -553,6 +558,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "max_consec_loss": "0",
         "cooldown_mins": "30",
         "fast_sl_cooldown_candles": "1",
+        "fast_sl_same_dir": False,
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -618,6 +624,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "max_consec_loss": "0",
         "cooldown_mins": "30",
         "fast_sl_cooldown_candles": "1",
+        "fast_sl_same_dir": False,
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -2601,6 +2608,8 @@ class KronosDesktopApp:
         self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30", help_key="cooldown_mins")
         self.fast_sl_cooldown_candles_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL nhanh (nến AI, 0=Tắt):", "1", help_key="fast_sl_cooldown_candles")
         self.fast_sl_cooldown_mins_var = self.fast_sl_cooldown_candles_var
+        self.fast_sl_same_dir_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec3.content, "   Chỉ nghỉ chiều vừa SL nhanh (chiều ngược vẫn vào)", self.fast_sl_same_dir_var, help_key="fast_sl_same_dir")
         tk.Button(
             sec3.content, text="↺ Khôi phục mặc định Mục 3 (Quản lý lệnh & Chốt lời)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -2617,6 +2626,7 @@ class KronosDesktopApp:
             self._bind_param_children(self.basket_tp_usd_var, [self.basket_cooldown_mins_var], numeric=True)
             self._bind_param_children(self.max_hold_mins_var, [self.max_hold_action_var], numeric=True)
             self._bind_param_children(self.max_consec_loss_var, [self.cooldown_mins_var], numeric=True)
+            self._bind_param_children(self.fast_sl_cooldown_candles_var, [self.fast_sl_same_dir_var], numeric=True)
             self._bind_param_children(self.confirm_entry_pa_var, [self.pa_min_confirmations_var, self.pa_fail_open_var])
         except Exception as _e:
             self._write_file_log(f"[UI] Không dựng được cây thông số: {_e}", is_error=True)
@@ -5175,6 +5185,7 @@ class KronosDesktopApp:
             "cooldown_mins": self.cooldown_mins_var,
             "fast_sl_cooldown_candles": self.fast_sl_cooldown_candles_var,
             "fast_sl_cooldown_mins": self.fast_sl_cooldown_candles_var,
+            "fast_sl_same_dir": self.fast_sl_same_dir_var,
             "engine": self.engine_var,
             "model": self.model_var,
             "hf_space": self.hf_space_var,
@@ -5613,7 +5624,7 @@ class KronosDesktopApp:
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
             2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "recovery_close"]),
+            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
         }
@@ -7958,12 +7969,20 @@ class KronosDesktopApp:
                         if elapsed_sec < total_cd_sec:
                             rem_sec = total_cd_sec - elapsed_sec
                             ctx["fast_sl_cooldown_until"] = datetime.now() + timedelta(seconds=rem_sec)
-                            ctx["pending_pullback_order"] = None
+                            # fast_sl_same_dir (mặc định TẮT): chỉ nghỉ chiều của lệnh vừa SL nhanh, chiều ngược vẫn vào
+                            fs_dir = cd.get("type") if (self._fast_sl_same_dir_on(cfg) and cd.get("type") in ("BUY", "SELL")) else None
+                            ctx["fast_sl_cooldown_dir"] = fs_dir
+                            _pp = ctx.get("pending_pullback_order")
+                            if fs_dir is None or (_pp is not None and _pp.get("action") == fs_dir):
+                                ctx["pending_pullback_order"] = None
+                                if pk == self.active_profile_key:
+                                    self.pending_pullback_order = None
                             dur_display = cd.get("duration", f"{cd.get('duration_sec', 0)}s")
                             cd_mins_total = fast_sl_cd_candles * ana_tf_mins
+                            dir_note = f", chỉ chiều {fs_dir}" if fs_dir else ""
                             self.log(
                                 f"[{pk} - Tạm nghỉ SL nhanh] Lệnh #{last_ticket} dính SL sau {dur_display} (< 1 nến {ana_tf_str}) -> "
-                                f"Tạm nghỉ {fast_sl_cd_candles:.0f} nến {ana_tf_str} ({cd_mins_total:.0f}p, đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')})."
+                                f"Tạm nghỉ {fast_sl_cd_candles:.0f} nến {ana_tf_str} ({cd_mins_total:.0f}p, đến {ctx['fast_sl_cooldown_until'].strftime('%H:%M:%S')}{dir_note})."
                             )
                             self.show_toast(
                                 f"[{pk}] Lệnh #{last_ticket} SL nhanh -> Tạm nghỉ {fast_sl_cd_candles:.0f} nến {ana_tf_str} ({cd_mins_total:.0f}p)",
@@ -8109,7 +8128,11 @@ class KronosDesktopApp:
         locked_d = self.daily_limit_locked_date if pk == self.active_profile_key else self.profile_ctx[pk].get("daily_limit_locked_date")
         return locked_d == datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
 
-    def _is_cooldown_active(self, profile_key: str = None) -> bool:
+    def _fast_sl_same_dir_on(self, cfg: dict) -> bool:
+        return str(cfg.get("fast_sl_same_dir", False)).strip().lower() in ("1", "true", "yes", "on")
+
+    def _is_cooldown_active(self, profile_key: str = None, action: str = None) -> bool:
+        """action ('BUY'/'SELL'): khi bật fast_sl_same_dir, tạm nghỉ SL nhanh chỉ chặn chiều vừa SL. action=None: mọi chiều (hiển thị)."""
         pk = profile_key or self.active_profile_key
         ctx = self.profile_ctx[pk]
         cd = self.cooldown_until if pk == self.active_profile_key else ctx.get("cooldown_until")
@@ -8119,6 +8142,10 @@ class KronosDesktopApp:
         is_loss_cd = (cd is not None and now < cd)
         is_basket_cd = (bcd is not None and now < bcd)
         is_fast_sl_cd = (fscd is not None and now < fscd)
+        if is_fast_sl_cd and action in ("BUY", "SELL"):
+            fs_dir = ctx.get("fast_sl_cooldown_dir")
+            if fs_dir in ("BUY", "SELL") and fs_dir != action:
+                is_fast_sl_cd = False
         return is_loss_cd or is_basket_cd or is_fast_sl_cd
 
     def _get_cooldown_remaining_str(self, profile_key: str = None) -> str:
@@ -8143,7 +8170,9 @@ class KronosDesktopApp:
             m, s = divmod(rem, 60)
             cfg = self._get_profile_cfg(pk)
             ana_tf_str = str(cfg.get("analysis_tf", "M15")).strip()
-            parts.append(f"Tạm ngưng do SL nhanh (< 1 nến {ana_tf_str}) [{m:02d}p:{s:02d}s]")
+            fs_dir = ctx.get("fast_sl_cooldown_dir")
+            dir_note = f" chiều {fs_dir}" if fs_dir in ("BUY", "SELL") else ""
+            parts.append(f"Tạm ngưng{dir_note} do SL nhanh (< 1 nến {ana_tf_str}) [{m:02d}p:{s:02d}s]")
         return " | ".join(parts)
 
     def _get_tf_minutes(self, tf_str: str) -> int:
@@ -8695,7 +8724,7 @@ class KronosDesktopApp:
         p = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
         if p is None:
             return
-        if self._is_daily_limit_locked(pk) or self._is_cooldown_active(pk):
+        if self._is_daily_limit_locked(pk) or self._is_cooldown_active(pk, action=p.get("action")):
             self._pb_gate_log(pk, "daily_limit_cooldown", symbol, tick)
             ctx["pending_pullback_order"] = None
             if pk == self.active_profile_key:
@@ -10237,7 +10266,7 @@ class KronosDesktopApp:
                 if self._is_daily_limit_locked(pk):
                     reason = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
                     return False, f"Đã tự động dừng giao dịch hết hôm nay ({reason})."
-                if self._is_cooldown_active(pk):
+                if self._is_cooldown_active(pk, action=action):
                     return False, f"{self._get_cooldown_remaining_str(pk)} — Chưa được phép vào lệnh mới."
                 if ctx.get("deals_unknown", False):
                     # A10: không đọc được lịch sử deals -> không kiểm được lãi/lỗ ngày và chuỗi thua -> không mở lệnh mới
@@ -11316,7 +11345,7 @@ class KronosDesktopApp:
                         reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
                         trade_msg = f"Đã dừng giao dịch hôm nay ({reason_lk})"
                         self.log(f"[{pk}] {trade_msg}")
-                    elif self._is_cooldown_active(pk):
+                    elif self._is_cooldown_active(pk, action=action):
                         ctx["pending_pullback_order"] = None
                         trade_msg = self._get_cooldown_remaining_str(pk)
                         self.log(f"[{pk}] {trade_msg}")

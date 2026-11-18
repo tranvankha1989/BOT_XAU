@@ -28,7 +28,7 @@ def make_app(cfg_over=None, positions=None):
     app.__dict__.update(
         _order_in_flight={}, active_profile_key=PK, profile_ctx={PK: {"pending_pullback_order": p}},
         pending_pullback_order=p, auto_loop_running=True, cached_tp=None, _last_order_candle_ts={},
-        _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk: False,
+        _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk=None, action=None: False,
         _get_profile_cfg=lambda pk: dict(cfg), _get_symbol_tolerances=lambda s, t=None: dict(TOLS),
         _get_bot_positions=lambda s, profile_key=None: list(positions or []), _is_pos_at_be=lambda pos, eps=None: False,
         execute_mt5_order=mock.Mock(return_value=(True, "ok")),
@@ -98,7 +98,7 @@ class TestGateLog(Base):
         self.assertEqual(len(diag(app, "order_in_flight")), 1)
         # daily/cooldown (pending bị xóa như cũ)
         app = make_app()
-        app._is_cooldown_active = lambda pk: True
+        app._is_cooldown_active = lambda pk=None, action=None: True
         app._check_pending_pullback_order(SYM, tk(3886.90), profile_key=PK)
         self.assertEqual(len(diag(app, "daily_limit_cooldown")), 1)
         self.assertIsNone(app.profile_ctx[PK]["pending_pullback_order"])
