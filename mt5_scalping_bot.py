@@ -533,7 +533,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
         "one_order_per_candle": True,
-        "trend_filter": True,
+        "trend_filter": False,
         "confirm_entry_pa": True,
         "pa_wait_bar_close": True,
         "pa_fail_open": False,
@@ -600,7 +600,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
         "one_order_per_candle": True,
-        "trend_filter": True,
+        "trend_filter": False,
         "confirm_entry_pa": True,
         "pa_wait_bar_close": True,
         "pa_fail_open": False,
@@ -2501,19 +2501,11 @@ class KronosDesktopApp:
         )
         self.pa_fail_open_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "PA Fail-Open (Cho phép khi mất tick/nến)", self.pa_fail_open_var, help_key="pa_fail_open")
-        self.trend_filter_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
-        self.structure_conflict_mode_var = self._add_coded_combo(
-            sec2.content,
-            "Xung đột cấu trúc 2 khung:",
-            {
-                "neutral": "Trung lập (không chặn)",
-                "scalp": "Theo khung vào lệnh",
-                "analysis": "Theo khung AI",
-            },
-            "neutral",
-            help_key="structure_conflict_mode"
-        )
+        # Lọc cấu trúc BOS/CHoCH (trend_filter) và Xung đột cấu trúc 2 khung: ẨN khỏi giao diện (người dùng không dùng nữa).
+        # Biến giữ lại để lưu/nạp cấu hình; trend_filter luôn bị đặt TẮT khi nạp cấu hình (load_user_settings).
+        # Replay vẫn thử lại được: tools/live_replay.py --set trend_filter=True
+        self.trend_filter_var = tk.BooleanVar(value=False)
+        self.structure_conflict_mode_var = tk.StringVar(value="neutral")
         self.structure_direction_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Hướng theo cấu trúc đỉnh/đáy (thử nghiệm)", self.structure_direction_var, help_key="structure_direction")
 
@@ -5551,6 +5543,8 @@ class KronosDesktopApp:
                                 pcfg["fast_sl_cooldown_candles"] = "1"
                         else:
                             pcfg["fast_sl_cooldown_candles"] = "1"
+                    # Lọc cấu trúc BOS/CHoCH đã ẩn khỏi giao diện -> luôn TẮT (cấu hình cũ có thể đang lưu True)
+                    pcfg["trend_filter"] = False
 
             # Trích xuất và đồng bộ HF Token cho cả 2 Tab nếu có lưu
             token_saved = ""
