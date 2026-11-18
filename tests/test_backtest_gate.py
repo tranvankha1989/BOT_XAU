@@ -1,6 +1,7 @@
 """Test cổng ngày và đủ ngữ cảnh của _run_backtest_simulation (mock MT5, không chạy backtest thật)."""
 import os
 import sys
+import tempfile
 import threading
 import unittest
 from datetime import datetime
@@ -91,8 +92,10 @@ def run_sim(precision, use_ai, ana_tf="M15", scalp_tf="M5"):
         _fetch_or_load_ticks=lambda *a, **k: tick_array(),
         get_local_predictor=lambda m: object(), _evaluate_bt_ai_candle=fake_eval)
     m = fake_mt5()
-    with mock.patch.object(b, "mt5", m), mock.patch.object(b, "MT5_AVAILABLE", True), mock.patch.object(b.time, "sleep"):
-        app._run_backtest_simulation()
+    # Thư mục cấu hình tạm: tab Backtest có cấu hình riêng (backtest_settings.json), không được ghi vào APPDATA thật
+    with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.object(b, "SETTINGS_DIR", tmp_dir):
+        with mock.patch.object(b, "mt5", m), mock.patch.object(b, "MT5_AVAILABLE", True), mock.patch.object(b.time, "sleep"):
+            app._run_backtest_simulation()
     return SimpleNamespace(trades=list(app._bt_trades_cache), ai_calls=ai_calls, logs=logs, range_calls=m.range_calls)
 
 

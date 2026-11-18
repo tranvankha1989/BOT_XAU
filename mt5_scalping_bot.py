@@ -17,6 +17,7 @@ import time
 import types
 import queue
 import shutil
+import subprocess
 import ctypes
 import traceback
 import threading
@@ -315,7 +316,7 @@ PARAM_HELP_GUIDE = {
     "structure_conflict_mode": {
         "title": "Xử lý xung đột Cấu Trúc Đa Khung (M5 vs M15)",
         "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
-        "how_to_set": "- Trung lập (không chặn) (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- Theo khung vào lệnh: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- Theo khung phân tích AI: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn Trung lập khi thị trường lệch pha giữa 2 khung."
+        "how_to_set": "- Trung lập (không chặn) (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- Theo khung vào lệnh: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- Theo khung AI: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn Trung lập khi thị trường lệch pha giữa 2 khung."
     },
     "debug_trace": {
         "title": "Ghi nhật ký debug theo nến (Debug Trace)",
@@ -391,8 +392,8 @@ PARAM_HELP_GUIDE = {
     },
     "rev_loss_mode": {
         "title": "Chế độ xử lý lệnh đang lỗ khi AI đảo chiều (Reverse Loss Mode)",
-        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'Chờ giá hồi về Entry rồi thoát' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'Cắt lỗ khi đảo chiều mạnh': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'Siết SL còn 50%': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
-        "how_to_set": "- 'Chờ giá hồi về Entry rồi thoát' (Mặc định - An toàn theo sóng hồi).\n- 'Cắt lỗ khi đảo chiều mạnh' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'Siết SL còn 50%' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
+        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'Chờ hồi về Entry' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'Cắt khi đảo mạnh': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'Siết SL 50%': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
+        "how_to_set": "- 'Chờ hồi về Entry' (Mặc định - An toàn theo sóng hồi).\n- 'Cắt khi đảo mạnh' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'Siết SL 50%' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
     },
     "basket_tp_usd": {
         "title": "Chốt lời chùm lệnh tổng (Basket TP USD)",
@@ -533,7 +534,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
         "one_order_per_candle": True,
-        "trend_filter": True,
+        "trend_filter": False,
         "confirm_entry_pa": True,
         "pa_wait_bar_close": True,
         "pa_fail_open": False,
@@ -600,7 +601,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
         "one_order_per_candle": True,
-        "trend_filter": True,
+        "trend_filter": False,
         "confirm_entry_pa": True,
         "pa_wait_bar_close": True,
         "pa_fail_open": False,
@@ -2501,19 +2502,11 @@ class KronosDesktopApp:
         )
         self.pa_fail_open_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "PA Fail-Open (Cho phép khi mất tick/nến)", self.pa_fail_open_var, help_key="pa_fail_open")
-        self.trend_filter_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
-        self.structure_conflict_mode_var = self._add_coded_combo(
-            sec2.content,
-            "Xử lý xung đột Cấu Trúc (M5 vs M15):",
-            {
-                "neutral": "Trung lập (không chặn)",
-                "scalp": "Theo khung vào lệnh",
-                "analysis": "Theo khung phân tích AI",
-            },
-            "neutral",
-            help_key="structure_conflict_mode"
-        )
+        # Lọc cấu trúc BOS/CHoCH (trend_filter) và Xung đột cấu trúc 2 khung: ẨN khỏi giao diện (người dùng không dùng nữa).
+        # Biến giữ lại để lưu/nạp cấu hình; trend_filter luôn bị đặt TẮT khi nạp cấu hình (load_user_settings).
+        # Replay vẫn thử lại được: tools/live_replay.py --set trend_filter=True
+        self.trend_filter_var = tk.BooleanVar(value=False)
+        self.structure_conflict_mode_var = tk.StringVar(value="neutral")
         self.structure_direction_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Hướng theo cấu trúc đỉnh/đáy (thử nghiệm)", self.structure_direction_var, help_key="structure_direction")
 
@@ -2567,9 +2560,9 @@ class KronosDesktopApp:
         self.rev_loss_mode_var = self._add_coded_combo(
             sec3.content, "   Chế độ xử lý lệnh đang lỗ:",
             {
-                "wait_be": "Chờ giá hồi về Entry rồi thoát",
-                "close_if_strong": "Cắt lỗ khi đảo chiều mạnh",
-                "tighten_sl": "Siết SL còn 50%",
+                "wait_be": "Chờ hồi về Entry",
+                "close_if_strong": "Cắt khi đảo mạnh",
+                "tighten_sl": "Siết SL 50%",
             },
             "wait_be",
             help_key="rev_loss_mode"
@@ -3694,6 +3687,26 @@ class KronosDesktopApp:
         self.bt_progress_canvas.pack(side=tk.RIGHT, padx=(4, 0))
         self.bt_progress_bar = self.bt_progress_canvas.create_rectangle(0, 0, 0, 8, fill=GREEN_UP, outline="")
 
+        tk.Button(
+            status_box, text="🎬 Xem phát lại", bg="#24203a", fg="#c4b5fd", font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=7, pady=0, cursor="hand2", command=self._open_bt_player
+        ).pack(side=tk.RIGHT, padx=(4, 4))
+        if not hasattr(self, "bt_engine_var"):
+            self.bt_engine_var = tk.StringVar(value=self.BT_LIVE_ENGINE_LABEL)
+        eng_cb = ttk.Combobox(
+            status_box, textvariable=self.bt_engine_var, values=[self.BT_LIVE_ENGINE_LABEL, self.BT_LEGACY_ENGINE_LABEL],
+            width=25, state="readonly"
+        )
+        eng_cb.pack(side=tk.RIGHT, padx=(4, 2))
+        eng_cb.bind("<<ComboboxSelected>>", lambda e: self._bt_on_engine_changed())
+        tk.Label(status_box, text="Engine:", bg="#0e131b", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.RIGHT)
+        tk.Button(
+            status_box, text="⚙️ Thông số Backtest", bg="#3a2a0b", fg=GOLD_ACCENT,
+            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=7, pady=0, cursor="hand2",
+            command=self._open_bt_settings_window
+        ).pack(side=tk.RIGHT, padx=(4, 8))
+        self._bt_on_engine_changed()
+
         # 3. DÃY 6 THẺ KPI SCORECARDS CHỈ SỐ TÀI CHÍNH
         kpi_frame = tk.Frame(self.bt_main_frame, bg=PANEL_BG)
         kpi_frame.pack(fill=tk.X, padx=6, pady=(1, 3))
@@ -3771,14 +3784,14 @@ class KronosDesktopApp:
         if hasattr(self, "bt_tf_info_lbl") and self.bt_tf_info_lbl.winfo_exists():
             sym = self.bt_sym_var.get().strip()
             pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
-            cfg = self._get_profile_cfg(pk)
+            cfg = self._get_bt_cfg(pk)
             ana_tf = str(cfg.get("analysis_tf", "M15")).strip()
             scalp_tf = str(cfg.get("tf", "M5")).strip()
             desc = f"{ana_tf}" if ana_tf == scalp_tf else f"{ana_tf} ➔ {scalp_tf}"
-            self.bt_tf_info_lbl.config(text=f"⚡ Khung: {desc} (Menu {pk})")
+            self.bt_tf_info_lbl.config(text=f"⚡ Khung: {desc} (Backtest {pk})")
 
     def _copy_menu_settings_to_bt(self):
-        """Sao chép thông số từ Menu cấu hình sang thanh Backtest của mã đang chọn mà không làm đổi cấu hình Live."""
+        """Chép TOÀN BỘ thông số chiến lược từ Menu Live sang cấu hình Backtest riêng của mã đang chọn (không đổi cấu hình Live)."""
         sym = self.bt_sym_var.get().strip()
         is_btc = "BTC" in sym.upper()
         target_pk = "BTCUSD" if is_btc else "XAUUSD"
@@ -3786,13 +3799,19 @@ class KronosDesktopApp:
         cfg_sym = str(cfg.get("symbol", sym)).strip()
         cfg_lot = str(cfg.get("lot", "0.01" if is_btc else "0.02")).strip()
 
+        if not isinstance(getattr(self, "bt_settings", None), dict):
+            self._load_bt_settings()
+        self.bt_settings[target_pk] = self._bt_filter_cfg(cfg)
+        self._save_bt_settings()
+
         if cfg_sym:
             self.bt_sym_var.set(cfg_sym)
         if cfg_lot:
             self.bt_lot_var.set(cfg_lot)
 
         self._update_bt_tf_display()
-        self.show_toast(f"Đã nạp thông số từ Menu [{target_pk}] vào Backtest!", is_error=False, duration_ms=2500)
+        self._refresh_bt_settings_window()
+        self.show_toast(f"Đã chép toàn bộ thông số Menu Live [{target_pk}] sang Backtest!", is_error=False, duration_ms=2500)
 
     def _on_bt_symbol_changed(self, event=None):
         """Khi người dùng chọn mã tiền tệ ở Backtest (BTC / XAU): Cập nhật thông số Backtest tương ứng mà KHÔNG hoán đổi Menu Bot Live."""
@@ -3808,24 +3827,35 @@ class KronosDesktopApp:
 
         self._update_bt_tf_display()
         self.show_toast(f"Backtest đã chọn [{sym}] (Lot tham khảo: {lot})", is_error=False, duration_ms=2500)
+        self._refresh_bt_settings_window()
 
     def _apply_bt_settings_to_menu(self):
-        """Lưu ngược lại các thông số vừa kiểm thử thành công vào Menu Bot Live của đúng mã đang test (kèm popup xác nhận an toàn)."""
+        """Chép cấu hình Backtest (mọi thông số khác Live + Mã + Lot) sang Menu Bot Live của đúng mã đang test.
+        Có popup xác nhận liệt kê từng thông số thay đổi; không bấm YES thì Live giữ nguyên."""
         sym = self.bt_sym_var.get().strip()
         is_btc = "BTC" in sym.upper()
         target_pk = "BTCUSD" if is_btc else "XAUUSD"
         test_lot = self.bt_lot_var.get().strip()
 
+        changes = self._bt_collect_changes(target_pk)
+        if not changes:
+            self.show_toast(f"Cấu hình Backtest giống hệt Bot Live [{target_pk}], không có gì để áp dụng.", is_error=False, duration_ms=2500)
+            return
+        smap = self._get_settings_vars_map()
+        lines = []
+        for k, old, new in changes[:20]:
+            lbl = self._bt_param_spec(k, smap.get(k))["label"]
+            lines.append(f"  • {lbl}: {self._bt_show_val(k, old, smap.get(k))} → {self._bt_show_val(k, new, smap.get(k))}")
+        if len(changes) > 20:
+            lines.append(f"  ... và {len(changes) - 20} thông số khác")
+
         # Hiển thị popup xác nhận an toàn để người dùng không bao giờ bấm nhầm làm thay đổi cấu hình Live
         confirm = messagebox.askyesno(
             "Xác Nhận Áp Dụng Sang Bot Live",
-            f"⚠️ CẢNH BÁO GHI ĐÈ BOT LIVE:\n\n"
-            f"Bạn có chắc chắn muốn lưu thông số từ Backtest:\n"
-            f"  • Mã giao dịch: {sym}\n"
-            f"  • Khối lượng Lot: {test_lot}\n\n"
-            f"vào cấu hình giao dịch THỰC TẾ của Tab [{target_pk}] không?\n\n"
-            f"Thao tác này sẽ ghi đè cấu hình Live của Tab [{target_pk}] ngay lập tức!\n"
-            f"(Chọn YES để lưu vào Live, chọn NO để hủy bỏ).",
+            f"⚠️ CẢNH BÁO GHI ĐÈ BOT LIVE [{target_pk}]:\n\n"
+            f"Sẽ đổi {len(changes)} thông số của bot live:\n" + "\n".join(lines) + "\n\n"
+            f"Thao tác này ghi đè cấu hình Live ngay lập tức!\n"
+            f"(YES = áp dụng vào Live, NO = hủy bỏ).",
             parent=self.root
         )
         if not confirm:
@@ -3837,16 +3867,271 @@ class KronosDesktopApp:
             self._switch_active_profile(target_pk)
 
         # 2. Cập nhật các biến giao diện & lưu vào profile
-        self.symbol_var.set(sym)
-        self.lot_var.set(test_lot)
+        smap = self._get_settings_vars_map()
+        for k, _old, new in changes:
+            var = smap.get(k)
+            if var is None:
+                continue
+            try:
+                var.set(self._bt_to_bool(new) if isinstance(var, tk.BooleanVar) else str(new))
+            except Exception as e:
+                self._write_file_log(f"[BACKTEST] Không áp dụng được {k}={new}: {e}", is_error=True)
 
         # Đồng bộ ngược vào profile context, lưu xuống ổ cứng và áp dụng ngay cho Backend AI
         self._sync_self_to_active_ctx(include_ai_state=False)
         self.save_user_settings()
         self.apply_live_settings_and_rescan(profile_key=target_pk, source_label="Áp dụng từ Backtest")
         self._update_bt_tf_display()
-        self.show_toast(f"✓ Đã lưu & Áp dụng ngay cài đặt Backtest vào [{target_pk}]!", is_error=False, duration_ms=3000)
-        self.log(f"[BACKTEST] Đã áp dụng thông số tối ưu vào cấu hình Live [{target_pk}]: Mã {sym} | Lot {test_lot}.")
+        self.show_toast(f"✓ Đã áp dụng {len(changes)} thông số Backtest vào Bot Live [{target_pk}]!", is_error=False, duration_ms=3000)
+        self.log(f"[BACKTEST] Đã áp dụng {len(changes)} thông số Backtest vào cấu hình Live [{target_pk}]: "
+                 + ", ".join(f"{k}={new}" for k, _o, new in changes[:30]))
+
+    # ── CẤU HÌNH BACKTEST RIÊNG (tách khỏi cấu hình bot live) ──────────────────────────────
+    # Sửa thông số để kiểm thử KHÔNG được làm đổi bot live: backtest đọc self.bt_settings (lưu ở backtest_settings.json),
+    # "Lấy từ Menu" chép live -> backtest, "Áp Dụng Vào Bot Live" chép backtest -> live (có xác nhận).
+    BT_SETTINGS_FILE_NAME = "backtest_settings.json"
+    # Khóa không thuộc cấu hình backtest: bí mật (token), kết nối/thông báo, không ảnh hưởng kết quả, hoặc lấy từ thanh Backtest (Mã, Lot)
+    BT_EXCLUDED_KEYS = frozenset({
+        "hf_token", "hf_space", "engine", "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
+        "telegram_notify_open", "telegram_notify_close", "mt5_path", "magic_number", "ai_threads", "debug_trace",
+        "fast_sl_cooldown_mins", "symbol", "lot",
+    })
+    BT_SECRET_KEYS = ("hf_token", "telegram_bot_token", "telegram_chat_id")
+    # Khóa đã ẩn trên menu live thì cũng ẩn trong bảng backtest và không chép sang live
+    BT_HIDDEN_KEYS = frozenset({"trend_filter", "structure_conflict_mode"})
+
+    def _bt_settings_path(self) -> str:
+        return os.path.join(SETTINGS_DIR, self.BT_SETTINGS_FILE_NAME)
+
+    def _bt_filter_cfg(self, cfg: dict) -> dict:
+        return {k: v for k, v in dict(cfg or {}).items() if k not in self.BT_EXCLUDED_KEYS}
+
+    @staticmethod
+    def _bt_to_bool(v) -> bool:
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _bt_norm(v) -> str:
+        """Chuẩn hóa giá trị để so sánh backtest với live (True/'True'/'1' như nhau, '1.0' == '1')."""
+        if isinstance(v, bool):
+            return "1" if v else "0"
+        t = "" if v is None else str(v).strip()
+        if t.lower() in ("true", "false"):
+            return "1" if t.lower() == "true" else "0"
+        try:
+            return repr(float(t))
+        except ValueError:
+            return t
+
+    def _load_bt_settings(self) -> dict:
+        """Nạp cấu hình backtest riêng từ ổ đĩa (không chứa token). Lỗi đọc -> bắt đầu trống (chép từ live khi cần)."""
+        self.bt_settings = {}
+        try:
+            path = self._bt_settings_path()
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for pk in ("XAUUSD", "BTCUSD"):
+                        if isinstance(data.get(pk), dict):
+                            self.bt_settings[pk] = self._bt_filter_cfg(data[pk])
+        except Exception as e:
+            self._write_file_log(f"[BACKTEST] Không đọc được cấu hình backtest ({e}) -> chép lại từ Live khi cần.", is_error=True)
+        return self.bt_settings
+
+    def _save_bt_settings(self):
+        try:
+            os.makedirs(SETTINGS_DIR, exist_ok=True)
+            path = self._bt_settings_path()
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({pk: self._bt_filter_cfg(v) for pk, v in self.bt_settings.items()}, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:
+            self._write_file_log(f"[BACKTEST] Không lưu được cấu hình backtest: {e}", is_error=True)
+
+    def _get_bt_cfg(self, pk: str) -> dict:
+        """Cấu hình dùng cho backtest của profile pk = cấu hình live làm nền (khóa mới chưa có trong bản backtest)
+        phủ bằng cấu hình backtest riêng; Mã/Lot lấy theo thanh Backtest. Lần đầu chưa có bản backtest -> chép từ live.
+        KHÔNG bao giờ ghi vào cấu hình live; bỏ token."""
+        if not isinstance(getattr(self, "bt_settings", None), dict):
+            self._load_bt_settings()
+        live = self._get_profile_cfg(pk)
+        if pk not in self.bt_settings:
+            self.bt_settings[pk] = self._bt_filter_cfg(live)
+            self._save_bt_settings()
+        cfg = dict(live)
+        cfg.update(self.bt_settings[pk])
+        for k in self.BT_SECRET_KEYS:
+            cfg.pop(k, None)
+        try:
+            sym = self.bt_sym_var.get().strip()
+            if sym and (("BTC" in sym.upper()) == (pk == "BTCUSD")):
+                cfg["symbol"] = sym
+                lot = self.bt_lot_var.get().strip()
+                if lot:
+                    cfg["lot"] = lot
+        except Exception:
+            pass
+        return cfg
+
+    def _bt_collect_changes(self, pk: str) -> list:
+        """Danh sách (khóa, giá trị live, giá trị backtest) khác nhau, gồm Mã/Lot của thanh Backtest. Bỏ khóa ẩn/khóa không thuộc backtest."""
+        bt_cfg = self._get_bt_cfg(pk)
+        live_cfg = self._get_profile_cfg(pk)
+        smap = self._get_settings_vars_map()
+        changes = []
+        for k in list(self.bt_settings.get(pk, {}).keys()) + ["symbol", "lot"]:
+            if k not in smap or k in self.BT_HIDDEN_KEYS or (k in self.BT_EXCLUDED_KEYS and k not in ("symbol", "lot")):
+                continue
+            new = bt_cfg.get(k)
+            if new is None or str(new).strip() == "":
+                continue
+            if self._bt_norm(new) != self._bt_norm(live_cfg.get(k)):
+                changes.append((k, live_cfg.get(k), new))
+        return changes
+
+    def _bt_param_spec(self, key: str, live_var) -> dict:
+        """Mô tả 1 ô thông số (nhãn, kiểu, lựa chọn, nút ?) lấy từ chính ô trên menu live để bảng backtest giống menu."""
+        meta = self.__dict__.get("_param_meta", {}).get(str(live_var)) if live_var is not None else None
+        meta = dict(meta or {})
+        guide = PARAM_HELP_GUIDE.get(key, {})
+        label = str(meta.get("label") or guide.get("title") or key).strip().rstrip(":").strip()
+        typ = meta.get("type")
+        if typ is None:
+            typ = "bool" if isinstance(live_var, tk.BooleanVar) else "entry"
+        help_key = meta.get("help_key") or (key if key in PARAM_HELP_GUIDE else None)
+        return {"type": typ, "label": label, "values": list(meta.get("values") or []),
+                "code_labels": dict(meta.get("code_labels") or {}), "help_key": help_key}
+
+    def _bt_show_val(self, key: str, v, live_var=None) -> str:
+        spec = self._bt_param_spec(key, live_var)
+        if spec["type"] == "bool":
+            return "BẬT" if self._bt_to_bool(v) else "TẮT"
+        if spec["type"] == "coded":
+            return str(spec["code_labels"].get(str(v), v))
+        return str(v)
+
+    def _refresh_bt_settings_window(self):
+        win = getattr(self, "_bt_cfg_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                self._open_bt_settings_window()
+        except Exception:
+            pass
+
+    def _open_bt_settings_window(self):
+        """Bảng thông số RIÊNG cho Backtest (giống Menu Mục 1-4). Sửa ở đây chỉ đổi cấu hình backtest, không đổi bot live."""
+        sym = self.bt_sym_var.get().strip()
+        pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
+        old = getattr(self, "_bt_cfg_win", None)
+        geo = None
+        try:
+            if old is not None and old.winfo_exists():
+                geo = old.geometry()
+                old.destroy()
+        except Exception:
+            pass
+        cfg = self._get_bt_cfg(pk)
+        smap = self._get_settings_vars_map()
+
+        win = tk.Toplevel(self.root)
+        self._bt_cfg_win = win
+        win.title(f"Thông số Backtest [{pk}] - riêng, không ảnh hưởng bot live")
+        win.configure(bg=PANEL_BG)
+        win.geometry(geo or "540x700")
+
+        hdr = tk.Frame(win, bg="#2a1d0b", padx=8, pady=6)
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text=f"⚙️ CẤU HÌNH BACKTEST [{pk}]", bg="#2a1d0b", fg=GOLD_ACCENT,
+                 font=("Segoe UI", 10, "bold"), anchor="w").pack(fill=tk.X)
+        tk.Label(hdr, text="Sửa ở đây chỉ dùng cho kiểm thử, KHÔNG làm thay đổi bot live.\n"
+                           "Mã và Lot lấy theo thanh Backtest. Dùng 'Áp Dụng Vào Bot Live' khi thông số đã ổn.",
+                 bg="#2a1d0b", fg=TEXT_MAIN, font=("Segoe UI", 8), justify="left", anchor="w").pack(fill=tk.X)
+
+        btns = tk.Frame(win, bg=PANEL_BG, pady=4)
+        btns.pack(fill=tk.X, padx=8)
+        tk.Button(btns, text="🔄 Lấy từ Menu Live", bg="#1e2c44", fg=CYAN_LIVE, font=("Segoe UI", 8, "bold"),
+                  relief=tk.FLAT, padx=7, cursor="hand2", command=self._copy_menu_settings_to_bt).pack(side=tk.LEFT, padx=2)
+        tk.Button(btns, text="💾 Áp Dụng Vào Bot Live", bg="#163832", fg="#00e676", font=("Segoe UI", 8, "bold"),
+                  relief=tk.FLAT, padx=7, cursor="hand2", command=self._apply_bt_settings_to_menu).pack(side=tk.LEFT, padx=2)
+        tk.Button(btns, text="Đóng", bg="#232d3f", fg=TEXT_MUTED, font=("Segoe UI", 8),
+                  relief=tk.FLAT, padx=7, cursor="hand2", command=win.destroy).pack(side=tk.RIGHT, padx=2)
+
+        outer = tk.Frame(win, bg=PANEL_BG)
+        outer.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(outer, bg=PANEL_BG, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        body = tk.Frame(canvas, bg=PANEL_BG)
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body_id = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(body_id, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+
+        self._bt_form_vars = {}
+        for sec_num in (1, 2, 3, 4):
+            title, keys = self.SETTINGS_SECTION_MAP[sec_num]
+            shown = [k for k in keys if k in smap and k not in self.BT_EXCLUDED_KEYS and k not in self.BT_HIDDEN_KEYS]
+            if not shown:
+                continue
+            tk.Label(body, text=title, bg="#161e2e", fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold"),
+                     anchor="w", padx=6, pady=3).pack(fill=tk.X, padx=4, pady=(8, 2))
+            for key in shown:
+                try:
+                    self._bt_add_form_row(body, pk, key, smap.get(key), cfg.get(key))
+                except Exception as e:
+                    self._write_file_log(f"[BACKTEST] Không dựng được ô {key}: {e}", is_error=True)
+
+    def _bt_add_form_row(self, parent, pk: str, key: str, live_var, value):
+        spec = self._bt_param_spec(key, live_var)
+        row = tk.Frame(parent, bg=PANEL_BG)
+        row.pack(fill=tk.X, padx=10, pady=1)
+
+        def _store(v):
+            self.bt_settings.setdefault(pk, {})[key] = v
+            self._save_bt_settings()
+            if key in ("analysis_tf", "tf"):
+                self._update_bt_tf_display()
+
+        if spec["type"] == "bool":
+            var = tk.BooleanVar(value=self._bt_to_bool(value))
+            tk.Checkbutton(row, text=spec["label"], variable=var, bg=PANEL_BG, fg=TEXT_MAIN, selectcolor=BG_DARK,
+                           activebackground=PANEL_BG, font=("Segoe UI", 8, "bold"), anchor="w",
+                           command=lambda: _store(bool(var.get()))).pack(side=tk.LEFT)
+            if spec["help_key"] and spec["help_key"] in PARAM_HELP_GUIDE:
+                self._create_help_badge(row, spec["help_key"])
+        else:
+            lbl = tk.Frame(row, bg=PANEL_BG)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            tk.Label(lbl, text=spec["label"] + ":", bg=PANEL_BG, fg=TEXT_MAIN, font=("Segoe UI", 8), anchor="w").pack(side=tk.LEFT)
+            if spec["help_key"] and spec["help_key"] in PARAM_HELP_GUIDE:
+                self._create_help_badge(lbl, spec["help_key"])
+            if spec["type"] in ("coded", "combo"):
+                if spec["type"] == "coded":
+                    label_of = spec["code_labels"]
+                    code_of = {v: k for k, v in label_of.items()}
+                    shown_vals = list(label_of.values())
+                    var = tk.StringVar(value=label_of.get(str(value), str(value)))
+                    to_store = lambda: code_of.get(var.get(), var.get())
+                else:
+                    shown_vals = [str(x) for x in spec["values"]]
+                    var = tk.StringVar(value="" if value is None else str(value))
+                    to_store = lambda: var.get()
+                width = max(12, min(max((len(x) for x in shown_vals), default=12) + 1, 30))
+                cb = ttk.Combobox(row, textvariable=var, values=shown_vals, state="readonly", font=("Segoe UI", 8), width=width)
+                cb.pack(side=tk.RIGHT)
+                cb.bind("<<ComboboxSelected>>", lambda e: _store(to_store()))
+            else:
+                var = tk.StringVar(value="" if value is None else str(value))
+                tk.Entry(row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief=tk.FLAT,
+                         font=("Consolas", 8), width=12, justify="center").pack(side=tk.RIGHT)
+                var.trace_add("write", lambda *_a: _store(var.get().strip()))
+        self._bt_form_vars[key] = var
 
     def _clear_backtest_data(self):
         """Xóa trắng toàn bộ dữ liệu bảng lệnh, biểu đồ và chỉ số KPI để chuẩn bị chạy lượt test mới."""
@@ -3889,6 +4174,10 @@ class KronosDesktopApp:
             self.show_toast("Kiểm thử đang chạy, vui lòng đợi!", is_error=True)
             return
 
+        if self._bt_engine_is_live():
+            self._start_live_engine_backtest()
+            return
+
         self._bt_cancel_flag = False
         self._bt_worker_running = True
         self._reset_backtest_view_for_run()
@@ -3908,10 +4197,307 @@ class KronosDesktopApp:
 
     def _stop_backtest_worker(self):
         """Dừng tiến trình kiểm thử."""
+        if getattr(self, "_bt_proc", None) is not None:
+            self._bt_request_cancel_live()
+            return
         if getattr(self, "_bt_worker_running", False):
             self._bt_cancel_flag = True
             self._update_bt_status("Đang hủy tiến trình kiểm thử...", 0)
             self.show_toast("Đang dừng Backtest...", is_error=False, duration_ms=2000)
+
+    # ── BACKTEST BẰNG CODE LIVE (TIẾN TRÌNH RIÊNG) + TRÌNH PHÁT LẠI ─────────────────────────
+    # Engine "Code Live" chạy tools/live_replay (CHÍNH code bot live trên tick quá khứ, sàn giả lập) ở tiến trình con:
+    # live_replay thay mt5/time/datetime cấp module nên KHÔNG được chạy chung tiến trình với bot live.
+    # Tiến trình con: độ ưu tiên thấp, ít luồng AI; báo tiến độ qua file progress.jsonl, kết quả result.json + player.npz.
+    BT_LIVE_ENGINE_LABEL = "🧠 Code Live (giống bot live)"
+    BT_LEGACY_ENGINE_LABEL = "⚡ Engine cũ (nhanh, khác live)"
+    BT_RUNS_KEEP = 10
+
+    def _bt_on_engine_changed(self):
+        """Engine Code Live luôn dùng tick thật + AI: làm mờ 2 ô chỉ dùng cho engine cũ (Dữ liệu, Não AI)."""
+        live = self._bt_engine_is_live()
+        for name, on_state in (("bt_prec_combo", "readonly"), ("bt_ai_chk", "normal")):
+            w = getattr(self, name, None)
+            try:
+                if w is not None and w.winfo_exists():
+                    w.config(state="disabled" if live else on_state)
+            except Exception:
+                pass
+
+    def _bt_engine_is_live(self) -> bool:
+        try:
+            return not str(self.bt_engine_var.get()).startswith("⚡")
+        except Exception:
+            return True
+
+    @staticmethod
+    def _bt_child_threads() -> int:
+        """Số luồng AI cho tiến trình backtest: chừa CPU cho bot live (máy từng bị Kernel-Power 41)."""
+        cpu = os.cpu_count() or 4
+        return max(1, min(2, cpu // 4))
+
+    @staticmethod
+    def _bt_build_replay_command(job_path: str) -> tuple:
+        """Lệnh khởi chạy tiến trình backtest. Bản .exe (launcher + core_engine.bin): chạy lại chính chương trình với biến môi trường
+        KRONOS_REPLAY_JOB -> code bot thấy biến này thì chạy backtest rồi thoát (không mở giao diện). Từ mã nguồn: tools/live_replay.py --job."""
+        env = dict(os.environ)
+        env.pop("KRONOS_REPLAY_JOB", None)
+        main_mod = sys.modules.get("__main__")
+        if getattr(sys, "frozen", False):
+            env["KRONOS_REPLAY_JOB"] = job_path
+            return [sys.executable], env
+        if getattr(main_mod, "_CONTAINER_RAW_DICT", None) and getattr(main_mod, "__file__", None):
+            env["KRONOS_REPLAY_JOB"] = job_path
+            return [sys.executable, os.path.abspath(main_mod.__file__)], env
+        tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "live_replay.py")
+        if not os.path.exists(tool):
+            raise FileNotFoundError(f"Không thấy công cụ phát lại: {tool}")
+        return [sys.executable, "-u", tool, "--job", job_path], env
+
+    def _bt_cleanup_old_runs(self):
+        """Giữ BT_RUNS_KEEP lượt backtest gần nhất trong thư mục backtest_runs (chỉ xóa thư mục run_* do app tạo)."""
+        try:
+            root_dir = os.path.join(SETTINGS_DIR, "backtest_runs")
+            runs = sorted(d for d in os.listdir(root_dir) if d.startswith("run_") and os.path.isdir(os.path.join(root_dir, d)))
+            for d in runs[:-self.BT_RUNS_KEEP]:
+                shutil.rmtree(os.path.join(root_dir, d), ignore_errors=True)
+        except Exception:
+            pass
+
+    def _start_live_engine_backtest(self):
+        """Chạy backtest bằng CODE LIVE ở tiến trình riêng theo cấu hình Backtest (không đọc menu live)."""
+        sym = self.bt_sym_var.get().strip()
+        pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
+        start_s, end_s = self.bt_start_var.get().strip(), self.bt_end_var.get().strip()
+        try:
+            d0, d1 = datetime.strptime(start_s, "%Y-%m-%d"), datetime.strptime(end_s, "%Y-%m-%d")
+            if d1 < d0:
+                raise ValueError("'Đến ngày' phải sau 'Từ ngày'")
+        except ValueError as e:
+            self.show_toast(f"Ngày không hợp lệ ({e}). Nhập dạng YYYY-MM-DD.", is_error=True, duration_ms=3500)
+            return
+        try:
+            capital = float(self.bt_capital_var.get() or 1000)
+        except ValueError:
+            capital = 1000.0
+        cfg = self._get_bt_cfg(pk)
+        for k in self.BT_SECRET_KEYS:
+            cfg.pop(k, None)
+        threads = self._bt_child_threads()
+        run_dir = os.path.join(SETTINGS_DIR, "backtest_runs", datetime.now().strftime("run_%Y%m%d_%H%M%S"))
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            job_path = os.path.join(run_dir, "job.json")
+            with open(job_path, "w", encoding="utf-8") as f:
+                json.dump({"profile": pk, "symbol": sym, "cfg": cfg, "start": start_s, "end": end_s, "capital": capital,
+                           "threads": threads, "seed": 1, "out_dir": run_dir}, f, ensure_ascii=False, indent=1, default=str)
+            cmd, env = self._bt_build_replay_command(job_path)
+            flags = (0x08000000 | 0x00004000) if os.name == "nt" else 0  # CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+            self._bt_stderr_fh = open(os.path.join(run_dir, "stderr.txt"), "w", encoding="utf-8")
+            self._bt_proc = subprocess.Popen(cmd, env=env, cwd=os.getcwd(), stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.DEVNULL, stderr=self._bt_stderr_fh, creationflags=flags)
+        except Exception as e:
+            self._bt_proc = None
+            self._update_bt_status(f"Lỗi khởi chạy backtest code live: {e}", 0)
+            self.show_toast(f"Không khởi chạy được backtest: {e}", is_error=True, duration_ms=4000)
+            self._write_file_log(f"[BACKTEST] Lỗi khởi chạy tiến trình backtest: {e}", is_error=True)
+            return
+        self._bt_run_dir = run_dir
+        self._bt_prog_pos = 0
+        self._bt_last_event = {}
+        self._bt_live_meta = {"pk": pk, "sym": sym, "capital": capital, "start": start_s, "end": end_s, "threads": threads}
+        self._bt_worker_running = True
+        self._bt_cancel_flag = False
+        self._reset_backtest_view_for_run()
+        self._update_bt_status(f"🧠 Đang chạy CODE LIVE {start_s} → {end_s} (tiến trình riêng, {threads} luồng AI, ưu tiên thấp)...", 1)
+        self.log(f"[BACKTEST] Bắt đầu backtest bằng CODE LIVE [{pk} {sym}] {start_s} → {end_s} | thư mục: {run_dir}")
+        self._bt_cleanup_old_runs()
+        self.root.after(700, self._poll_live_bt)
+
+    def _bt_request_cancel_live(self):
+        run_dir = getattr(self, "_bt_run_dir", None)
+        try:
+            if run_dir:
+                with open(os.path.join(run_dir, "cancel"), "w", encoding="utf-8") as f:
+                    f.write("1")
+        except Exception:
+            pass
+        self._update_bt_status("Đang dừng backtest code live...", 0)
+        self.show_toast("Đang dừng Backtest...", is_error=False, duration_ms=2000)
+        self._bt_cancel_deadline = time.time() + 8.0  # quá hạn mà tiến trình chưa tự dừng -> buộc dừng
+
+    def _bt_kill_child(self):
+        proc = getattr(self, "_bt_proc", None)
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    def _bt_read_progress_events(self) -> list:
+        """Đọc các dòng tiến độ MỚI (chỉ dòng hoàn chỉnh) từ progress.jsonl của lượt đang chạy."""
+        events = []
+        path = os.path.join(getattr(self, "_bt_run_dir", "") or "", "progress.jsonl")
+        try:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    f.seek(self._bt_prog_pos)
+                    data = f.read()
+                cut = data.rfind(b"\n")
+                if cut >= 0:
+                    self._bt_prog_pos += cut + 1
+                    for line in data[:cut + 1].splitlines():
+                        if line.strip():
+                            try:
+                                events.append(json.loads(line.decode("utf-8")))
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+        return events
+
+    def _poll_live_bt(self):
+        proc = getattr(self, "_bt_proc", None)
+        if proc is None:
+            return
+        for ev in self._bt_read_progress_events():
+            self._bt_last_event = ev
+            typ = ev.get("type")
+            if typ == "start":
+                prm = ev.get("params", {})
+                self.log(f"[BACKTEST] {ev.get('note', '')} | Thông số chính: " + ", ".join(f"{k}={v}" for k, v in prm.items()))
+            elif typ == "progress":
+                pct = int(ev.get("pct", 0))
+                mins = float(ev.get("mins", 0.0))
+                eta = f" | còn ~{mins * (100 - pct) / pct:.0f} phút" if pct >= 3 else ""
+                stage = ev.get("stage")
+                when = datetime.fromtimestamp(float(ev.get("t", 0)), VN_TZ).strftime("%d/%m %H:%M") if ev.get("t") else ""
+                txt = stage or (f"🧠 Code live: {pct}% | đang ở {when} | {ev.get('closed', 0)} lệnh đã đóng | "
+                                f"{ev.get('analyses', 0)} lần AI | {mins:.1f} phút{eta}")
+                self._update_bt_status(txt, max(pct, 1))
+        deadline = getattr(self, "_bt_cancel_deadline", None)
+        if deadline and time.time() > deadline and proc.poll() is None:
+            self._bt_kill_child()
+        if proc.poll() is None:
+            self.root.after(700, self._poll_live_bt)
+            return
+        # Tiến trình đã kết thúc
+        try:
+            self._bt_stderr_fh.close()
+        except Exception:
+            pass
+        self._bt_proc = None
+        self._bt_worker_running = False
+        self._bt_cancel_deadline = None
+        run_dir = self._bt_run_dir
+        res_path = os.path.join(run_dir, "result.json")
+        last = getattr(self, "_bt_last_event", {}) or {}
+        if os.path.exists(res_path):
+            try:
+                with open(res_path, "r", encoding="utf-8") as f:
+                    res = json.load(f)
+                self._bt_show_live_result(res, run_dir)
+                return
+            except Exception as e:
+                last = {"type": "error", "msg": f"Không đọc được kết quả: {e}"}
+        if last.get("type") == "cancelled" or os.path.exists(os.path.join(run_dir, "cancel")):
+            self._update_bt_status("⏹ Đã dừng backtest code live.", 0)
+            return
+        msg = last.get("msg") or ""
+        if not msg:
+            try:
+                with open(os.path.join(run_dir, "stderr.txt"), "r", encoding="utf-8", errors="replace") as f:
+                    msg = f.read()[-400:].strip()
+            except Exception:
+                msg = ""
+        msg = msg or f"tiến trình thoát mã {proc.returncode}"
+        self._update_bt_status(f"❌ Lỗi backtest code live: {msg[:160]}", 0)
+        self.show_toast(f"Lỗi Backtest: {msg[:120]}", is_error=True, duration_ms=5000)
+        self._write_file_log(f"[BACKTEST] Lỗi backtest code live: {msg} | {last.get('tb', '')}", is_error=True)
+
+    def _bt_show_live_result(self, res: dict, run_dir: str):
+        """Đổ kết quả backtest code live vào bảng lệnh + thẻ KPI + biểu đồ vốn có sẵn của tab Backtest."""
+        capital = float(res.get("capital", 1000.0))
+        is_btc = "BTC" in str(res.get("symbol", "")).upper()
+        contract = 1.0 if is_btc else 100.0
+        closed = sorted(res.get("closed", []), key=lambda c: float(c.get("close_ms", 0)))
+        trades, equity, eq_curve = [], capital, [(0, capital)]
+        for i, c in enumerate(closed):
+            o_dt = datetime.fromtimestamp(float(c["open_ms"]) / 1000.0, VN_TZ)
+            x_dt = datetime.fromtimestamp(float(c["close_ms"]) / 1000.0, VN_TZ)
+            pnl = round(float(c.get("profit", 0.0)), 2)
+            equity += pnl
+            vol = float(c.get("volume", 0.0))
+            sl0 = float(c.get("sl0", 0.0) or 0.0)
+            trades.append({
+                "ticket": f"#{i + 1:04d}", "date": o_dt.strftime("%Y-%m-%d"),
+                "risk_usd": round(abs(float(c["price_open"]) - sl0) * vol * contract, 2) if sl0 > 0 else 0.0,
+                "cost_spread": 0.0, "cost_kind": "LIVE_REPLAY",
+                "in_time": o_dt.strftime("%d/%m %H:%M:%S"), "out_time": x_dt.strftime("%d/%m %H:%M:%S"),
+                "duration": self._format_duration(int((float(c["close_ms"]) - float(c["open_ms"])) / 1000.0)),
+                "type": c.get("type", ""), "lot": f"{vol:.2f}", "in_price": f"{float(c['price_open']):.2f}",
+                "out_price": f"{float(c['price_close']):.2f}", "pnl": pnl,
+                "reason": c.get("reason_label") or c.get("reason", ""), "mt5_ticket": c.get("ticket"),
+            })
+            eq_curve.append((len(trades), round(equity, 2)))
+        self._bt_trades_cache = trades
+        self._bt_equity_points = eq_curve
+        self._bt_last_result = res
+        self._bt_last_run_dir = run_dir
+        self._render_backtest_results(trades, eq_curve, capital)
+        try:
+            self.bt_tree.bind("<Double-1>", self._on_bt_tree_double_click)
+        except Exception:
+            pass
+        sm = res.get("summary", {})
+        n_err = int(res.get("n_errors", 0))
+        err_tag = f" | ⚠️ {n_err} lỗi trong code bot (xem log.txt)" if n_err else ""
+        self._update_bt_status(
+            f"✅ Xong (code live): {sm.get('n', len(trades))} lệnh | lãi ròng {float(sm.get('net', 0.0)):+.2f}$ | "
+            f"{res.get('n_analyses', 0)} lần AI | {float(res.get('minutes', 0.0)):.1f} phút{err_tag} — bấm '🎬 Xem phát lại' hoặc bấm đúp 1 lệnh", 100)
+        self.log(f"[BACKTEST] Xong backtest CODE LIVE: {sm.get('n', 0)} lệnh, lãi ròng {float(sm.get('net', 0.0)):+.2f}$, "
+                 f"PF {sm.get('pf', 0)}, sụt vốn {sm.get('max_dd', 0)}$, lỗi code bot {n_err}. Log: {os.path.join(run_dir, 'log.txt')}")
+
+    def _on_bt_tree_double_click(self, event=None):
+        try:
+            sel = self.bt_tree.selection()
+            if not sel:
+                return
+            no = str(self.bt_tree.item(sel[0], "values")[0]).lstrip("#")
+            tr = self._bt_trades_cache[int(no) - 1]
+            self._open_bt_player(ticket=tr.get("mt5_ticket"))
+        except Exception:
+            pass
+
+    def _open_bt_player(self, ticket=None):
+        """Mở trình phát lại nến (kiểu TradingView) cho lượt backtest code live gần nhất."""
+        res = getattr(self, "_bt_last_result", None)
+        run_dir = getattr(self, "_bt_last_run_dir", None)
+        if not res or not run_dir:
+            self.show_toast("Chưa có kết quả để phát lại: chạy Backtest bằng engine '🧠 Code Live' trước.", is_error=True, duration_ms=3500)
+            return
+        try:
+            from trading_modules.replay_player import ReplayPlayer
+            with np.load(os.path.join(run_dir, "player.npz")) as z:
+                data = {k: z[k] for k in ("sec", "o", "h", "l", "c")}
+            is_btc = "BTC" in str(res.get("symbol", "")).upper()
+            tf = str(res.get("tf") or "M1").strip()
+            old = getattr(self, "_bt_player", None)
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:
+                    pass
+            self._bt_player = ReplayPlayer(
+                self.root, data, res.get("closed", []), res.get("sltp", []), float(res["start_utc"]), float(res["end_utc"]),
+                contract=1.0 if is_btc else 100.0, tf=tf if tf in ("M1", "M5", "M15") else "M1",
+                title=f"🎬 Phát lại Backtest {res.get('symbol', '')} | {len(res.get('closed', []))} lệnh | "
+                      f"lãi ròng {float(res.get('summary', {}).get('net', 0.0)):+.2f}$")
+            if ticket is not None:
+                self._bt_player.jump_to_trade(ticket)
+        except Exception as e:
+            self.show_toast(f"Không mở được trình phát lại: {e}", is_error=True, duration_ms=4000)
+            self._write_file_log(f"[BACKTEST] Lỗi mở trình phát lại: {e}", is_error=True)
 
     def _fetch_or_load_ticks(self, sym: str, start_dt: datetime, end_dt: datetime):
         """
@@ -4159,7 +4745,9 @@ class KronosDesktopApp:
 
         is_btc = "BTC" in sym.upper()
         pk = "BTCUSD" if is_btc else "XAUUSD"
-        cfg = self._get_profile_cfg(pk)
+        # Cấu hình backtest RIÊNG (không phải menu live) khi chạy từ tab Backtest của app; app giả (tools/run_backtest.py, test) dùng _get_profile_cfg
+        _bt_cfg_getter = getattr(self, "_get_bt_cfg", None)
+        cfg = _bt_cfg_getter(pk) if (callable(_bt_cfg_getter) and "bt_sym_var" in self.__dict__) else self._get_profile_cfg(pk)
         def_cfg = DEFAULT_PROFILE_SETTINGS.get(pk, {})
 
         ana_tf_str = str(cfg.get("analysis_tf", self.analysis_tf_var.get() if hasattr(self, "analysis_tf_var") else "M15")).strip() or "M15"
@@ -5551,6 +6139,8 @@ class KronosDesktopApp:
                                 pcfg["fast_sl_cooldown_candles"] = "1"
                         else:
                             pcfg["fast_sl_cooldown_candles"] = "1"
+                    # Lọc cấu trúc BOS/CHoCH đã ẩn khỏi giao diện -> luôn TẮT (cấu hình cũ có thể đang lưu True)
+                    pcfg["trend_filter"] = False
 
             # Trích xuất và đồng bộ HF Token cho cả 2 Tab nếu có lưu
             token_saved = ""
@@ -5629,15 +6219,18 @@ class KronosDesktopApp:
             self._loading_settings = False
             self.save_user_settings()
 
+    # Danh sách khóa cấu hình theo từng Mục của menu (nút Khôi phục mặc định + bảng thông số Backtest dùng chung)
+    SETTINGS_SECTION_MAP = {
+        1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
+        2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
+        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close"]),
+        4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
+        5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
+    }
+
     def reset_section_settings(self, section_num: int):
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
-        section_map = {
-            1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close"]),
-            4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
-            5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
-        }
+        section_map = self.SETTINGS_SECTION_MAP
         if section_num not in section_map:
             return
 
@@ -6412,6 +7005,10 @@ class KronosDesktopApp:
 
     def _on_close_window(self):
         self._app_closing = True
+        try:
+            self._bt_kill_child()
+        except Exception:
+            pass
         # Chốt an toàn: dù bước dọn dẹp nào bị treo (vd. MT5 không phản hồi), tiến trình vẫn tự thoát sau 8s, không chạy ngầm
         try:
             _wd = threading.Timer(8.0, os._exit, args=(0,))
@@ -7172,6 +7769,7 @@ class KronosDesktopApp:
         if help_key and help_key in PARAM_HELP_GUIDE:
             self._create_help_badge(row, help_key)
         self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, cb)
+        self.__dict__.setdefault("_param_meta", {})[str(var)] = {"type": "bool", "label": text, "help_key": help_key}
 
         # Ô được tích: chữ xanh lá + nền dải nhẹ để nổi bật; bỏ tích: trở về màu thường
         def _sync_cb_style(*_a):
@@ -7210,6 +7808,7 @@ class KronosDesktopApp:
         entry.bind("<FocusOut>", lambda e: self.save_user_settings())
         entry.bind("<Return>", lambda e: self.save_user_settings())
         self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, entry)
+        self.__dict__.setdefault("_param_meta", {})[str(var)] = {"type": "entry", "label": label_text, "help_key": help_key}
         return var
 
     def _add_coded_combo(self, parent, label_text, code_labels: dict, default_code: str, help_key=None):
@@ -7220,6 +7819,7 @@ class KronosDesktopApp:
         code_of = {v: k for k, v in label_of.items()}
         label_var = self._add_labeled_combo(parent, label_text, list(label_of.values()),
                                             label_of.get(default_code, default_code), help_key=help_key)
+        self.__dict__.setdefault("_param_meta", {})[str(code_var)] = {"type": "coded", "label": label_text, "code_labels": dict(label_of), "help_key": help_key}
         rows = self.__dict__.setdefault("_param_rows", {})
         if str(label_var) in rows:
             rows[str(code_var)] = rows[str(label_var)]  # cây cha/con tra theo biến mã
@@ -7271,6 +7871,7 @@ class KronosDesktopApp:
         cb.pack(side=tk.RIGHT)
         cb.bind("<<ComboboxSelected>>", lambda e: self.save_user_settings())
         self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, cb)
+        self.__dict__.setdefault("_param_meta", {})[str(var)] = {"type": "combo", "label": label_text, "values": list(values or []), "help_key": help_key}
 
         # Mở rộng danh sách xổ xuống (Popdown) tương ứng với chuỗi dài nhất để đọc trọn vẹn 100% nội dung
         if max_len > 18:
@@ -12447,6 +13048,52 @@ def ensure_single_app_instance():
         except Exception:
             pass
         sys.exit(0)
+
+
+def _run_packed_replay_job_from_env():
+    """Tiến trình con do tab Backtest khởi chạy (biến môi trường KRONOS_REPLAY_JOB, bản .exe / launcher + core_engine.bin):
+    chạy 1 lượt backtest bằng CODE LIVE rồi THOÁT ngay (không mở giao diện, không đụng bot live đang chạy ở tiến trình khác)."""
+    job = os.environ.pop("KRONOS_REPLAY_JOB", "")
+    if not job:
+        return
+    code = 1
+    try:
+        raw = getattr(sys.modules.get("__main__"), "_CONTAINER_RAW_DICT", None)
+        if raw:
+            import marshal
+            try:
+                import argparse  # noqa: F401 (chỉ dùng khi chạy dòng lệnh)
+            except ImportError:
+                sys.modules["argparse"] = types.ModuleType("argparse")
+            for name in ("bt_ai_cache", "run_backtest", "live_replay"):
+                if name not in raw:
+                    raise RuntimeError(f"core_engine.bin thiếu module {name} (cần đóng gói lại bằng tools/binary_packer.py)")
+                m = sys.modules.get(name)
+                if m is None:
+                    m = types.ModuleType(name)
+                    sys.modules[name] = m
+                if not getattr(m, "_packed_loaded", False):
+                    m.__dict__.setdefault("__file__", os.path.join(os.getcwd(), "tools", name + ".py"))
+                    exec(marshal.loads(raw[name]), m.__dict__)
+                    m._packed_loaded = True
+        else:
+            tools_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools")
+            if tools_dir not in sys.path:
+                sys.path.insert(0, tools_dir)
+        import live_replay
+        code = int(live_replay.run_replay_job(job))
+    except BaseException as e:  # noqa: BLE001 - báo lỗi về app qua file tiến độ
+        try:
+            with open(os.path.join(os.path.dirname(job), "progress.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "error", "msg": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()[-3000:]},
+                                   ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    finally:
+        os._exit(code)
+
+
+_run_packed_replay_job_from_env()
 
 
 if __name__ == "__main__":
