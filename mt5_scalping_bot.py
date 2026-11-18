@@ -274,7 +274,7 @@ PARAM_HELP_GUIDE = {
     },
     "entry_mode": {
         "title": "Chế độ nhồi lệnh (Entry Mode)",
-        "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n- 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n- 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân.\n- 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
+        "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n- 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n- 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân. Chỉ so với lệnh cùng chiều CHƯA dời BE (lệnh đã BE không chặn lệnh mới).\n- 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
         "how_to_set": "- An toàn nhất: Chọn 'Risk-Free' (Không bao giờ gia tăng rủi ro khi lệnh cũ chưa an toàn).\n- Tận dụng sóng: Chọn 'Nhồi giá tốt hơn (DCA)' kết hợp giới hạn Số lệnh tối đa = 2 hoặc 3."
     },
     "min_entry_spacing": {
@@ -10296,7 +10296,8 @@ class KronosDesktopApp:
 
                     elif "DCA" in entry_mode and cur_chk_price > 0.0:
                         # Quy tắc DCA: Lệnh BUY mới phải thấp hơn lệnh BUY trước; Lệnh SELL mới phải cao hơn lệnh SELL trước
-                        same_dir_pos = [p for p in positions if (p.type == mt5.POSITION_TYPE_BUY) == (action == "BUY")]
+                        # Lệnh đã dời BE chuyển sang khâu quản lý lệnh, không dùng làm mốc so giá DCA (giống bộ đếm max_pos)
+                        same_dir_pos = [p for p in positions if (p.type == mt5.POSITION_TYPE_BUY) == (action == "BUY") and not self._is_pos_at_be(p, eps_eq)]
                         if same_dir_pos:
                             if action == "BUY":
                                 best_price = min(p.price_open for p in same_dir_pos)
