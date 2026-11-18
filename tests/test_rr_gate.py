@@ -15,7 +15,7 @@ def mk(tp, ask=101.0, rr=2.0):
         pending_pullback_order=p, auto_loop_running=True, cached_tp=None,
         _last_order_candle_ts={}, log=mock.Mock(),
         _pb_gate_log=lambda *a, **k: None, _pb_note_check=lambda *a, **k: (None, None),
-        _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk: False,
+        _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk=None, action=None: False,
         _get_profile_cfg=lambda pk: {"rr": rr, "max_sl_price": 5.0, "max_spread": 1.0, "lot": 0.01,
                                      "max_pos": 3, "confirm_entry_pa": False},
         _get_symbol_tolerances=lambda *a, **k: {"sl_break_tol": 0.0, "max_sl_tol": 0.0, "eps_equal": 0.05},

@@ -1,6 +1,6 @@
 {
-  "version": "1.3.22",
+  "version": "1.3.23",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-18",
-  "description": "Phiên bản v1.3.22:\n- [GIAO DIỆN] Sắp xếp lại bảng cài đặt cho dễ tìm:\n  + Mục 2 chia 4 nhóm: Tín hiệu AI / SL & TP / Bộ lọc vào lệnh / Quy tắc nhồi lệnh.\n  + Mục 3: thêm nhóm 'Dời SL & bảo vệ lệnh'; 'Giá lãi nhỏ cộng vào Entry khi BE+' đưa lên dưới mục dời BE; 'Gỡ vốn trong ngày' chuyển vào nhóm Giới hạn lãi/lỗ trong ngày.\n  + 'Ghi nhật ký debug theo nến' chuyển sang Mục 4.\n- Không đổi luật giao dịch, không đổi giá trị cài đặt đã lưu."
+  "description": "Phiên bản v1.3.23:\n- [SỬA] Nhồi giá tốt hơn (DCA): lệnh đã dời SL về hòa vốn (BE) không còn chặn lệnh mới cùng chiều nữa (chuyển sang quản lý lệnh). Trước đây có lệnh BE là gần như không vào thêm được.\n- [SỬA] Nến mới bắt đầu phân tích AI: hủy vùng canh giá của lần phân tích trước, tránh khớp theo tín hiệu cũ.\n- [MỚI] Mục 3, ô 'Chỉ nghỉ chiều vừa SL nhanh (chiều ngược vẫn vào)' (mặc định TẮT): BUY dính SL nhanh thì chỉ nghỉ BUY, SELL có tín hiệu vẫn vào.\n- [MỚI] Mục 2, ô 'Vẫn vào lệnh ngược chiều khi lệnh cũ đang âm' (mặc định TẮT): đang có BUY âm mà AI báo SELL đủ điều kiện thì vẫn vào SELL (vẫn tính trong Số lệnh tối đa).\n- [GIAO DIỆN] 'Chế độ xử lý lệnh đang lỗ' và 'Xung đột cấu trúc' hiển thị tiếng Việt (cài đặt đã lưu giữ nguyên).\n- Hai ô mới mặc định TẮT: muốn dùng phải tự tích trong cài đặt."
 }

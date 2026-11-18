@@ -350,7 +350,14 @@ class FakeBroker:
         profit = self._profit(pos.type, vol, pos.price_open, px)
         oid, did = self._new_id(), self._new_id()
         dtype = 1 if pos.type == self.POSITION_TYPE_BUY else 0
-        deal = self._deal(did, oid, ms, dtype, self.DEAL_ENTRY_OUT, pos.magic, pos.ticket, reason, vol, px, profit, pos.symbol, pos.comment)
+        # MT5 thật ghi comment deal đóng do sàn là "[sl giá]" / "[tp giá]"; bot dựa vào đó nhận biết SL (vd. nghỉ SL nhanh)
+        if reason == self.DEAL_REASON_SL:
+            d_cmt = f"[sl {px:.2f}]"
+        elif reason == self.DEAL_REASON_TP:
+            d_cmt = f"[tp {px:.2f}]"
+        else:
+            d_cmt = pos.comment
+        deal = self._deal(did, oid, ms, dtype, self.DEAL_ENTRY_OUT, pos.magic, pos.ticket, reason, vol, px, profit, pos.symbol, d_cmt)
         self.deals.append(deal)
         self.orders.append(self._order(oid, ms, 1 if pos.type == self.POSITION_TYPE_BUY else 0, pos.magic, pos.ticket,
                                        vol, px, 0.0, 0.0, pos.symbol, pos.comment))
@@ -606,9 +613,7 @@ class Replayer:
             if ctx.get("last_ana_candle_time") != latest_ana_time and not ctx.get("is_analyzing", False) and self.analysis_due is None:
                 ctx["last_ana_candle_time"] = latest_ana_time
                 app.log(f"🔔 [{pk} - {self.symbol}] Nến phân tích {self.ana_tf} mới vừa đóng ({latest_ana_time}). Đưa vào hàng đợi phân tích AI...")
-                ctx["is_analyzing"] = True
-                self.analysis_due = self.clock.now + self.ai_latency
-                self.analysis_ts = latest_ana_time
+                self.request_scan(pk, "AUTO_CANDLE", latest_ana_time)  # như live gọi enqueue_ai_scan (gồm hủy lệnh chờ cũ)
         except Exception as e:
             app.log_error(f"AUTO_CANDLE_WATCH_{pk}", e)
 
@@ -617,6 +622,7 @@ class Replayer:
         if (profile_key or self.pk) != self.pk or self.analysis_due is not None:
             return False
         self._ctx()["is_analyzing"] = True
+        self.app._cancel_pending_for_new_scan(self.pk)  # như enqueue_ai_scan của live: hủy lệnh chờ cũ ngay khi xếp lịch
         self.analysis_due = self.clock.now + self.ai_latency
         self.analysis_ts = closed_candle_ts
         return True
@@ -792,6 +798,7 @@ def main(argv=None) -> int:
     ap.add_argument("--threads", type=int, default=None)
     ap.add_argument("--ai-latency", type=float, default=8.5, help="Giây từ lúc phát hiện nến phân tích tới khi có kết quả AI (log live 16/11: 7.6-9.7s)")
     ap.add_argument("--detect-delay", type=float, default=1.6, help="Giây sau mốc đóng nến phân tích mà vòng nến phát hiện (log live: 1.2-2.1s)")
+    ap.add_argument("--no-cancel-pending", action="store_true", help="So sánh: tắt hủy lệnh chờ cũ khi nến mới (hành vi trước 18/11)")
     ap.add_argument("--out", default=None, help="Thư mục xuất (mặc định SETTINGS_DIR\\replays)")
     args = ap.parse_args(argv)
 
@@ -842,6 +849,9 @@ def main(argv=None) -> int:
         print(f"  [{pct:>3}%] {vn(t, is_ms=False)} | lệnh đã đóng {n_closed} | phân tích AI {n_an} | "
               f"cache AI {cache.hits}/{cache.hits + cache.misses} | {(_real_time.perf_counter() - t_wall) / 60:.1f} phút")
 
+    if args.no_cancel_pending:
+        bot_mod.KronosDesktopApp._cancel_pending_for_new_scan = lambda self, pk: None
+        print("[*] So sánh       : TẮT hủy lệnh chờ cũ khi nến mới (--no-cancel-pending)")
     res = simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=args.capital, seed=args.seed,
                    ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress)
     closed, logs, errors, rejects = res["closed"], res["logs"], res["errors"], res["rejects"]
