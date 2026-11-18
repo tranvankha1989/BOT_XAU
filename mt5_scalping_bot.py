@@ -54,6 +54,7 @@ def _load_packed_trading_modules():
 _load_packed_trading_modules()
 from trading_modules.structure import analyze_structure_context, nearest_swing_dist, heikin_ashi_colors
 from trading_modules.price_action import evaluate_price_action
+from trading_modules.swing_structure import analyze_swing_structure
 import gc
 import torch
 import torch.nn.functional as F
@@ -515,6 +516,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -579,6 +581,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -2481,6 +2484,8 @@ class KronosDesktopApp:
             help_key="structure_conflict_mode"
         )
         self.use_confidence_gate_var = tk.BooleanVar(value=False)
+        self.structure_direction_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Hướng vào lệnh theo cấu trúc đỉnh/đáy (AI chỉ xác nhận biên độ)", self.structure_direction_var)
         self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
         self.debug_trace_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Ghi nhật ký debug theo nến (AI, cổng, quyết định) - chỉ để chẩn đoán", self.debug_trace_var)
@@ -5087,6 +5092,7 @@ class KronosDesktopApp:
             "use_confidence_gate": self.use_confidence_gate_var,
             "debug_trace": self.debug_trace_var,
             "recovery_close": self.recovery_close_var,
+            "structure_direction": self.structure_direction_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
@@ -10781,6 +10787,18 @@ class KronosDesktopApp:
                 # Khi bật use_confidence_gate: yêu cầu confidence_pct >= min_consensus thay vì chỉ xét bull_pct / bear_pct
                 is_bull_consensus = (confidence_pct >= min_consensus and bull_pct > bear_pct) if use_confidence_gate else (bull_pct >= min_consensus)
                 is_bear_consensus = (confidence_pct >= min_consensus and bear_pct > bull_pct) if use_confidence_gate else (bear_pct >= min_consensus)
+                # Nhận định cấu trúc đỉnh/đáy xoay (khóa structure_direction, mặc định TẮT). Khi bật: hướng vào lệnh
+                # do cấu trúc quyết định (không có tín hiệu cấu trúc thì không vào lệnh); AI vẫn xác nhận biên độ dự báo.
+                struct_sig, struct_reason = None, ""
+                if bool(cfg.get("structure_direction", False)):
+                    try:
+                        _sw = analyze_swing_structure(df["open"].values, df["high"].values, df["low"].values,
+                                                      df["close"].values, atr)
+                        struct_sig, struct_reason = _sw["signal"], _sw["reason"]
+                    except Exception:
+                        struct_sig, struct_reason = None, "lỗi nhận định cấu trúc"
+                    is_bull_consensus = (struct_sig == "BUY")
+                    is_bear_consensus = (struct_sig == "SELL")
 
                 action = None
                 sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
@@ -11043,6 +11061,7 @@ class KronosDesktopApp:
                                    "structure": macro_ctx.get("summary_tag") if isinstance(macro_ctx, dict) else None},
                             "decision": {"action": action, "is_bull_consensus": is_bull_consensus, "is_bear_consensus": is_bear_consensus,
                                          "is_high_uncertainty": is_high_uncertainty, "min_consensus": min_consensus,
+                                         "struct_sig": struct_sig, "struct_reason": struct_reason,
                                          "min_effective_move": min_effective_move, "use_confidence_gate": use_confidence_gate,
                                          "entry_ref": entry_ref, "sl_ai": sl_ai_price, "tp": tp_price,
                                          "effective_max_sl": effective_max_sl, "sl_tightened_for_2r": sl_tightened_for_2r,
