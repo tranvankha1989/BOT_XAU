@@ -277,6 +277,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n- 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n- 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân. Chỉ so với lệnh cùng chiều CHƯA dời BE (lệnh đã BE không chặn lệnh mới).\n- 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
         "how_to_set": "- An toàn nhất: Chọn 'Risk-Free' (Không bao giờ gia tăng rủi ro khi lệnh cũ chưa an toàn).\n- Tận dụng sóng: Chọn 'Nhồi giá tốt hơn (DCA)' kết hợp giới hạn Số lệnh tối đa = 2 hoặc 3."
     },
+    "allow_opposite_entry": {
+        "title": "Vào lệnh ngược chiều khi lệnh cũ đang âm",
+        "what_is_it": "Khi TẮT (như cũ): đang có lệnh BUY âm (hoặc đang chờ hồi về Entry) thì bot không mở lệnh SELL mới dù AI báo SELL đủ điều kiện (và ngược lại). Khi BẬT: AI báo chiều mới đủ điều kiện thì vẫn vào, lệnh cũ vẫn được quản lý riêng (chờ về Entry / SL / hết giờ).",
+        "how_to_set": "- TẮT (Mặc định): giữ luật cũ.\n- BẬT: không bỏ lỡ tín hiệu đảo chiều; đổi lại có lúc giữ cả BUY và SELL cùng lúc (vẫn tính trong Số lệnh tối đa). Tài khoản phải cho phép lệnh 2 chiều (Hedging)."
+    },
     "min_entry_spacing": {
         "title": "Khoảng cách nhồi tối thiểu (Min Spacing)",
         "what_is_it": "Khoảng cách giá tối thiểu giữa lệnh mới và lệnh đã có gần nhất, chống việc bot vào nhiều lệnh liên tiếp sát sàn sạt nhau tại cùng một mức giá.",
@@ -526,6 +531,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rr": "2.0",
         "min_entry_spacing": "1.0",
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
+        "allow_opposite_entry": False,
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
@@ -592,6 +598,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rr": "2.0",
         "min_entry_spacing": "50.0",
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
+        "allow_opposite_entry": False,
         "one_order_per_candle": True,
         "trend_filter": True,
         "confirm_entry_pa": True,
@@ -2523,6 +2530,8 @@ class KronosDesktopApp:
             help_key="entry_mode"
         )
         self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0", help_key="min_entry_spacing")
+        self.allow_opposite_entry_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Vẫn vào lệnh ngược chiều khi lệnh cũ đang âm", self.allow_opposite_entry_var, help_key="allow_opposite_entry")
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
 
@@ -5154,6 +5163,7 @@ class KronosDesktopApp:
             "rr": self.rr_var,
             "min_entry_spacing": self.min_entry_spacing_var,
             "entry_mode": self.entry_mode_var,
+            "allow_opposite_entry": self.allow_opposite_entry_var,
             "one_order_per_candle": self.one_order_per_candle_var,
             "trend_filter": self.trend_filter_var,
             "confirm_entry_pa": self.confirm_entry_pa_var,
@@ -5623,7 +5633,7 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
@@ -8129,7 +8139,12 @@ class KronosDesktopApp:
         return locked_d == datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
 
     def _fast_sl_same_dir_on(self, cfg: dict) -> bool:
-        return str(cfg.get("fast_sl_same_dir", False)).strip().lower() in ("1", "true", "yes", "on")
+        return self._cfg_flag(cfg, "fast_sl_same_dir")
+
+    @staticmethod
+    def _cfg_flag(cfg: dict, key: str) -> bool:
+        """Đọc ô tích cấu hình (bool hoặc chuỗi 'True'/'1' từ file/--set); thiếu khóa = TẮT."""
+        return str(cfg.get(key, False)).strip().lower() in ("1", "true", "yes", "on")
 
     def _is_cooldown_active(self, profile_key: str = None, action: str = None) -> bool:
         """action ('BUY'/'SELL'): khi bật fast_sl_same_dir, tạm nghỉ SL nhanh chỉ chặn chiều vừa SL. action=None: mọi chiều (hiển thị)."""
@@ -8809,7 +8824,7 @@ class KronosDesktopApp:
                 if len(at_risk_positions) >= max_pos:
                     self._pb_gate_log(pk, "max_pos_hoac_lenh_nguoc", symbol, tick, n_open=len(open_positions), note="lý do=đủ max_pos")
                     return
-                for pos in open_positions:
+                for pos in ([] if self._cfg_flag(cfg, "allow_opposite_entry") else open_positions):
                     is_buy_pos = (pos.type == mt5.POSITION_TYPE_BUY)
                     if ((action == "BUY" and not is_buy_pos) or (action == "SELL" and is_buy_pos)) and pos.profit <= 0:
                         self._pb_gate_log(pk, "max_pos_hoac_lenh_nguoc", symbol, tick, n_open=len(open_positions), note="lý do=lệnh ngược chiều đang âm")
@@ -11349,7 +11364,7 @@ class KronosDesktopApp:
                         ctx["pending_pullback_order"] = None
                         trade_msg = self._get_cooldown_remaining_str(pk)
                         self.log(f"[{pk}] {trade_msg}")
-                    elif has_losing_opposite_pos:
+                    elif has_losing_opposite_pos and not self._cfg_flag(cfg, "allow_opposite_entry"):
                         ctx["pending_pullback_order"] = zone_watch_order
                         trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {limit_entry_price:.2f})"
                         self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
