@@ -2449,22 +2449,58 @@ class KronosDesktopApp:
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(2)
         )
+        def _grp(parent, title):
+            tk.Label(parent, text=f"─── {title} ───", bg=PANEL_BG, fg=GOLD_ACCENT,
+                     font=("Segoe UI", 7, "bold"), pady=4).pack(fill=tk.X)
+
+        # Nhóm 1: Tín hiệu AI
+        _grp(sec2.content, "TÍN HIỆU AI")
         self.scenarios_var = self._add_labeled_entry(sec2.content, "Số kịch bản AI (Ensemble):", "8", help_key="scenarios")
         self.consensus_var = self._add_labeled_entry(sec2.content, "Độ đồng thuận tối thiểu (%):", "75", help_key="consensus")
+        self.use_confidence_gate_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
         self.max_dispersion_var = self._add_labeled_entry(sec2.content, "Độ phân tán tối đa (x ATR, 0=Tắt):", "2.5", help_key="max_dispersion")
         self.min_move_var = self._add_labeled_entry(sec2.content, "Biên độ tối thiểu (Giá):", "1.2", help_key="min_move")
         self.expected_move_k_var = self._add_labeled_entry(sec2.content, "Hệ số k biên độ bù phí (k*Spread):", "3", help_key="expected_move_k")
-        self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35", help_key="max_spread")
+
+        # Nhóm 2: SL & TP
+        _grp(sec2.content, "SL & TP")
         self.sl_atr_var = self._add_labeled_entry(sec2.content, "Khoảng cách SL AI (x ATR14):", "1.5", help_key="sl_atr")
         self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5", help_key="sl_buffer")
         self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "5.0", help_key="max_sl_price")
         self.rr_var = self._add_labeled_entry(sec2.content, "Tỷ lệ R:R (0=TP Theo AI):", "2.0", help_key="rr")
 
-        # Phân nhóm: Quy tắc nhồi lệnh & Chống trùng giá
-        tk.Label(
-            sec2.content, text="─── QUY TẮC NHỒI LỆNH ───",
-            bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), pady=4
-        ).pack(fill=tk.X)
+        # Nhóm 3: Bộ lọc vào lệnh
+        _grp(sec2.content, "BỘ LỌC VÀO LỆNH")
+        self.max_spread_var = self._add_labeled_entry(sec2.content, "Spread tối đa (Giá):", "0.35", help_key="max_spread")
+        self.blocked_trading_windows_var = self._add_labeled_entry(
+            sec2.content, "Khung giờ cấm (UTC+7, phẩy ngăn):", "", help_key="blocked_trading_windows"
+        )
+        self.confirm_entry_pa_var = tk.BooleanVar(value=True)
+        self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
+        self.pa_min_confirmations_var = self._add_labeled_combo(
+            sec2.content,
+            "   Số điều kiện PA tối thiểu (1-3):",
+            ["1", "2", "3"],
+            "1",
+            help_key="pa_min_confirmations"
+        )
+        self.pa_fail_open_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "PA Fail-Open (Cho phép khi mất tick/nến)", self.pa_fail_open_var, help_key="pa_fail_open")
+        self.trend_filter_var = tk.BooleanVar(value=True)
+        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
+        self.structure_conflict_mode_var = self._add_labeled_combo(
+            sec2.content,
+            "Xử lý xung đột Cấu Trúc (M5 vs M15):",
+            ["neutral", "scalp", "analysis"],
+            "neutral",
+            help_key="structure_conflict_mode"
+        )
+        self.structure_direction_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Hướng theo cấu trúc đỉnh/đáy (thử nghiệm)", self.structure_direction_var, help_key="structure_direction")
+
+        # Nhóm 4: Quy tắc nhồi lệnh & chống trùng giá
+        _grp(sec2.content, "QUY TẮC NHỒI LỆNH")
         self.entry_mode_var = self._add_labeled_combo(
             sec2.content, "Chế độ nhồi lệnh:",
             [
@@ -2478,35 +2514,6 @@ class KronosDesktopApp:
         self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0", help_key="min_entry_spacing")
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Chỉ mở tối đa 1 lệnh mỗi cây nến", self.one_order_per_candle_var, help_key="one_order_per_candle")
-        self.trend_filter_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
-        self.confirm_entry_pa_var = tk.BooleanVar(value=True)
-        self._add_checkbutton(sec2.content, "Xác nhận Price Action (Tránh bắt dao rơi)", self.confirm_entry_pa_var, help_key="confirm_entry_pa")
-        self.pa_fail_open_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec2.content, "PA Fail-Open (Cho phép khi mất tick/nến)", self.pa_fail_open_var, help_key="pa_fail_open")
-        self.pa_min_confirmations_var = self._add_labeled_combo(
-            sec2.content,
-            "Số điều kiện PA tối thiểu (1-3):",
-            ["1", "2", "3"],
-            "1",
-            help_key="pa_min_confirmations"
-        )
-        self.structure_conflict_mode_var = self._add_labeled_combo(
-            sec2.content,
-            "Xử lý xung đột Cấu Trúc (M5 vs M15):",
-            ["neutral", "scalp", "analysis"],
-            "neutral",
-            help_key="structure_conflict_mode"
-        )
-        self.use_confidence_gate_var = tk.BooleanVar(value=False)
-        self.structure_direction_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec2.content, "Hướng vào lệnh theo cấu trúc đỉnh/đáy (AI chỉ xác nhận biên độ)", self.structure_direction_var, help_key="structure_direction")
-        self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
-        self.debug_trace_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec2.content, "Ghi nhật ký debug theo nến (AI, cổng, quyết định) - chỉ để chẩn đoán", self.debug_trace_var, help_key="debug_trace")
-        self.blocked_trading_windows_var = self._add_labeled_entry(
-            sec2.content, "Khung giờ cấm (UTC+7, phẩy ngăn):", "", help_key="blocked_trading_windows"
-        )
 
         tk.Button(
             sec2.content, text="↺ Khôi phục mặc định Mục 2 (Bộ lọc Entry & Nhồi lệnh)", bg="#161e2e", fg="#94a3b8",
@@ -2521,9 +2528,12 @@ class KronosDesktopApp:
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(3)
         )
+        tk.Label(sec3.content, text="─── DỜI SL & BẢO VỆ LỆNH ───", bg=PANEL_BG, fg=GOLD_ACCENT,
+                 font=("Segoe UI", 7, "bold"), pady=4).pack(fill=tk.X)
         self.auto_be_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec3.content, "Tự dời SL về đúng Entry theo R:R:", self.auto_be_var, help_key="auto_be")
         self.be_trigger_r_var = self._add_labeled_entry(sec3.content, "   Mức kích hoạt (R, VD 1.0 = 1R):", "1.0", help_key="be_trigger_r")
+        self.be_plus_price_var = self._add_labeled_entry(sec3.content, "Giá lãi nhỏ cộng vào Entry khi BE+ (Giá):", "0.2", help_key="be_plus_price")
 
         self.auto_trail_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec3.content, "Tự trượt SL khóa lãi (Trailing Stop):", self.auto_trail_var, help_key="auto_trail")
@@ -2534,7 +2544,6 @@ class KronosDesktopApp:
         self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh chưa BE (%):", "75", help_key="rev_consensus")
         self.rev_be_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh đã BE (0=Tắt, %):", "90", help_key="rev_be_consensus")
         self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0", help_key="rev_min_move")
-        self.be_plus_price_var = self._add_labeled_entry(sec3.content, "   + Giá lãi nhỏ vào Entry (Giá):", "0.2", help_key="be_plus_price")
         self.rev_loss_mode_var = self._add_labeled_combo(
             sec3.content, "   Chế độ xử lý lệnh đang lỗ:",
             ["wait_be", "close_if_strong", "tighten_sl"],
@@ -2548,8 +2557,6 @@ class KronosDesktopApp:
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), pady=4
         ).pack(fill=tk.X)
         self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
-        self.recovery_close_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec3.content, "Gỡ vốn: đóng lệnh đang lãi (chưa BE) khi lãi ≥ lỗ ròng đã chốt trong ngày", self.recovery_close_var, help_key="recovery_close")
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
         self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "15", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
@@ -2580,6 +2587,8 @@ class KronosDesktopApp:
         ).pack(fill=tk.X)
         self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0", help_key="daily_tp_usd")
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0", help_key="daily_sl_usd")
+        self.recovery_close_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec3.content, "Gỡ vốn trong ngày (đóng lệnh lãi ≥ lỗ ròng)", self.recovery_close_var, help_key="recovery_close")
         self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0", help_key="max_consec_loss")
         self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30", help_key="cooldown_mins")
         self.fast_sl_cooldown_candles_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL nhanh (nến AI, 0=Tắt):", "1", help_key="fast_sl_cooldown_candles")
@@ -2626,6 +2635,8 @@ class KronosDesktopApp:
         self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18, help_key="hf_token")
         self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450", help_key="lookback")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6", help_key="pred_len")
+        self.debug_trace_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec4.content, "Ghi nhật ký debug theo nến (chỉ để chẩn đoán)", self.debug_trace_var, help_key="debug_trace")
         tk.Button(
             sec4.content, text="↺ Khôi phục mặc định Mục 4 (Phân tích AI & Mô hình)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -5593,9 +5604,9 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction", "debug_trace"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
             3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "recovery_close"]),
-            4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
+            4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
         }
         if section_num not in section_map:
