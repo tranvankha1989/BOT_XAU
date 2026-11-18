@@ -10447,6 +10447,23 @@ class KronosDesktopApp:
             with self._order_guard_lock:
                 self._order_in_flight[pk] = False
 
+    def _cancel_pending_for_new_scan(self, pk: str):
+        """Nến mới, AI bắt đầu phân tích lại: hủy lệnh chờ (canh vùng) của lần phân tích trước để lệnh cũ
+        không khớp trong lúc chờ kết quả mới. Lệnh đang gửi lên sàn (order_in_flight) thì không đụng."""
+        try:
+            ctx = self.profile_ctx[pk]
+            p = self.pending_pullback_order if pk == self.active_profile_key else ctx.get("pending_pullback_order")
+            if p is None:
+                p = ctx.get("pending_pullback_order")
+            if p is None or self._order_in_flight.get(pk, False):
+                return
+            ctx["pending_pullback_order"] = None
+            if pk == self.active_profile_key:
+                self.pending_pullback_order = None
+            self.log(f"🔁 [{pk}] Nến mới: hủy lệnh chờ {p.get('action', '?')} của lần phân tích trước, chờ AI phân tích lại.")
+        except Exception:
+            pass
+
     def enqueue_ai_scan(self, profile_key: str = None, reason: str = "MANUAL", closed_candle_ts=None) -> bool:
         """
         Đưa yêu cầu phân tích AI của một mã (XAUUSD / BTCUSD) vào Hàng Đợi Tuần Tự (FIFO Queue):
@@ -10462,6 +10479,7 @@ class KronosDesktopApp:
                 return False
             self._ai_queued_profiles.add(pk)
             self.profile_ctx[pk]["is_analyzing"] = True
+            self._cancel_pending_for_new_scan(pk)
             running_other = self._ai_current_running_pk if (self._ai_current_running_pk and self._ai_current_running_pk != pk) else None
 
             if pk == self.active_profile_key:
