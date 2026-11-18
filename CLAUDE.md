@@ -73,7 +73,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **265 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **284 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
@@ -82,6 +82,19 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
   Đã đối chiếu 16/11: tín hiệu 18:45 và lệnh 19:00 khớp live (giá vào trùng 64387.48). Báo cáo phải nêu số "Lỗi ghi nhận trong code bot" (phải = 0).
   Khi sửa `_realtime_tick_loop`/`_auto_loop_worker` hoặc dùng hàm MT5 mới: cập nhật `tools/live_replay.py` (Replayer/FakeBroker) trong cùng việc.
   Giới hạn: lệnh khớp ở tick tại thời điểm quyết định (không có trễ mạng); AI ngẫu nhiên nên không trùng từng lệnh với live.
+- **BACKTEST PHẢI GIỐNG BOT LIVE (bắt buộc, người dùng yêu cầu 18/11/2026):**
+  1. Backtest/replay chạy theo file cấu hình y như bot live: MỌI khóa cấu hình có hiệu lực, không bỏ qua khóa nào.
+     Dùng engine chạy CHÍNH code live (`tools/live_replay.py`), KHÔNG viết lại luật giao dịch trong engine riêng.
+  2. Mỗi khi thêm/sửa luật live (vào/hủy/thoát lệnh, SL/TP, quản lý lệnh, tạm nghỉ...): kiểm tra backtest/replay áp dụng đúng y hệt
+     trong CÙNG việc (thêm test hoặc chạy replay ngắn chứng minh); nếu replay dùng hàm MT5 mới thì cập nhật FakeBroker.
+  3. Cấu hình backtest TÁCH khỏi cấu hình live: chỉnh thông số để test KHÔNG được làm đổi bot live.
+     "Lấy từ Menu" = chép cấu hình live sang backtest; "Áp Dụng Vào Bot Live" = chép cấu hình backtest sang live (có xác nhận, liệt kê khóa thay đổi).
+  4. Backtest trong app phải chạy ở tiến trình RIÊNG: `live_replay` thay mt5/time/datetime cấp module, chạy chung tiến trình sẽ phá bot live.
+     Giới hạn luồng để không tranh CPU với bot live (Kernel-Power 41).
+  5. Giao diện xem lại backtest: biểu đồ nến phát lại kiểu TradingView (tua 1x/2x/5x/10x..., tạm dừng, từng bước), thấy rõ điểm vào/SL/TP/thoát.
+     Phải MƯỢT, không giật: phát lại từ kết quả đã tính sẵn (không chạy AI lúc phát), vẽ theo khung hình cố định, chỉ cập nhật phần thay đổi.
+  Trạng thái 18/11: tab "KIỂM THỬ CHIẾN LƯỢC" trong app VẪN dùng engine cũ `_run_backtest_simulation` (khác live) và đọc thông số từ menu live
+  -> mục 1, 3, 4, 5 CHƯA làm; `tools/live_replay.py` / `tools/run_backtest.py` (dòng lệnh) đã chạy code live.
 - **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
   1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".
   2. Cấu hình backtest phải giống cấu hình live đang chạy. Khi người dùng đưa file cấu hình (xuất từ app, chép từ máy khác,
