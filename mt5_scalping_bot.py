@@ -8411,6 +8411,11 @@ class KronosDesktopApp:
                 if dist > cap + tol + 1.0:
                     return
             ts_map[(pk, gate)] = now_m
+            if bool(cfg.get("debug_trace", False)):
+                self._write_trace(pk, {"event": "pb_gate", "gate": gate, "symbol": symbol, "action": action,
+                                       "bid": tick.bid, "ask": tick.ask, "cur_price": cur_price, "sl_ai": sl_price,
+                                       "dist_sl": round(dist, 3), "cap": cap, "n_open": n_open, "note": note,
+                                       "tick_time": int(getattr(tick, "time", 0) or 0)})
             try:
                 max_spread = float(cfg.get("max_spread", 0.35))
             except (ValueError, TypeError):
@@ -8981,6 +8986,24 @@ class KronosDesktopApp:
 
             # Quy tắc Giữ lệnh tối đa (Time-Stop): Chỉ áp dụng cho các lệnh CHƯA dời BE/Trailing (ngâm lệnh ì ạch hoặc đang âm)
             # Lệnh đã dời BE / đang Trailing là lệnh Free-Risk hoàn toàn, được tự do chạy theo sóng để gồng lãi tối đa
+            # Debug trace (tắt mặc định): trạng thái lệnh khi SL/TP/BE/trailing đổi, hoặc mỗi 60s
+            if bool(cfg.get("debug_trace", False)):
+                try:
+                    _sig = (round(pos.sl, 2), round(pos.tp, 2), is_be_or_trailing)
+                    _lt = self.__dict__.setdefault("_pos_trace_last", {})
+                    _prev = _lt.get(pos.ticket)
+                    _now_m = time.monotonic()
+                    if _prev is None or _prev[0] != _sig or _now_m - _prev[1] >= 60.0:
+                        _lt[pos.ticket] = (_sig, _now_m)
+                        self._write_trace(pk, {"event": "pos_state", "ticket": pos.ticket, "type": type_str,
+                                               "price_open": pos.price_open, "price_current": pos.price_current,
+                                               "sl": pos.sl, "tp": pos.tp, "profit": round(pos.profit, 2),
+                                               "current_r": round(current_r, 3), "elapsed_sec": elapsed_sec,
+                                               "be_or_trailing": is_be_or_trailing, "max_hold_mins": max_hold_mins,
+                                               "max_hold_action": max_hold_action})
+                except Exception:
+                    pass
+
             is_ui_thread = (threading.current_thread() is threading.main_thread())
             if max_hold_mins > 0.0 and (elapsed_sec / 60.0) >= max_hold_mins and not is_be_or_trailing:
                 if "Chốt lời" in max_hold_action:
