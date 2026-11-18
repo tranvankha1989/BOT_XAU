@@ -312,6 +312,21 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
         "how_to_set": "- neutral (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- scalp: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- analysis: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn neutral khi thị trường lệch pha giữa 2 khung."
     },
+    "debug_trace": {
+        "title": "Ghi nhật ký debug theo nến (Debug Trace)",
+        "what_is_it": "Khi bật, bot ghi thêm file logs/trace/trace_YYYY-MM-DD.jsonl: số liệu AI và quyết định của từng nến phân tích, lý do từng cổng canh vùng chặn lệnh, và trạng thái lệnh đang mở. Dùng để tra lại vì sao bot vào/không vào/đóng lệnh. KHÔNG đổi luật giao dịch.",
+        "how_to_set": "- TẮT (Mặc định): chạy bình thường.\n- BẬT: khi cần chẩn đoán một ngày giao dịch. Tốn khoảng 1 MB mỗi ngày."
+    },
+    "recovery_close": {
+        "title": "Gỡ vốn (Recovery Close)",
+        "what_is_it": "Khi tổng lãi/lỗ ĐÃ CHỐT trong ngày đang âm, bot đóng 1 lệnh đang lãi (chưa dời BE) có lãi >= phần lỗ cần gỡ, để gỡ vốn trước khi giá quay lại hòa vốn. Mỗi lần đóng cách nhau tối thiểu 20 giây.",
+        "how_to_set": "- TẮT (Mặc định).\n- BẬT: ưu tiên gỡ vốn trong ngày; đổi lại có thể cắt sớm lệnh lẽ ra chạy tới TP. Mới kiểm thử phát lại 2 ngày, chưa đủ bằng chứng."
+    },
+    "structure_direction": {
+        "title": "Hướng vào lệnh theo cấu trúc đỉnh/đáy (Thử nghiệm)",
+        "what_is_it": "Khi bật, hướng vào lệnh do cấu trúc đỉnh/đáy xoay M5 quyết định: sóng giảm thì BÁN khi giá hồi về kháng cự và bị từ chối, chỉ MUA khi giá phá đỉnh hồi (đổi cấu trúc); sóng tăng làm ngược lại; đi ngang thì không vào. AI Kronos vẫn phải xác nhận biên độ dự báo.",
+        "how_to_set": "- TẮT (Mặc định, khuyên dùng).\n- Phát lại 17-18/11 khi bật cho kết quả kém hơn, chưa khuyên bật."
+    },
     "use_confidence_gate": {
         "title": "Cổng độ tin cậy AI (AI Confidence Gate)",
         "what_is_it": "Khi bật, hệ thống yêu cầu điểm tin cậy tổng hợp của AI (Confidence %, bao gồm đồng thuận AI, độ phân tán kịch bản và cộng điểm ngữ cảnh Macro/OrderFlow/Wick) phải đạt từ ngưỡng Consensus trở lên mới cho phép vào lệnh thay vì chỉ xét đồng thuận kịch bản thuần.",
@@ -391,8 +406,8 @@ PARAM_HELP_GUIDE = {
     },
     "max_hold_action": {
         "title": "Xử lý khi vượt thời gian giữ lệnh",
-        "what_is_it": "Cách thức bot xử lý lệnh khi đã chạm mốc thời gian giữ tối đa:\n- 'Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)': Lãi thì đút túi ngay, lỗ thì dời TP về hòa vốn đón nhịp hồi.\n- 'Dời SL về hòa vốn (BE+)': Khóa rủi ro, cho thị trường thêm cơ hội chạy tiếp.\n- 'Đóng tất cả (Bất kể Lãi/Lỗ)': Cắt dứt khoát giải phóng lệnh ngay lập tức.",
-        "how_to_set": "- Khuyên dùng phương án 1 ('Chốt lời nếu lãi & Dời TP về hòa nếu lỗ') vì mang lại hiệu quả bảo vệ tài khoản cao nhất."
+        "what_is_it": "Cách thức bot xử lý lệnh khi đã chạm mốc thời gian giữ tối đa:\n- 'Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)' (Mặc định): Lãi thì dời SL về Entry+ và để lệnh chạy tiếp tới TP (không đóng lệnh đang lãi); lỗ thì dời TP về hòa vốn.\n- 'Dời SL về hòa vốn (BE+)': Khóa rủi ro, cho thị trường thêm cơ hội chạy tiếp.\n- 'Đóng tất cả (Bất kể Lãi/Lỗ)': Cắt dứt khoát giải phóng lệnh ngay lập tức.",
+        "how_to_set": "- Khuyên dùng phương án mặc định ('Dời SL về BE+ nếu lãi & Dời TP về hòa nếu lỗ'): không đóng sớm lệnh đang lãi, vẫn khóa hòa vốn."
     },
     "daily_tp_usd": {
         "title": "Mục tiêu Lãi trong ngày (Daily Take Profit)",
@@ -532,7 +547,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
         "max_hold_mins": "15",
-        "max_hold_action": "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
+        "max_hold_action": "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
@@ -597,7 +612,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
         "max_hold_mins": "15",
-        "max_hold_action": "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
+        "max_hold_action": "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
         "max_consec_loss": "0",
@@ -2485,10 +2500,10 @@ class KronosDesktopApp:
         )
         self.use_confidence_gate_var = tk.BooleanVar(value=False)
         self.structure_direction_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec2.content, "Hướng vào lệnh theo cấu trúc đỉnh/đáy (AI chỉ xác nhận biên độ)", self.structure_direction_var)
+        self._add_checkbutton(sec2.content, "Hướng vào lệnh theo cấu trúc đỉnh/đáy (AI chỉ xác nhận biên độ)", self.structure_direction_var, help_key="structure_direction")
         self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
         self.debug_trace_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec2.content, "Ghi nhật ký debug theo nến (AI, cổng, quyết định) - chỉ để chẩn đoán", self.debug_trace_var)
+        self._add_checkbutton(sec2.content, "Ghi nhật ký debug theo nến (AI, cổng, quyết định) - chỉ để chẩn đoán", self.debug_trace_var, help_key="debug_trace")
         self.blocked_trading_windows_var = self._add_labeled_entry(
             sec2.content, "Khung giờ cấm (UTC+7, phẩy ngăn):", "", help_key="blocked_trading_windows"
         )
@@ -2512,7 +2527,7 @@ class KronosDesktopApp:
 
         self.auto_trail_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec3.content, "Tự trượt SL khóa lãi (Trailing Stop):", self.auto_trail_var, help_key="auto_trail")
-        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R):", "0.35", help_key="trail_dist_r")
+        self.trail_dist_r_var = self._add_labeled_entry(sec3.content, "   Khoảng cách bám giá (R, chỉ khi bật Trailing):", "0.35", help_key="trail_dist_r")
 
         self.auto_rev_close_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec3.content, "Bảo vệ đảo chiều (Lãi: Chốt | Lỗ: Chờ về Entry+)", self.auto_rev_close_var, help_key="auto_rev_close", fg=GOLD_ACCENT)
@@ -2534,19 +2549,29 @@ class KronosDesktopApp:
         ).pack(fill=tk.X)
         self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
         self.recovery_close_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec3.content, "Gỡ vốn: đóng lệnh đang lãi (chưa BE) khi lãi ≥ lỗ ròng đã chốt trong ngày", self.recovery_close_var)
+        self._add_checkbutton(sec3.content, "Gỡ vốn: đóng lệnh đang lãi (chưa BE) khi lãi ≥ lỗ ròng đã chốt trong ngày", self.recovery_close_var, help_key="recovery_close")
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
         self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "15", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
             sec3.content, "   Xử lý khi vượt thời gian:",
             [
-                "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
+                "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)",
                 "Dời SL về hòa vốn (BE+)",
                 "Đóng tất cả (Bất kể Lãi/Lỗ)"
             ],
-            "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
+            "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)",
             help_key="max_hold_action"
         )
+
+        # Lựa chọn cũ "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)" đã bỏ: cấu hình đã lưu tự chuyển sang lựa chọn mới
+        def _migrate_hold_action(*_a):
+            try:
+                if self.max_hold_action_var.get() == "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)":
+                    self.max_hold_action_var.set("Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)")
+            except Exception:
+                pass
+
+        self.max_hold_action_var.trace_add("write", _migrate_hold_action)
 
         # Phân nhóm: Giới hạn Lãi/Lỗ ngày & Cooldown
         tk.Label(
@@ -2565,6 +2590,19 @@ class KronosDesktopApp:
             font=("Segoe UI", 7, "bold"), relief=tk.FLAT, pady=2, cursor="hand2",
             command=lambda: self.reset_section_settings(3)
         ).pack(fill=tk.X, pady=(6, 2))
+
+        # Cây thông số cha/con (chỉ giao diện): cha tắt thì con mờ đi
+        try:
+            self._bind_param_children(self.auto_be_var, [self.be_trigger_r_var])
+            self._bind_param_children(self.auto_trail_var, [self.trail_dist_r_var])
+            self._bind_param_children(self.auto_rev_close_var, [self.rev_consensus_var, self.rev_be_consensus_var,
+                                                                self.rev_min_move_var, self.rev_loss_mode_var])
+            self._bind_param_children(self.basket_tp_usd_var, [self.basket_cooldown_mins_var], numeric=True)
+            self._bind_param_children(self.max_hold_mins_var, [self.max_hold_action_var], numeric=True)
+            self._bind_param_children(self.max_consec_loss_var, [self.cooldown_mins_var], numeric=True)
+            self._bind_param_children(self.confirm_entry_pa_var, [self.pa_min_confirmations_var, self.pa_fail_open_var])
+        except Exception as _e:
+            self._write_file_log(f"[UI] Không dựng được cây thông số: {_e}", is_error=True)
 
         # Mục 4: 4. Phân tích AI & Mô hình (Mặc định thu gọn)
         sec4 = CollapsibleSection(
@@ -3011,7 +3049,11 @@ class KronosDesktopApp:
 
         for c in pos_cols:
             tree.heading(c, text=pos_headers[c])
-            tree.column(c, width=pos_widths[c], anchor=tk.CENTER)
+            if c == "status":
+                # Cột trạng thái chứa câu dài: rộng hơn, canh trái, không bị co nhỏ khi cửa sổ hẹp
+                tree.column(c, width=320, minwidth=260, anchor=tk.W)
+            else:
+                tree.column(c, width=pos_widths[c], anchor=tk.CENTER)
 
         tree.tag_configure("profit_pos", foreground=GREEN_UP)
         tree.tag_configure("profit_neg", foreground=RED_DOWN)
@@ -5551,8 +5593,8 @@ class KronosDesktopApp:
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
         section_map = {
             1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
-            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows"]),
-            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles"]),
+            2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction", "debug_trace"]),
+            3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "recovery_close"]),
             4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len"]),
             5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
         }
@@ -5966,7 +6008,7 @@ class KronosDesktopApp:
         deals_xau = self._get_today_closed_deals(symbol=sym_xau)
         w_xau = sum(1 for d in deals_xau if d.get("category") == "WIN")
         l_xau = sum(1 for d in deals_xau if d.get("category") == "LOSS")
-        be_xau = sum(1 for d in deals_xau if d.get("category") == "BE")
+        be_xau = sum(1 for d in deals_xau if d.get("category") in ("BE", "BE+"))
         tot_xau = len(deals_xau)
         wr_xau = (w_xau / max(tot_xau, 1)) * 100.0 if tot_xau > 0 else 0.0
 
@@ -5976,7 +6018,7 @@ class KronosDesktopApp:
         deals_btc = self._get_today_closed_deals(symbol=sym_btc)
         w_btc = sum(1 for d in deals_btc if d.get("category") == "WIN")
         l_btc = sum(1 for d in deals_btc if d.get("category") == "LOSS")
-        be_btc = sum(1 for d in deals_btc if d.get("category") == "BE")
+        be_btc = sum(1 for d in deals_btc if d.get("category") in ("BE", "BE+"))
         tot_btc = len(deals_btc)
         wr_btc = (w_btc / max(tot_btc, 1)) * 100.0 if tot_btc > 0 else 0.0
 
@@ -6057,7 +6099,7 @@ class KronosDesktopApp:
         if category == "WIN":
             cat_tag = "CHỐT LÃI"
             icon = "🎯"
-        elif category == "BE":
+        elif category in ("BE", "BE+"):
             cat_tag = "HÒA VỐN"
             icon = "🛡️"
         else:
@@ -7030,6 +7072,54 @@ class KronosDesktopApp:
         c.pack(side=tk.LEFT, padx=(4, 0))
         return c
 
+    def _bind_param_children(self, parent_var, child_vars, numeric: bool = False):
+        """Cây thông số (chỉ giao diện): thông số con thụt vào trong; khi thông số cha tắt
+        (bỏ tích, hoặc = 0 nếu numeric) thì các con bị làm mờ và khóa. Không đổi giá trị đã lưu."""
+        rows = self.__dict__.get("_param_rows", {})
+        kids = [rows[str(v)] for v in child_vars if str(v) in rows]
+        for row, _w in kids:
+            try:
+                row.pack_configure(padx=(18, 0))
+            except Exception:
+                pass
+
+        def _labels(w):
+            out = []
+            for c in w.winfo_children():
+                if isinstance(c, tk.Label):
+                    out.append(c)
+                out.extend(_labels(c))
+            return out
+
+        def _is_on():
+            try:
+                v = parent_var.get()
+                return (float(str(v).strip().replace(",", ".") or 0) > 0) if numeric else bool(v)
+            except Exception:
+                return True  # đang gõ dở giá trị: không khóa con
+
+        def _sync(*_a):
+            on = _is_on()
+            for row, w in kids:
+                try:
+                    if isinstance(w, ttk.Combobox):
+                        w.config(state=("readonly" if on else "disabled"))
+                    elif isinstance(w, tk.Entry):
+                        w.config(state=(tk.NORMAL if on else tk.DISABLED),
+                                 disabledbackground="#1a1f2b", disabledforeground="#5b6475")
+                    else:
+                        w.config(state=(tk.NORMAL if on else tk.DISABLED))
+                    for lbl in _labels(row):
+                        lbl.config(fg=(TEXT_MAIN if on else "#5b6475"))
+                except Exception:
+                    pass
+
+        try:
+            parent_var.trace_add("write", _sync)
+        except Exception:
+            pass
+        _sync()
+
     def _add_checkbutton(self, parent, text, var, help_key=None, fg=TEXT_MAIN):
         row = tk.Frame(parent, bg=PANEL_BG)
         row.pack(fill=tk.X, pady=2)
@@ -7041,6 +7131,24 @@ class KronosDesktopApp:
         cb.pack(side=tk.LEFT)
         if help_key and help_key in PARAM_HELP_GUIDE:
             self._create_help_badge(row, help_key)
+        self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, cb)
+
+        # Ô được tích: chữ xanh lá + nền dải nhẹ để nổi bật; bỏ tích: trở về màu thường
+        def _sync_cb_style(*_a):
+            try:
+                on = bool(var.get())
+                row_bg = "#123524" if on else PANEL_BG
+                row.config(bg=row_bg)
+                cb.config(fg=(GREEN_UP if on else fg), bg=row_bg, activebackground=row_bg,
+                          activeforeground=(GREEN_UP if on else fg))
+            except Exception:
+                pass
+
+        try:
+            var.trace_add("write", _sync_cb_style)
+            _sync_cb_style()
+        except Exception:
+            pass
         return cb
 
     def _add_labeled_entry(self, parent, label_text, default_val, show=None, entry_width=10, help_key=None):
@@ -7061,6 +7169,7 @@ class KronosDesktopApp:
         entry.pack(side=tk.RIGHT)
         entry.bind("<FocusOut>", lambda e: self.save_user_settings())
         entry.bind("<Return>", lambda e: self.save_user_settings())
+        self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, entry)
         return var
 
     def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=None, help_key=None):
@@ -7084,6 +7193,7 @@ class KronosDesktopApp:
         cb = ttk.Combobox(row, textvariable=var, values=values, state="readonly", font=("Segoe UI", 8), width=calc_w)
         cb.pack(side=tk.RIGHT)
         cb.bind("<<ComboboxSelected>>", lambda e: self.save_user_settings())
+        self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, cb)
 
         # Mở rộng danh sách xổ xuống (Popdown) tương ứng với chuỗi dài nhất để đọc trọn vẹn 100% nội dung
         if max_len > 18:
@@ -7537,7 +7647,10 @@ class KronosDesktopApp:
                 r_ratio = (net_pnl / one_r) if one_r > 0.001 else 0.0
                 r_ratio_str = f"{r_ratio:+.2f}R" if abs(r_ratio) > 0.001 else "0.00R"
 
-                if net_pnl < -0.05:
+                # Lệnh thoát quanh hòa vốn (lỗ rất nhỏ >= -0.1R, ví dụ đã dời BE/TP về hòa rồi đóng lệch do spread)
+                # được xếp BE+ (không tính là lệnh thua trong Win Rate)
+                is_be_small_loss = (net_pnl < -0.05) and (one_r > 0.001) and (r_ratio >= -0.1)
+                if net_pnl < -0.05 and not is_be_small_loss:
                     category = "LOSS"
                     if "[sl" in cmt:
                         status = f"ĐÃ CẮT LỖ SL ({close_t})"
@@ -7557,6 +7670,17 @@ class KronosDesktopApp:
                         status = f"HÒA VỐN ({close_t})"
                     else:
                         status = f"THOÁT BẢO TOÀN VỐN ({close_t})"
+                _kr_reasons = {
+                    "kr_timeall": "HẾT GIỜ GIỮ LỆNH - ĐÓNG TẤT", "kr_time": "HẾT GIỜ GIỮ LỆNH (CÓ LÃI)",
+                    "kr_be": "GIÁ VỀ ENTRY - THOÁT (QUY TẮC 3)", "kr_gov": "GỠ VỐN",
+                    "kr_revcut": "AI ĐẢO CHIỀU - CẮT LỖ CHỦ ĐỘNG", "kr_rev": "AI ĐẢO CHIỀU - CHỐT LÃI",
+                    "kr_basket": "CHỐT LỜI CHÙM LỆNH", "kr_daily": "CHẠM GIỚI HẠN LÃI/LỖ NGÀY",
+                    "kr_manual": "ĐÓNG TAY", "kr_all": "ĐÓNG TẤT CẢ (TAY)",
+                }
+                for _k in sorted(_kr_reasons, key=len, reverse=True):
+                    if _k in cmt:
+                        status = f"{_kr_reasons[_k]} ({close_t})"
+                        break
 
                 if not hasattr(self, "_closed_deals_by_ticket"):
                     self._closed_deals_by_ticket = {}
@@ -7916,7 +8040,7 @@ class KronosDesktopApp:
         failed = 0
         for pos in (self._get_bot_positions(symbol, profile_key=pk) or []):
             try:
-                ok_c, _msg = self._close_single_pos(pos)
+                ok_c, _msg = self._close_single_pos(pos, "DAILY")
             except Exception:
                 ok_c = False
             if not ok_c:
@@ -8950,10 +9074,10 @@ class KronosDesktopApp:
                                        "debt": round(debt, 2), "pos_profit": round(float(pos.profit), 2),
                                        "sl": pos.sl, "tp": pos.tp})
             if threading.current_thread() is threading.main_thread():
-                self._dispatch_pos_action_async(("RECOVERY_CLOSE", pos.ticket), self._close_single_pos, pos,
+                self._dispatch_pos_action_async(("RECOVERY_CLOSE", pos.ticket), self._close_single_pos, pos, "GOV",
                                                 log_prefix=f"[{pk} - Gỡ vốn] Lệnh #{pos.ticket} -> ")
             else:
-                ok_r, msg_r = self._close_single_pos(pos)
+                ok_r, msg_r = self._close_single_pos(pos, "GOV")
                 self.log(f"[{pk} - Gỡ vốn] Lệnh #{pos.ticket} -> {msg_r}")
         except Exception as e:
             self._write_file_log(f"[{pk}] Lỗi gỡ vốn (recovery_close): {e}", is_error=True)
@@ -8994,7 +9118,9 @@ class KronosDesktopApp:
             max_hold_mins = max(float(cfg.get("max_hold_mins", 0.0)), 0.0)
         except ValueError:
             max_hold_mins = 0.0
-        max_hold_action = str(cfg.get("max_hold_action", "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)")).strip()
+        max_hold_action = str(cfg.get("max_hold_action", "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)")).strip()
+        if max_hold_action == "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)":
+            max_hold_action = "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)"  # lựa chọn cũ đã bỏ
 
         tols = self._get_symbol_tolerances(symbol)
         eps_eq = tols["eps_equal"]
@@ -9053,15 +9179,37 @@ class KronosDesktopApp:
 
             is_ui_thread = (threading.current_thread() is threading.main_thread())
             if max_hold_mins > 0.0 and (elapsed_sec / 60.0) >= max_hold_mins and not is_be_or_trailing:
-                if "Chốt lời" in max_hold_action:
+                if max_hold_action.startswith("Dời SL về BE+ (nếu lãi)"):
+                    if pos.profit > 0.0:
+                        # Lệnh đang lãi: KHÔNG đóng, dời SL về Entry+ để khóa hòa vốn rồi cho chạy tiếp.
+                        # Giá còn quá sát mức BE+ (dưới khoảng cách dừng tối thiểu) thì chờ lượt sau.
+                        can_buy = is_buy and (pos.sl == 0 or pos.sl < be_target_price - eps_eq * 0.5) and be_target_price < pos.price_current - min_stop_d
+                        can_sell = (not is_buy) and (pos.sl == 0 or pos.sl > be_target_price + eps_eq * 0.5) and be_target_price > pos.price_current + min_stop_d
+                        if can_buy or can_sell:
+                            log_m = (f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đang lãi] Lệnh {type_str} #{pos.ticket} giữ {dur_str} "
+                                     f"({pos.profit:+.2f}$) -> Dời SL về {be_label_tag} ({be_target_price:.2f}), giữ lệnh chạy tiếp")
+                            if is_ui_thread:
+                                self._dispatch_pos_action_async(("MOD_SL_BE_HOLD", pos.ticket), self._modify_position_sltp, pos, be_target_price, pos.tp, log_msg=log_m)
+                            elif self._modify_position_sltp(pos, be_target_price, pos.tp):
+                                self.log(log_m)
+                    else:
+                        if pos.ticket not in self.pending_be_exit_tickets:
+                            self.pending_be_exit_tickets.add(pos.ticket)
+                            if abs(pos.tp - be_target_price) >= eps_eq:
+                                log_m = f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} giữ {dur_str} (đang âm {pos.profit:+.2f}$) -> Đã dời TP về {be_label_tag} ({be_target_price:.2f})"
+                                if is_ui_thread:
+                                    self._dispatch_pos_action_async(("MOD_TP_BE_HOLD", pos.ticket), self._modify_position_sltp, pos, pos.sl, be_target_price, log_msg=log_m)
+                                elif self._modify_position_sltp(pos, pos.sl, be_target_price):
+                                    self.log(log_m)
+                elif "Chốt lời" in max_hold_action:
                     if pos.profit > 0.0:
                         if is_ui_thread:
                             self._dispatch_pos_action_async(
-                                ("CLOSE_MAX_HOLD", pos.ticket), self._close_single_pos, pos,
+                                ("CLOSE_MAX_HOLD", pos.ticket), self._close_single_pos, pos, "TIME",
                                 log_prefix=f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi nhẹ ({pos.profit:+.2f}$) -> "
                             )
                         else:
-                            ok_h, msg_h = self._close_single_pos(pos)
+                            ok_h, msg_h = self._close_single_pos(pos, "TIME")
                             if ok_h:
                                 self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Chưa BE] Lệnh #{pos.ticket} đã giữ {dur_str} >= {max_hold_mins:g}p & có lãi nhẹ ({pos.profit:+.2f}$) -> {msg_h}")
                                 continue
@@ -9092,11 +9240,11 @@ class KronosDesktopApp:
                 elif "Đóng tất cả" in max_hold_action:
                     if is_ui_thread:
                         self._dispatch_pos_action_async(
-                            ("CLOSE_ALL_HOLD", pos.ticket), self._close_single_pos, pos,
+                            ("CLOSE_ALL_HOLD", pos.ticket), self._close_single_pos, pos, "TIMEALL",
                             log_prefix=f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> "
                         )
                     else:
-                        ok_h, msg_h = self._close_single_pos(pos)
+                        ok_h, msg_h = self._close_single_pos(pos, "TIMEALL")
                         if ok_h:
                             self.log(f"⌛ [{pk} - Giữ lệnh {max_hold_mins:g}p - Đóng khẩn cấp] Lệnh #{pos.ticket} giữ {dur_str} -> {msg_h}")
                             continue
@@ -9112,12 +9260,12 @@ class KronosDesktopApp:
                 if price_move >= be_plus_price and (pos.profit >= 0.0 or be_plus_price > 0.0):
                     if is_ui_thread:
                         self._dispatch_pos_action_async(
-                            ("CLOSE_WAIT_BE", pos.ticket), self._close_single_pos, pos,
+                            ("CLOSE_WAIT_BE", pos.ticket), self._close_single_pos, pos, "BE",
                             log_prefix=f"[{pk} - Thoát {be_label_tag}] Giá hồi về {be_target_price:.2f} -> ",
                             clear_be_ticket=pos.ticket
                         )
                     else:
-                        ok_be, msg_be = self._close_single_pos(pos)
+                        ok_be, msg_be = self._close_single_pos(pos, "BE")
                         if ok_be:
                             self.pending_be_exit_tickets.discard(pos.ticket)
                             self.log(f"[{pk} - Thoát {be_label_tag}] Giá hồi về {be_target_price:.2f} -> {msg_be}")
@@ -9442,7 +9590,8 @@ class KronosDesktopApp:
                     self.log(f"⚠️ [MODIFY_SLTP] Sửa SL/TP #{pos.ticket} thất bại -> tạm nghỉ 15 giây rồi mới thử lại.")
             return ok
 
-    def _close_single_pos(self, pos) -> tuple:
+    def _close_single_pos(self, pos, reason: str = None) -> tuple:
+        """Đóng 1 lệnh. reason: mã lý do ngắn (TIME, BE, GOV, REV...) ghi vào comment MT5 dạng KR_<mã> để tra lại."""
         with self._mt5_lock:
             tick = mt5.symbol_info_tick(pos.symbol)
             sym_info = mt5.symbol_info(pos.symbol)
@@ -9467,7 +9616,7 @@ class KronosDesktopApp:
                 "price": round(price, digits),
                 "deviation": dev_val,
                 "magic": pos.magic,
-                "comment": "AI_Close",
+                "comment": (f"KR_{reason}"[:31] if reason else "AI_Close"),
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": mt5.ORDER_FILLING_IOC,
             }
@@ -9523,14 +9672,14 @@ class KronosDesktopApp:
         with self._mt5_lock:
             positions = mt5.positions_get(ticket=ticket_int)
         if positions:
-            ok, msg = self._close_single_pos(positions[0])
+            ok, msg = self._close_single_pos(positions[0], "MANUAL")
             self.log(msg)
             symbol = self.symbol_var.get().strip()
             self._update_open_positions_and_manage(symbol, profile_key=self.active_profile_key)
         else:
             self.show_toast(f"Lệnh #{ticket_int} là lệnh đã đóng trong lịch sử, không thể đóng lại.", is_error=True, duration_ms=2500)
 
-    def _close_all_positions_for_profile(self, profile_key: str, symbol: str) -> int:
+    def _close_all_positions_for_profile(self, profile_key: str, symbol: str, reason: str = None) -> int:
         """Đóng an toàn toàn bộ lệnh của một mã cụ thể trên MT5 (dùng cho cả nút bấm tay và chốt chùm tự động)."""
         sym_str = str(symbol or "").strip()
         if not sym_str:
@@ -9541,7 +9690,7 @@ class KronosDesktopApp:
             return 0
         closed = 0
         for pos in positions:
-            ok, msg = self._close_single_pos(pos)
+            ok, msg = self._close_single_pos(pos, reason)
             self.log(msg)
             if ok:
                 closed += 1
@@ -9553,7 +9702,7 @@ class KronosDesktopApp:
         """Đóng toàn bộ các lệnh đang mở khi đạt mục tiêu Chốt lời Chùm Lệnh và kích hoạt thời gian tạm nghỉ (Basket Cooldown)."""
         try:
             self.log(f"🎉 [{pk}] ĐẠT MỤC TIÊU CHỐT LỜI CHÙM LỆNH (+{total_profit:.2f}$ >= {basket_tp_usd:.2f}$) -> Đang đóng toàn bộ lệnh...")
-            closed_cnt = self._close_all_positions_for_profile(pk, symbol)
+            closed_cnt = self._close_all_positions_for_profile(pk, symbol, "BASKET")
             cooldown_m = 0.0
             try:
                 cooldown_m = max(float(cfg.get("basket_cooldown_mins", 15.0)), 0.0)
@@ -9588,7 +9737,7 @@ class KronosDesktopApp:
         if not positions:
             self.show_toast(f"Hiện không có lệnh {symbol} nào của Bot đang mở trên MT5.", is_error=False)
             return
-        self._close_all_positions_for_profile(pk, symbol)
+        self._close_all_positions_for_profile(pk, symbol, "ALL")
 
     def _algo_trading_on(self, acc):
         """Algo thật = quyền EA của tài khoản (acc.trade_expert) VÀ nút Algo Trading của terminal MT5 (terminal_info().trade_allowed)."""
@@ -9983,7 +10132,7 @@ class KronosDesktopApp:
                 t_sec = tf_sec_m.get(active_tf, 300)
                 bars_needed = int((time.time() - cd_focus["open_ts"]) / t_sec) + 40
                 if bars_needed > chart_bars:
-                    chart_bars = min(1500, max(chart_bars, bars_needed))
+                    chart_bars = min(5000, max(chart_bars, bars_needed))
 
         df_live = self.fetch_mt5_candles(symbol, active_tf, chart_bars, include_forming=True)
         if active_tf == ana_tf:
@@ -10964,7 +11113,7 @@ class KronosDesktopApp:
 
                             # QUY TẮC 1: Lệnh ngược chiều đang CÓ LÃI (> 0$) -> Chốt lời ngay để đảo chiều
                             if pos.profit > 0.0:
-                                ok_c, msg_c = self._close_single_pos(pos)
+                                ok_c, msg_c = self._close_single_pos(pos, "REV")
                                 self.pending_be_exit_tickets.discard(pos.ticket)
                                 self.log(f"🔄 [{pk} - Quy tắc 1 - AI Đảo Chiều sang {opp_action} ({rev_tag})] Lệnh #{pos.ticket} đang lãi -> {msg_c}")
                             else:
@@ -10974,7 +11123,7 @@ class KronosDesktopApp:
                                 is_opp_choch = (macro_ctx.get("break_type") == "CHOCH" and macro_ctx.get("macro_dir") == opp_dir)
 
                                 if rev_loss_mode == "close_if_strong" and opp_pct >= rev_be_consensus and is_opp_choch:
-                                    ok_c, msg_c = self._close_single_pos(pos)
+                                    ok_c, msg_c = self._close_single_pos(pos, "REVCUT")
                                     self.pending_be_exit_tickets.discard(pos.ticket)
                                     self.log(
                                         f"✂️ [{pk} - Cắt Lỗ Chủ Động (close_if_strong)] Lệnh #{pos.ticket} ({pos.profit:+.2f}$) gặp đảo chiều mạnh "
@@ -11579,7 +11728,17 @@ class KronosDesktopApp:
 
             # Tự động trượt tầm nhìn về cây nến khớp lệnh (Auto-focus) nếu vừa nhấp chọn
             if getattr(self, "_selected_deal_ticket_focus", None) == cd["ticket"] and k_match >= 0:
-                new_xlim = (max(-1.5, k_match - 35), min(total_x + 5.0, k_match + 35))
+                # Giữ nguyên độ rộng khung nhìn hiện tại (không phóng to), chỉ dời khung sao cho nến vào lệnh nằm giữa
+                _span = max(float(view_xlim[1] - view_xlim[0]), 70.0)
+                _left = k_match - _span * 0.5
+                _right = _left + _span
+                if _right > total_x + 5.0:
+                    _right = total_x + 5.0
+                    _left = _right - _span
+                if _left < -1.5:
+                    _left = -1.5
+                    _right = _left + _span
+                new_xlim = (_left, _right)
                 self.saved_xlim = new_xlim
                 self.user_zoomed = True
                 self.ax.set_xlim(new_xlim)

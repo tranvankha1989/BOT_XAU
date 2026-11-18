@@ -30,6 +30,36 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - `d.time` / `pos.time` / `tick.time` của MT5 là giờ SERVER, không phải UTC; log bot ghi giờ VN (UTC+7). Cẩn thận khi so với `time.time()`.
 - Bot thật giữ giới hạn luồng PyTorch `min(4, cpu//2)` (máy từng bị Kernel-Power 41). Chỉ công cụ backtest được ghi đè (`--threads`).
 - Thêm log chẩn đoán thì phải giới hạn tần suất và bọc `try/except`, không đổi điều kiện vào/hủy lệnh.
+- Sửa file bằng script qua Bash heredoc: ký tự `\` có thể bị mất (`"\\n"` thành xuống dòng thật, `\t` thành tab).
+  Tạo `\` bằng `bytes([92])`/`chr(92)` hoặc dùng `/`, rồi `py_compile` và kiểm tra nội dung chuỗi.
+
+## Thêm thông số cấu hình mới (bắt buộc đủ 6 bước)
+1. Khóa mặc định trong `DEFAULT_PROFILE_SETTINGS` cho CẢ `XAUUSD` và `BTCUSD` (tính năng mới đổi luật: mặc định TẮT).
+2. Ô giao diện (`tk.BooleanVar` + `_add_checkbutton`, hoặc `_add_labeled_entry` / `_add_labeled_combo`) trong đúng Mục.
+3. Thêm vào `_get_settings_vars_map` (thiếu thì không lưu/nạp được).
+4. Mục giải thích trong `PARAM_HELP_GUIDE` (`title`, `what_is_it`, `how_to_set`) và truyền `help_key=` để có nút (?).
+5. Thêm khóa vào danh sách nút "Khôi phục mặc định" của Mục tương ứng (`reset_section_settings`, dict `1:`..`5:`).
+6. Nếu là thông số con: khai báo trong khối "Cây thông số cha/con" (`_bind_param_children`, sau nút khôi phục Mục 3);
+   cha tắt (bỏ tích hoặc = 0) thì con mờ và khóa. Cập nhật bảng cây bên dưới.
+- Luật mới cần replay được: `tools/live_replay.py --set <khóa>=<giá trị>` (chạy chính code live, không cần sửa tool).
+
+**Cây thông số hiện tại** (cha → con):
+| Cha | Con |
+|---|---|
+| `auto_be` (Tự dời SL về Entry) | `be_trigger_r` |
+| `auto_trail` (Trailing) | `trail_dist_r` |
+| `auto_rev_close` (Bảo vệ đảo chiều) | `rev_consensus`, `rev_be_consensus`, `rev_min_move`, `rev_loss_mode` |
+| `basket_tp_usd` (> 0) | `basket_cooldown_mins` |
+| `max_hold_mins` (> 0) | `max_hold_action` |
+| `max_consec_loss` (> 0) | `cooldown_mins` |
+| `confirm_entry_pa` | `pa_min_confirmations`, `pa_fail_open` |
+`be_plus_price` dùng chung cho BE, giữ lệnh, đảo chiều nên không là con của mục nào.
+
+**Thông số mới gần đây** (mặc định, Mục): `debug_trace` (tắt, 2: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3: gỡ vốn),
+`structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `max_hold_mins` mặc định 15,
+`max_hold_action` mặc định "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)".
+Mã lý do đóng lệnh ghi vào comment MT5 `KR_<mã>` (TIME, TIMEALL, BE, GOV, REV, REVCUT, BASKET, DAILY, MANUAL, ALL):
+thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` và thêm nhãn vào `_kr_reasons`.
 
 ## Quy tắc an toàn (KHÔNG làm)
 - KHÔNG `kill`/`taskkill` toàn bộ `python.exe` (có thể giết nhầm bot đang chạy). Dừng đúng tiến trình/tác vụ của mình.
@@ -42,7 +72,7 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **231 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **265 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.

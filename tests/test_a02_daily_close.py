@@ -53,7 +53,7 @@ class TestA02(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def closer(self, pos_):
+    def closer(self, pos_, reason=None):
         self.closed.append(pos_.ticket)
         self.attempts[pos_.ticket] = self.attempts.get(pos_.ticket, 0) + 1
         if pos_.ticket in self.fail_first and self.attempts[pos_.ticket] == 1:
@@ -90,7 +90,7 @@ class TestA02(unittest.TestCase):
 
     def test_thu_lai_khong_qua_1_lan_moi_5_giay_va_log_15_giay(self):
         self.fail_first = {1}
-        always_fail = lambda p_: (self.closed.append(p_.ticket) or (False, "x"))
+        always_fail = lambda p_, reason=None: (self.closed.append(p_.ticket) or (False, "x"))
         app, ctx = make_app(always_fail)
         self.open = [pos(1, MAGIC), pos(9, 0)]
         self.run_once(app)  # lần đầu (t=1000)
@@ -111,7 +111,7 @@ class TestA02(unittest.TestCase):
         self.assertNotIn(9, self.closed)
 
     def test_mo_khoa_thi_ngung_thu_lai(self):
-        always_fail = lambda p_: (self.closed.append(p_.ticket) or (False, "x"))
+        always_fail = lambda p_, reason=None: (self.closed.append(p_.ticket) or (False, "x"))
         app, ctx = make_app(always_fail)
         self.open = [pos(1, MAGIC)]
         self.run_once(app)
