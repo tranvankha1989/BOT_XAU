@@ -412,10 +412,10 @@ class ReplayPlayer:
                     sl, tp = st
                     if sl > 0:
                         cv.create_line(xo, Y(sl), x1, Y(sl), fill=self.DOWN, dash=(5, 3), tags="dyn")
-                        cv.create_text(x1 - 2, Y(sl) - 7, text=f"SL {sl:.2f}", anchor="e", fill=self.DOWN, font=("Consolas", 8), tags="dyn")
+                        cv.create_text(x1 - 2, Y(sl) - 2, text=f"SL {sl:.2f}", anchor="se", fill=self.DOWN, font=("Consolas", 8), tags="dyn")
                     if tp > 0:
                         cv.create_line(xo, Y(tp), x1, Y(tp), fill=self.UP, dash=(5, 3), tags="dyn")
-                        cv.create_text(x1 - 2, Y(tp) - 7, text=f"TP {tp:.2f}", anchor="e", fill=self.UP, font=("Consolas", 8), tags="dyn")
+                        cv.create_text(x1 - 2, Y(tp) - 2, text=f"TP {tp:.2f}", anchor="se", fill=self.UP, font=("Consolas", 8), tags="dyn")
                 fp = floating_pnl(t, fc, self.contract)
                 lx = max(xo, x0) + 10
                 cv.create_text(lx, yo - 9, text=f"{t['type']} {float(t['volume']):.2f} @ {float(t['price_open']):.2f} | {fp:+.2f}$",
