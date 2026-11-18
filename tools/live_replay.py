@@ -234,20 +234,20 @@ class FakeBroker:
         if arr is None or len(arr) == 0:
             return None
         n_closed = int(np.searchsorted(arr["time"] + tf_sec, now, side="right"))
-        closed = arr[max(0, n_closed - count - 1):n_closed]
+        closed = arr[max(0, n_closed - count - start_pos - 1):n_closed]
+        # Như MT5 thật: vị trí 0 = nến MỚI NHẤT đang tồn tại. Nến đang chạy chỉ tồn tại khi đã có tick trong chu kỳ;
+        # chưa có tick (giờ nghỉ của vàng, cuối tuần, đầu nến chưa có giá) thì vị trí 0 là nến đã đóng gần nhất
+        # (trước đây luôn coi vị trí 0 là nến đang chạy -> giờ nghỉ phát hiện "nến mới" lặp vô hạn).
         out = closed
-        if start_pos == 0:
-            fs = int(now // tf_sec) * tf_sec
-            i0 = int(np.searchsorted(self.ms, fs * 1000, side="left"))
-            i1 = self._idx(now) + 1
-            if i1 > i0:
-                b = self.bid[i0:i1]
-                forming = np.array([(fs, b[0], b.max(), b.min(), b[-1], i1 - i0, 0, 0)], dtype=RATE_DTYPE)
-                out = np.concatenate([closed, forming])
-            return out[-count:] if count > 0 else out
-        # start_pos >= 1: bỏ (start_pos - 1) nến đóng mới nhất
-        end = len(closed) - (start_pos - 1)
-        return closed[max(0, end - count):max(0, end)]
+        fs = int(now // tf_sec) * tf_sec
+        i0 = int(np.searchsorted(self.ms, fs * 1000, side="left"))
+        i1 = self._idx(now) + 1
+        if i1 > i0:
+            b = self.bid[i0:i1]
+            forming = np.array([(fs, b[0], b.max(), b.min(), b[-1], i1 - i0, 0, 0)], dtype=RATE_DTYPE)
+            out = np.concatenate([closed, forming])
+        end = len(out) - start_pos
+        return out[max(0, end - count):max(0, end)] if count > 0 else out[:max(0, end)]
 
     def copy_rates_from_pos(self, symbol, tf, start_pos, count):
         return self._rates_until_now(self._TF_ENUM_SEC.get(tf, 300), int(count), int(start_pos))
@@ -689,6 +689,73 @@ class Replayer:
 
 
 # ───────────────────────── Báo cáo ─────────────────────────
+def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc: float, capital: float = 1000.0,
+             seed: int = 1, ai_latency: float = 8.5, detect_delay: float = 1.6, use_cache: bool = True, progress=None) -> dict:
+    """Phát lại CHÍNH code bot live trên tick MT5 (chỉ đọc). cfg đã được nạp và ghi đè (rb.load_strategy_cfg + --set).
+    Trả dict: closed (lệnh đã đóng, có cả lệnh đóng cuối kỳ), rejects, logs, errors, n_analyses, cache, end_utc.
+    progress(pct, t_sec, n_closed, n_analyses, cache) được gọi định kỳ nếu có."""
+    import trading_modules.trading_window as tw_mod
+    from bt_ai_cache import ScenarioCache
+    cfg["engine"] = "Chạy trực tiếp máy Local"       # AI chạy trên máy này (cùng mô hình)
+    cfg["telegram_enabled"] = False
+    cfg["symbol"] = symbol
+    cache_root = os.path.join(bot_mod.SETTINGS_DIR, "replay_cache")
+    print("[*] Đang đọc tick + nến từ MT5 (chỉ đọc, có cache)...")
+    sym_info, ms, bid, ask, rates = load_market_data(symbol, start_utc, end_utc, cache_dir=cache_root)
+    print(f"[*] Đã có {len(ms):,} tick, nến: " + ", ".join(f"{k}s={len(v)}" for k, v in sorted(rates.items())))
+    last_tick_s = float(ms[-1]) / 1000.0
+    if last_tick_s < end_utc:
+        print(f"[*] Dữ liệu tick chỉ tới {vn(last_tick_s, is_ms=False)} -> dừng phát lại tại đó")
+        end_utc = last_tick_s
+
+    clock = SimClock(start_utc)
+    broker = FakeBroker(symbol, sym_info, ms, bid, ask, rates, clock, capital=capital)
+    logs, errors = [], []
+    app = build_app(bot_mod, pk, cfg, logs, errors, clock)
+    app._trace_run = "replay"  # debug_trace (nếu bật) ghi vào thư mục riêng, không lẫn log live
+    app._trace_dir = os.path.join(bot_mod.SETTINGS_DIR, "replays", "trace")
+    cache = ScenarioCache(os.path.join(bot_mod.SETTINGS_DIR, "bt_ai_cache")) if use_cache else None
+    if cache is not None:
+        install_ai_cache(app, cache)
+
+    from unittest import mock
+    patches = [
+        mock.patch.object(bot_mod, "mt5", broker), mock.patch.object(bot_mod, "MT5_AVAILABLE", True),
+        mock.patch.object(bot_mod, "time", FakeTimeModule(clock)),
+        mock.patch.object(bot_mod, "datetime", make_fake_datetime(clock)),
+        mock.patch.object(tw_mod, "datetime", make_fake_datetime(clock)),
+        mock.patch.object(bot_mod, "threading", FakeThreadingModule()),
+    ]
+    rp_holder = {}
+
+    def _progress(pct, t):
+        if progress:
+            rp = rp_holder["rp"]
+            progress(pct, t, len(broker.closed), rp.n_analyses, cache)
+
+    rp = Replayer(bot_mod, app, broker, clock, pk, cfg, ai_latency=ai_latency, detect_delay=detect_delay, progress=_progress)
+    rp_holder["rp"] = rp
+    app.enqueue_ai_scan = rp.request_scan
+    for p in patches:
+        p.start()
+    try:
+        rp.run(start_utc, end_utc)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+    # Lệnh còn mở cuối kỳ: đóng theo giá cuối để thống kê
+    clock.now = end_utc
+    for p in list(broker.positions):
+        c = broker._cur()
+        if c:
+            broker._close(p, c[1] if p.type == 0 else c[2], c[3], broker.DEAL_REASON_EXPERT, p.volume, "end")
+            broker.closed[-1]["reason"] = "Đóng cuối kỳ"
+    return {"closed": broker.closed, "rejects": broker.rejects, "logs": logs, "errors": errors,
+            "n_analyses": rp.n_analyses, "cache": cache, "end_utc": end_utc,
+            "contract": float(sym_info.get("trade_contract_size", 100.0) or 100.0)}
+
+
 def summarize(closed: list) -> dict:
     pnls = [c["profit"] for c in closed]
     win = sum(x for x in pnls if x > 0)
@@ -769,53 +836,16 @@ def main(argv=None) -> int:
         print(f"[*] Ghi đè --set     : {', '.join(set_notes)}")
     print(f"[*] Độ trễ AI        : phát hiện nến +{args.detect_delay:g}s, AI {args.ai_latency:g}s | Seed {args.seed} | Luồng torch {n_thr}")
 
-    cache_root = os.path.join(bot_mod.SETTINGS_DIR, "replay_cache")
-    print("[*] Đang đọc tick + nến từ MT5 (chỉ đọc, có cache)...")
-    sym_info, ms, bid, ask, rates = load_market_data(symbol, start_utc, end_utc, cache_dir=cache_root)
-    print(f"[*] Đã có {len(ms):,} tick, nến: " + ", ".join(f"{k}s={len(v)}" for k, v in sorted(rates.items())))
-    last_tick_s = float(ms[-1]) / 1000.0
-    if last_tick_s < end_utc:
-        print(f"[*] Dữ liệu tick chỉ tới {vn(last_tick_s, is_ms=False)} -> dừng phát lại tại đó")
-        end_utc = last_tick_s
-
-    clock = SimClock(start_utc)
-    broker = FakeBroker(symbol, sym_info, ms, bid, ask, rates, clock, capital=args.capital)
-    logs, errors = [], []
-    app = build_app(bot_mod, pk, cfg, logs, errors, clock)
-    cache = ScenarioCache(os.path.join(bot_mod.SETTINGS_DIR, "bt_ai_cache"))
-    install_ai_cache(app, cache)
-
-    from unittest import mock
-    patches = [
-        mock.patch.object(bot_mod, "mt5", broker), mock.patch.object(bot_mod, "MT5_AVAILABLE", True),
-        mock.patch.object(bot_mod, "time", FakeTimeModule(clock)),
-        mock.patch.object(bot_mod, "datetime", make_fake_datetime(clock)),
-        mock.patch.object(tw_mod, "datetime", make_fake_datetime(clock)),
-        mock.patch.object(bot_mod, "threading", FakeThreadingModule()),
-    ]
     t_wall = _real_time.perf_counter()
 
-    def progress(pct, t):
-        print(f"  [{pct:>3}%] {vn(t, is_ms=False)} | lệnh đã đóng {len(broker.closed)} | phân tích AI {rp.n_analyses} | "
+    def progress(pct, t, n_closed, n_an, cache):
+        print(f"  [{pct:>3}%] {vn(t, is_ms=False)} | lệnh đã đóng {n_closed} | phân tích AI {n_an} | "
               f"cache AI {cache.hits}/{cache.hits + cache.misses} | {(_real_time.perf_counter() - t_wall) / 60:.1f} phút")
 
-    rp = Replayer(bot_mod, app, broker, clock, pk, cfg, ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress)
-    app.enqueue_ai_scan = rp.request_scan
-    for p in patches:
-        p.start()
-    try:
-        rp.run(start_utc, end_utc)
-    finally:
-        for p in reversed(patches):
-            p.stop()
-
-    # Lệnh còn mở cuối kỳ: đóng theo giá cuối để thống kê
-    clock.now = end_utc
-    for p in list(broker.positions):
-        c = broker._cur()
-        if c:
-            broker._close(p, c[1] if p.type == 0 else c[2], c[3], broker.DEAL_REASON_EXPERT, p.volume, "end")
-            broker.closed[-1]["reason"] = "Đóng cuối kỳ"
+    res = simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=args.capital, seed=args.seed,
+                   ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress)
+    closed, logs, errors, rejects = res["closed"], res["logs"], res["errors"], res["rejects"]
+    n_analyses, cache, end_utc = res["n_analyses"], res["cache"], res["end_utc"]
 
     out_dir = args.out or os.path.join(bot_mod.SETTINGS_DIR, "replays")
     os.makedirs(out_dir, exist_ok=True)
@@ -824,7 +854,7 @@ def main(argv=None) -> int:
     with open(base + "_lenh.csv", "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["ticket", "loai", "gio_vao", "gio_ra", "gia_vao", "gia_ra", "sl_ban_dau", "tp_ban_dau", "sl_cuoi", "lot", "lai_lo", "ly_do"])
-        for c in broker.closed:
+        for c in closed:
             w.writerow([c["ticket"], c["type"], vn(c["open_ms"]), vn(c["close_ms"]), c["price_open"], c["price_close"],
                         c["sl0"], c["tp0"], c["sl_last"], c["volume"], c["profit"], c["reason"]])
     with open(base + "_log.txt", "w", encoding="utf-8") as f:
@@ -835,19 +865,19 @@ def main(argv=None) -> int:
             for t, msg in errors:
                 f.write(f"[{vn(t, is_ms=False)}] {msg}\n")
 
-    s = summarize(broker.closed)
+    s = summarize(closed)
     pf = "∞" if s["pf"] == float("inf") else f"{s['pf']:.2f}"
     print("=" * 70)
     print(f"Số lệnh: {s['n']} | Thắng/Thua: {s['wins']}/{s['losses']} ({s['win_rate']:.1f}%) | Lãi ròng: {s['net']:+.2f} $")
     print(f"Profit factor: {pf} | Sụt vốn lớn nhất: {s['max_dd']:.2f} $ | Chuỗi thua dài nhất: {s['max_loss_streak']}")
     by_reason = {}
-    for c in broker.closed:
+    for c in closed:
         by_reason.setdefault(c["reason"], [0, 0.0])
         by_reason[c["reason"]][0] += 1
         by_reason[c["reason"]][1] += c["profit"]
     print("Cách thoát lệnh: " + " | ".join(f"{k}: {v[0]} lệnh ({v[1]:+.2f} $)" for k, v in by_reason.items()))
-    print(f"Phân tích AI: {rp.n_analyses} lần | Cache AI: {cache.hits} trúng / {cache.misses} chạy mới")
-    print(f"Sàn giả từ chối: {len(broker.rejects)} lần | Lỗi ghi nhận trong code bot: {len(errors)}")
+    print(f"Phân tích AI: {n_analyses} lần | Cache AI: {cache.hits} trúng / {cache.misses} chạy mới")
+    print(f"Sàn giả từ chối: {len(rejects)} lần | Lỗi ghi nhận trong code bot: {len(errors)}")
     print(f"Thời gian chạy: {(_real_time.perf_counter() - t_wall) / 60:.1f} phút")
     print(f"File lệnh: {base}_lenh.csv")
     print(f"File log : {base}_log.txt")

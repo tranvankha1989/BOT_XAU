@@ -513,6 +513,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "pa_min_confirmations": "1",
         "expected_move_k": "3",
         "use_confidence_gate": False,
+        "debug_trace": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -575,6 +576,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "pa_min_confirmations": "1",
         "expected_move_k": "3",
         "use_confidence_gate": False,
+        "debug_trace": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -2478,6 +2480,8 @@ class KronosDesktopApp:
         )
         self.use_confidence_gate_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
+        self.debug_trace_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Ghi nhật ký debug theo nến (AI, cổng, quyết định) - chỉ để chẩn đoán", self.debug_trace_var)
         self.blocked_trading_windows_var = self._add_labeled_entry(
             sec2.content, "Khung giờ cấm (UTC+7, phẩy ngăn):", "", help_key="blocked_trading_windows"
         )
@@ -5077,6 +5081,7 @@ class KronosDesktopApp:
             "pa_min_confirmations": self.pa_min_confirmations_var,
             "structure_conflict_mode": self.structure_conflict_mode_var,
             "use_confidence_gate": self.use_confidence_gate_var,
+            "debug_trace": self.debug_trace_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
@@ -7139,6 +7144,20 @@ class KronosDesktopApp:
         self._write_file_log("================================================================================")
         self._write_file_log("🚀 KHỞI ĐỘNG HỆ THỐNG SCALPING ĐA LUỒNG XAUUSD & BTCUSD (MT5 EXNESS)")
 
+    def _write_trace(self, pk: str, record: dict):
+        """Ghi 1 dòng JSON vào trace_YYYY-MM-DD.jsonl (chỉ gọi khi bật debug_trace). Lỗi ghi không ảnh hưởng giao dịch."""
+        try:
+            base = getattr(self, "_trace_dir", None) or os.path.join(LOG_DIR, "trace")
+            now = datetime.now()
+            rec = {"ts": now.strftime("%Y-%m-%d %H:%M:%S"), "run": getattr(self, "_trace_run", "live"), "profile": pk, **record}
+            line = json.dumps(rec, ensure_ascii=False, default=str)
+            with self._log_file_lock:
+                os.makedirs(base, exist_ok=True)
+                with open(os.path.join(base, f"trace_{now.strftime('%Y-%m-%d')}.jsonl"), "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+        except Exception:
+            pass
+
     def _write_file_log(self, text: str, is_error: bool = False):
         """Ghi nhật ký hoạt động và lỗi xuống ổ cứng an toàn đa luồng (Thread-Safe)."""
         ts_ms = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -7702,7 +7721,9 @@ class KronosDesktopApp:
             if consec_losses >= max_consec_loss and last_loss_deal is not None:
                 if ctx["last_cooldown_deal_ticket"] != last_loss_deal.ticket:
                     now_ts = int(time.time())
-                    elapsed_sec = max(0, now_ts - int(last_loss_deal.time))
+                    # A45: last_loss_deal.time là giờ SERVER; đổi về UTC trước khi so với now_ts
+                    srv_off_cd = int(self._server_offset_sec(symbol))
+                    elapsed_sec = max(0, now_ts - (int(last_loss_deal.time) - srv_off_cd))
                     total_cd_sec = cooldown_mins * 60.0
                     ctx["last_cooldown_deal_ticket"] = last_loss_deal.ticket
                     if elapsed_sec < total_cd_sec:
@@ -7737,8 +7758,10 @@ class KronosDesktopApp:
                     last_ticket = cd.get("ticket")
                     if ctx.get("last_fast_sl_deal_ticket") != last_ticket:
                         now_ts = int(time.time())
-                        close_ts = cd.get("close_ts", now_ts)
-                        elapsed_sec = max(0, now_ts - close_ts)
+                        # A45: close_ts là giờ SERVER; đổi về UTC (mặc định = bây giờ theo giờ server)
+                        srv_off_fs = int(self._server_offset_sec(symbol))
+                        close_ts = cd.get("close_ts", now_ts + srv_off_fs)
+                        elapsed_sec = max(0, now_ts - (int(close_ts) - srv_off_fs))
                         total_cd_sec = fast_sl_cd_candles * ana_tf_mins * 60.0
                         ctx["last_fast_sl_deal_ticket"] = last_ticket
                         if elapsed_sec < total_cd_sec:
@@ -8388,6 +8411,11 @@ class KronosDesktopApp:
                 if dist > cap + tol + 1.0:
                     return
             ts_map[(pk, gate)] = now_m
+            if bool(cfg.get("debug_trace", False)):
+                self._write_trace(pk, {"event": "pb_gate", "gate": gate, "symbol": symbol, "action": action,
+                                       "bid": tick.bid, "ask": tick.ask, "cur_price": cur_price, "sl_ai": sl_price,
+                                       "dist_sl": round(dist, 3), "cap": cap, "n_open": n_open, "note": note,
+                                       "tick_time": int(getattr(tick, "time", 0) or 0)})
             try:
                 max_spread = float(cfg.get("max_spread", 0.35))
             except (ValueError, TypeError):
@@ -8931,7 +8959,9 @@ class KronosDesktopApp:
             is_buy = (pos.type == mt5.POSITION_TYPE_BUY)
             type_str = "BUY" if is_buy else "SELL"
             open_time = datetime.fromtimestamp(pos.time).strftime("%H:%M:%S")
-            elapsed_sec = max(0, int(time.time()) - int(pos.time))
+            # A38: pos.time là giờ SERVER; quy đổi về UTC bằng độ lệch server trước khi tính thời gian giữ
+            srv_off = self._server_offset_sec(pos.symbol)
+            elapsed_sec = max(0, int(time.time() + srv_off - pos.time))
             dur_str = self._format_duration(elapsed_sec)
             price_move = (pos.price_current - pos.price_open) if is_buy else (pos.price_open - pos.price_current)
 
@@ -8956,6 +8986,24 @@ class KronosDesktopApp:
 
             # Quy tắc Giữ lệnh tối đa (Time-Stop): Chỉ áp dụng cho các lệnh CHƯA dời BE/Trailing (ngâm lệnh ì ạch hoặc đang âm)
             # Lệnh đã dời BE / đang Trailing là lệnh Free-Risk hoàn toàn, được tự do chạy theo sóng để gồng lãi tối đa
+            # Debug trace (tắt mặc định): trạng thái lệnh khi SL/TP/BE/trailing đổi, hoặc mỗi 60s
+            if bool(cfg.get("debug_trace", False)):
+                try:
+                    _sig = (round(pos.sl, 2), round(pos.tp, 2), is_be_or_trailing)
+                    _lt = self.__dict__.setdefault("_pos_trace_last", {})
+                    _prev = _lt.get(pos.ticket)
+                    _now_m = time.monotonic()
+                    if _prev is None or _prev[0] != _sig or _now_m - _prev[1] >= 60.0:
+                        _lt[pos.ticket] = (_sig, _now_m)
+                        self._write_trace(pk, {"event": "pos_state", "ticket": pos.ticket, "type": type_str,
+                                               "price_open": pos.price_open, "price_current": pos.price_current,
+                                               "sl": pos.sl, "tp": pos.tp, "profit": round(pos.profit, 2),
+                                               "current_r": round(current_r, 3), "elapsed_sec": elapsed_sec,
+                                               "be_or_trailing": is_be_or_trailing, "max_hold_mins": max_hold_mins,
+                                               "max_hold_action": max_hold_action})
+                except Exception:
+                    pass
+
             is_ui_thread = (threading.current_thread() is threading.main_thread())
             if max_hold_mins > 0.0 and (elapsed_sec / 60.0) >= max_hold_mins and not is_be_or_trailing:
                 if "Chốt lời" in max_hold_action:
@@ -9117,7 +9165,8 @@ class KronosDesktopApp:
 
                     # CHỈ gửi thông báo nếu lệnh đóng TỪ THỜI ĐIỂM BẬT APP TRỞ ĐI
                     close_ts = cd.get("close_ts", 0)
-                    if close_ts >= app_start_ts:
+                    # A45: close_ts là giờ SERVER; đổi về UTC trước khi so với giờ bật app
+                    if close_ts - int(self._server_offset_sec(cd.get("symbol") or "")) >= app_start_ts:
                         try:
                             self._telegram_notify_order_closed(cd)
                         except Exception:
@@ -9271,6 +9320,21 @@ class KronosDesktopApp:
         if age > self.TICK_MAX_AGE_SEC:
             return None
         return tick
+
+    def _server_offset_sec(self, symbol: str) -> float:
+        """A38: độ lệch giờ server MT5 so với UTC (giây), ước lượng từ tick.time - time.time() làm tròn về bội 900 giây.
+        Không có tick / lỗi -> 0.0 (giữ hành vi cũ, không chặn luồng quản lý lệnh)."""
+        try:
+            with self._mt5_lock:
+                tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                return 0.0
+            t_srv = float(getattr(tick, "time", 0) or 0)
+            if t_srv <= 0:
+                return 0.0
+            return round((t_srv - time.time()) / 900.0) * 900.0
+        except Exception:
+            return 0.0
 
     def _modify_position_sltp(self, pos, new_sl: float, new_tp: float, allow_widen_sl: bool = False) -> bool:
         with self._mt5_lock:
@@ -10436,6 +10500,8 @@ class KronosDesktopApp:
                     ctx["pending_pullback_order"] = None
                     if pk == self.active_profile_key:
                         self.pending_pullback_order = None
+                    if bool(cfg.get("debug_trace", False)):
+                        self._write_trace(pk, {"event": "window_blocked", "reason": win_block_reason})
                     self.log(f"⏸️ [{pk}] {win_block_reason} -> Tạm dừng phân tích, không mở zone mới.")
                     ctx["_sig_title"] = f"⚪ [{pk}] ĐỨNG NGOÀI (GIỜ CẤM GIAO DỊCH) — {win_block_reason}"
                     ctx["_sig_color"] = "#ffffff"
@@ -10919,6 +10985,31 @@ class KronosDesktopApp:
                         )
 
                 limit_entry_price = round((sl_ai_price + effective_max_sl) if action == "BUY" else (sl_ai_price - effective_max_sl), 2) if effective_max_sl > 0.0 else entry_ref
+                # Debug trace (tắt mặc định): số liệu AI và quyết định của nến này, để truy vết sau
+                if bool(cfg.get("debug_trace", False)):
+                    try:
+                        self._write_trace(pk, {
+                            "event": "analysis", "symbol": symbol, "candle": str(ana_closed_time), "scalp_candle": str(last_time),
+                            "cfg_sig": ctx.get("_last_ai_scan_config_sig"),
+                            "market": {"last_close": last_close, "bid": tick.bid if tick else None, "ask": tick.ask if tick else None,
+                                       "spread": spread_usd, "atr": atr, "atr_scalp": atr_scalp, "atr_ana": atr_ana},
+                            "ai": {"engine": used_engine, "model": model_choice, "scenarios": num_scenarios, "pred_len": pred_len,
+                                   "dyn_t": dyn_t, "dyn_top_p": dyn_top_p, "regime": regime_tag,
+                                   "bull_pct": bull_pct, "bear_pct": bear_pct, "dir_pct": dir_pct, "ai_dom_dir": ai_dom_dir,
+                                   "confidence_pct": confidence_pct, "dispersion_r": dispersion_r, "scenario_std": scenario_std,
+                                   "avg_end_close": avg_end_close, "bull_count": bull_count, "bear_count": bear_count, "total": total,
+                                   "expected_move": expected_move, "pred_high": ai_pred_high, "pred_low": ai_pred_low,
+                                   "structure": macro_ctx.get("summary_tag") if isinstance(macro_ctx, dict) else None},
+                            "decision": {"action": action, "is_bull_consensus": is_bull_consensus, "is_bear_consensus": is_bear_consensus,
+                                         "is_high_uncertainty": is_high_uncertainty, "min_consensus": min_consensus,
+                                         "min_effective_move": min_effective_move, "use_confidence_gate": use_confidence_gate,
+                                         "entry_ref": entry_ref, "sl_ai": sl_ai_price, "tp": tp_price,
+                                         "effective_max_sl": effective_max_sl, "sl_tightened_for_2r": sl_tightened_for_2r,
+                                         "limit_entry": limit_entry_price},
+                            "text": sig_title,
+                        })
+                    except Exception:
+                        pass
                 is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
 
                 trade_msg = self._get_live_bot_status_text(pk)

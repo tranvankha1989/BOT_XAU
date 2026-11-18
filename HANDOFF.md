@@ -42,13 +42,13 @@ Ghi theo người dùng, chưa xác nhận lại bằng đọc code trong lần 
 
 ## 3b. Tách module (15/11/2026)
 - Logic giao dịch đã tách một phần ra `trading_modules/` (13 module: cấu trúc, Price Action, ATR, lấy mẫu Kronos, lõi Kronos, chấm điểm kịch bản, khung giờ cấm, Max SL, quy tắc quản lý lệnh mô phỏng, ngưỡng theo mã, ghép tick, báo cáo backtest). Xem docs/MODULES.md, docs/CAU_TRUC_DU_AN.md.
-- Đã kiểm: backtest 6 đoạn cũ giống hệt code cũ, lõi Kronos giống hệt trên mô hình thật, 174 test (docs/P60_KIEM_TRA_TACH_MODULE.md). Chưa chạy bot live sau khi tách; chưa phát hành (v1.3.9 chờ demo thật).
+- Đã kiểm: backtest 6 đoạn cũ giống hệt code cũ, lõi Kronos giống hệt trên mô hình thật, 174 test (báo cáo cũ đã xóa, xem git lịch sử). Chưa chạy bot live sau khi tách; chưa phát hành (v1.3.9 chờ demo thật).
 - Dữ liệu backtest gom vào `backtest_data/`; log chạy backtest trong `tools/scratch/` (không commit).
 - Việc tách còn lại: luồng quyết định tín hiệu (SL/TP, cổng), cổng rủi ro, quản lý lệnh LIVE, cổng MT5, thực thi lệnh, giao diện.
 - Cấu hình thật (đọc qua load_strategy_cfg): vàng dùng structure_conflict_mode=analysis, BTC tắt trend_filter, lot 0.05, max_pos 5.
 
 ## 4. Đã xong ngày 14/11 (sau bản bàn giao trước)
-- **P51-G/P55**: bộ lọc cấu trúc A/B/C trên 3 đoạn: KHÔNG có bằng chứng đổi luật (xem docs/P55_KET_QUA_3_DOAN.md). Giữ nguyên `trend_filter` và `neutral`.
+- **P51-G/P55**: bộ lọc cấu trúc A/B/C trên 3 đoạn: KHÔNG có bằng chứng đổi luật (báo cáo cũ đã xóa, xem git lịch sử). Giữ nguyên `trend_filter` và `neutral`.
 - **P53-C** (aff3fa5): cache AI cho backtest, `--ai-cache on|off` mặc định BẬT, thư mục `%APPDATA%\Kronos_MT5_Bott_ai_cache`. Chạy lại cùng đoạn mất ~30 giây thay vì ~50 phút. Đã kiểm 1 ngày thật: kết quả giống hệt (P54).
 - **A03** (1eedc27): không ghi đè pending canh vùng mới khi khôi phục sau execute.
 - **A10** (3a05c0c): không đọc được lịch sử deals (chưa có cache) -> chặn mở lệnh mới tới khi đọc lại được (cờ `ctx["deals_unknown"]`).

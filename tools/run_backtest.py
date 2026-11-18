@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 import types
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -167,6 +167,15 @@ def apply_set_overrides(cfg: dict, def_cfg: dict, pairs) -> list:
         k, v = k.strip(), v.strip()
         if k not in EXPERIMENTAL_KEYS and (k not in def_cfg or k in EXCLUDED_KEYS or k.startswith(EXCLUDED_PREFIXES)):
             raise ValueError(f"--set: khóa '{k}' không hợp lệ hoặc không được phép ghi đè")
+        if isinstance(def_cfg.get(k), bool):
+            # Khóa bật/tắt: đổi sang bool thật (bot đọc bool("False") = True -> ghi đè "False" từng KHÔNG có tác dụng)
+            lv = v.lower()
+            if lv in ("true", "1", "on", "yes"):
+                v = True
+            elif lv in ("false", "0", "off", "no"):
+                v = False
+            else:
+                raise ValueError(f"--set: khóa '{k}' cần True/False, nhận '{v}'")
         cfg[k] = v
         out.append(f"{k}={v}")
     return out
@@ -315,6 +324,98 @@ def build_app(profile_key, cfg, symbol, start, end, precision, use_ai, capital, 
     return app
 
 
+def live_closed_to_trades(closed: list, contract_size: float = 100.0) -> list:
+    """Đổi lệnh đã đóng của bộ phát lại live sang bản ghi backtest (cùng cột với export_backtest_csv)."""
+    vn_tz = timezone(timedelta(hours=7))
+    out = []
+    for i, c in enumerate(closed, 1):
+        t_in = datetime.fromtimestamp(c["open_ms"] / 1000.0, vn_tz)
+        t_out = datetime.fromtimestamp(c["close_ms"] / 1000.0, vn_tz)
+        secs = max(0, int(round((c["close_ms"] - c["open_ms"]) / 1000.0)))
+        vol = float(c["volume"])
+        sl0 = float(c.get("sl0") or 0.0)
+        risk = round(abs(float(c["price_open"]) - sl0) * vol * contract_size, 2) if sl0 > 0 else 0.0
+        reason = {"SL": "Cắt lỗ (SL)", "TP": "Chốt lời (TP)"}.get(c["reason"], c["reason"])
+        out.append({"ticket": f"#{i:04d}", "date": t_in.strftime("%Y-%m-%d"), "in_time": t_in.strftime("%d/%m %H:%M:%S"),
+                    "out_time": t_out.strftime("%d/%m %H:%M:%S"), "duration": f"{secs // 60}p {secs % 60:02d}s",
+                    "type": c["type"], "lot": vol, "in_price": c["price_open"], "out_price": c["price_close"],
+                    "pnl": round(float(c["profit"]), 2), "risk_usd": risk, "cost_spread": 0.0,
+                    "cost_kind": "S1_EMBEDDED", "reason": reason})
+    return out
+
+
+def _run_live(args, pk, cfg, eff_flags, symbol, d0, d1, out_dir) -> int:
+    """Engine mặc định: chạy CHÍNH code bot live (tools/live_replay.simulate) trên tick MT5, chỉ đọc."""
+    import live_replay as lr
+    if args.precision != "S1":
+        print("[ERROR] --engine live chỉ chạy trên tick: dùng --precision S1")
+        return 2
+    if args.no_ai:
+        print("[ERROR] --engine live luôn dùng Não AI như bot live (không có --no-ai)")
+        return 2
+    print("[*] Engine           : LIVE - chạy chính code bot (tools/live_replay.py), chỉ đọc MT5")
+    start_utc = datetime.combine(d0, datetime.min.time()).replace(tzinfo=lr.VN_TZ).timestamp()
+    end_utc = (datetime.combine(d1, datetime.min.time()).replace(tzinfo=lr.VN_TZ)
+               + timedelta(days=1) - timedelta(seconds=1)).timestamp()
+    t0 = time.perf_counter()
+    try:
+        res = lr.simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=args.capital, seed=args.seed)
+    except Exception as e:
+        print(f"[ERROR] Phát lại live thất bại: {e}")
+        return 1
+    elapsed = time.perf_counter() - t0
+    cache = res["cache"]
+    print(f"[*] Phân tích AI     : {res['n_analyses']} lần | Cache AI: {cache.hits} trúng / {cache.misses} chạy mới")
+    print(f"[*] Lỗi ghi nhận trong code bot: {len(res['errors'])}")
+    for msg in res["errors"][:20]:
+        print(f"[ERROR] {msg}")
+    all_trades = live_closed_to_trades(res["closed"], res["contract"])
+    mode = "Tick S1 (1 giây) - chạy chính code bot live"
+    return _report_and_export(args, pk, symbol, all_trades, mode, eff_flags, d0, d1, elapsed, out_dir)
+
+
+def _report_and_export(args, pk, symbol, all_trades, mode, eff_flags, d0, d1, elapsed, out_dir) -> int:
+    """Lọc khoảng ngày, trừ chi phí thêm, in báo cáo và xuất CSV (dùng chung cho engine live và legacy)."""
+    if args.keep_warmup_trades:
+        trades, dropped, unparsed = all_trades, [], 0
+    else:
+        trades, dropped, unparsed = filter_trades_by_range(all_trades, args.start, args.end)
+    if args.commission_per_lot or args.slippage:
+        trades = apply_extra_costs(trades, args.commission_per_lot, args.slippage, 1.0 if pk == "BTCUSD" else 100.0)
+        print(f"[*] Chi phí thêm      : commission {args.commission_per_lot}$/lot + trượt giá {args.slippage} (đã trừ vào pnl sau mô phỏng)")
+    dropped_pnl = sum(float(t["pnl"]) for t in dropped)
+
+    report = bot_mod.build_backtest_report(trades, args.capital)
+    cal_days = (d1 - d0).days + 1 if d1 >= d0 else (d0 - d1).days + 1
+    print("-" * 65)
+    print(f"Chế độ chạy thực tế  : {mode}")
+    print(f"Số ngày giao dịch    : {report.get('n_days', 0)} (trong {cal_days} ngày lịch)")
+    print(f"Số lệnh              : {report['n_trades']}")
+    print(f"Seed                 : {args.seed}")
+    if args.keep_warmup_trades:
+        print("Lệnh warm-up         : ĐANG GIỮ (--keep-warmup-trades) - thống kê gồm cả lệnh vào ngoài [start, end]")
+    else:
+        print(f"Lệnh ngoài khoảng    : loại {len(dropped)} lệnh vào ngoài [{args.start} 00:00:00, {args.end} 23:59:59] giờ VN, "
+              f"tổng lãi/lỗ nhóm này {dropped_pnl:+.2f} $ (KHÔNG tính vào thống kê chính)")
+    if unparsed:
+        print(f"⚠️ {unparsed} lệnh không xác định được thời điểm vào nên được giữ lại")
+    print(f"Thời gian chạy       : {elapsed:.1f} giây")
+    print("-" * 65)
+    for line in bot_mod.format_backtest_report(report):
+        print(line)
+    for ln in format_effective_flags(eff_flags):
+        print(f"⚙️ {ln}")
+    if trades:
+        for line in format_extra_metrics(compute_extra_metrics(trades)):
+            print(line)
+
+    if trades:
+        fname = f"backtest_{symbol}_{args.start}_{args.end}_{datetime.now().strftime('%H%M%S')}.csv"
+        path = export_csv_with_params(trades, os.path.join(out_dir, fname), eff_flags)
+        print(f"💾 Đã xuất CSV: {path}")
+    return 0
+
+
 def run(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Chạy backtest Kronos từ dòng lệnh (chỉ đọc dữ liệu MT5)")
     ap.add_argument("--profile", required=True, choices=["XAUUSD", "BTCUSD"])
@@ -323,6 +424,9 @@ def run(argv=None) -> int:
     ap.add_argument("--end", required=True, help="YYYY-MM-DD")
     ap.add_argument("--out", default=None, help="Thư mục xuất CSV (mặc định SETTINGS_DIR\\backtests)")
     ap.add_argument("--precision", choices=["CANDLE", "S1"], default="CANDLE", help="CANDLE = nến MT5, S1 = tick 1 giây")
+    ap.add_argument("--engine", choices=["live", "legacy"], default="live",
+                    help="live (mặc định) = chạy CHÍNH code bot live qua tools/live_replay.py (chỉ S1, luôn có AI); "
+                         "legacy = mô phỏng cũ, còn giữ để so sánh tạm thời")
     ap.add_argument("--no-ai", action="store_true", help="Tắt Não AI Kronos, dùng thuật toán kỹ thuật")
     ap.add_argument("--capital", type=float, default=1000.0)
     ap.add_argument("--lot", type=float, default=None, help="Mặc định: lot trong --config nếu có, ngược lại 0.02")
@@ -407,6 +511,8 @@ def run(argv=None) -> int:
     if set_notes:
         print(f"[*] Ghi đè --set      : {', '.join(set_notes)}")
 
+    if args.engine == "live":
+        return _run_live(args, pk, cfg, eff_flags, symbol, d0, d1, out_dir)
     if not mt5.initialize():
         print(f"[ERROR] mt5.initialize() thất bại: {mt5.last_error()}")
         return 1
@@ -455,44 +561,7 @@ def run(argv=None) -> int:
     for ln in log_lines[:20]:
         print(f"  [log] {ln}")
 
-    if args.keep_warmup_trades:
-        trades, dropped, unparsed = all_trades, [], 0
-    else:
-        trades, dropped, unparsed = filter_trades_by_range(all_trades, args.start, args.end)
-    if args.commission_per_lot or args.slippage:
-        trades = apply_extra_costs(trades, args.commission_per_lot, args.slippage, 1.0 if pk == "BTCUSD" else 100.0)
-        print(f"[*] Chi phí thêm      : commission {args.commission_per_lot}$/lot + trượt giá {args.slippage} (đã trừ vào pnl sau mô phỏng)")
-    dropped_pnl = sum(float(t["pnl"]) for t in dropped)
-
-    report = bot_mod.build_backtest_report(trades, args.capital)
-    cal_days = (d1 - d0).days + 1 if d1 >= d0 else (d0 - d1).days + 1
-    print("-" * 65)
-    print(f"Chế độ chạy thực tế  : {mode}")
-    print(f"Số ngày giao dịch    : {report.get('n_days', 0)} (trong {cal_days} ngày lịch)")
-    print(f"Số lệnh              : {report['n_trades']}")
-    print(f"Seed                 : {args.seed}")
-    if args.keep_warmup_trades:
-        print("Lệnh warm-up         : ĐANG GIỮ (--keep-warmup-trades) - thống kê gồm cả lệnh vào ngoài [start, end]")
-    else:
-        print(f"Lệnh ngoài khoảng    : loại {len(dropped)} lệnh vào ngoài [{args.start} 00:00:00, {args.end} 23:59:59] giờ VN, "
-              f"tổng lãi/lỗ nhóm này {dropped_pnl:+.2f} $ (KHÔNG tính vào thống kê chính)")
-    if unparsed:
-        print(f"⚠️ {unparsed} lệnh không xác định được thời điểm vào nên được giữ lại")
-    print(f"Thời gian chạy       : {elapsed:.1f} giây")
-    print("-" * 65)
-    for line in bot_mod.format_backtest_report(report):
-        print(line)
-    for ln in format_effective_flags(eff_flags):
-        print(f"⚙️ {ln}")
-    if trades:
-        for line in format_extra_metrics(compute_extra_metrics(trades)):
-            print(line)
-
-    if trades:
-        fname = f"backtest_{symbol}_{args.start}_{args.end}_{datetime.now().strftime('%H%M%S')}.csv"
-        path = export_csv_with_params(trades, os.path.join(out_dir, fname), eff_flags)
-        print(f"💾 Đã xuất CSV: {path}")
-    return 0
+    return _report_and_export(args, pk, symbol, all_trades, mode, eff_flags, d0, d1, elapsed, out_dir)
 
 
 if __name__ == "__main__":
