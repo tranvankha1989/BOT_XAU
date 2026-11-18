@@ -54,6 +54,7 @@ def _load_packed_trading_modules():
 _load_packed_trading_modules()
 from trading_modules.structure import analyze_structure_context, nearest_swing_dist, heikin_ashi_colors
 from trading_modules.price_action import evaluate_price_action
+from trading_modules.swing_structure import analyze_swing_structure
 import gc
 import torch
 import torch.nn.functional as F
@@ -514,6 +515,8 @@ DEFAULT_PROFILE_SETTINGS = {
         "expected_move_k": "3",
         "use_confidence_gate": False,
         "debug_trace": False,
+        "recovery_close": False,
+        "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -528,7 +531,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rev_loss_mode": "wait_be",
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
-        "max_hold_mins": "0",
+        "max_hold_mins": "15",
         "max_hold_action": "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
@@ -577,6 +580,8 @@ DEFAULT_PROFILE_SETTINGS = {
         "expected_move_k": "3",
         "use_confidence_gate": False,
         "debug_trace": False,
+        "recovery_close": False,
+        "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
         "auto_be": True,
@@ -591,7 +596,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rev_loss_mode": "wait_be",
         "basket_tp_usd": "0",
         "basket_cooldown_mins": "15",
-        "max_hold_mins": "0",
+        "max_hold_mins": "15",
         "max_hold_action": "Chốt lời (nếu lãi) & Dời TP về hòa (nếu lỗ)",
         "daily_tp_usd": "0",
         "daily_sl_usd": "0",
@@ -2479,6 +2484,8 @@ class KronosDesktopApp:
             help_key="structure_conflict_mode"
         )
         self.use_confidence_gate_var = tk.BooleanVar(value=False)
+        self.structure_direction_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec2.content, "Hướng vào lệnh theo cấu trúc đỉnh/đáy (AI chỉ xác nhận biên độ)", self.structure_direction_var)
         self._add_checkbutton(sec2.content, "Cổng độ tin cậy AI (Confidence % ≥ Consensus)", self.use_confidence_gate_var, help_key="use_confidence_gate")
         self.debug_trace_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Ghi nhật ký debug theo nến (AI, cổng, quyết định) - chỉ để chẩn đoán", self.debug_trace_var)
@@ -2526,8 +2533,10 @@ class KronosDesktopApp:
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 7, "bold"), pady=4
         ).pack(fill=tk.X)
         self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
+        self.recovery_close_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec3.content, "Gỡ vốn: đóng lệnh đang lãi (chưa BE) khi lãi ≥ lỗ ròng đã chốt trong ngày", self.recovery_close_var)
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
-        self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "0", help_key="max_hold_mins")
+        self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "15", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
             sec3.content, "   Xử lý khi vượt thời gian:",
             [
@@ -5082,6 +5091,8 @@ class KronosDesktopApp:
             "structure_conflict_mode": self.structure_conflict_mode_var,
             "use_confidence_gate": self.use_confidence_gate_var,
             "debug_trace": self.debug_trace_var,
+            "recovery_close": self.recovery_close_var,
+            "structure_direction": self.structure_direction_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
             "be_trigger_r": self.be_trigger_r_var,
@@ -8913,6 +8924,40 @@ class KronosDesktopApp:
         else:
             return pos.sl <= (pos.price_open + eps_eq)
 
+    def _recovery_close_step(self, pk: str, symbol: str, positions: list, cfg: dict):
+        """Gỡ vốn (khóa recovery_close, mặc định TẮT): nếu lỗ ròng đã chốt trong ngày > 0 thì đóng 1 lệnh đang lãi
+        có lãi >= phần lỗ cần gỡ và CHƯA dời BE. Không đổi các luật khác. Lỗi trong hàm không ảnh hưởng luồng chính."""
+        try:
+            ctx = self.profile_ctx[pk]
+            now_m = time.monotonic()
+            # Vừa đóng 1 lệnh gỡ vốn: chờ cache lãi/lỗ đã chốt (10s) cập nhật, tránh đóng đúp
+            if now_m - ctx.get("_recovery_last_ts", -1e9) < 20.0:
+                return
+            with self._mt5_lock:
+                realized, _, _ = self._get_today_deals_stats(symbol=symbol, profile_key=pk)
+            debt = -float(realized)
+            if debt <= 0.05:
+                return
+            eps_eq = self._get_symbol_tolerances(symbol).get("eps_equal", 0.05)
+            cands = [pos for pos in positions if float(pos.profit) >= debt and not self._is_pos_at_be(pos, eps_eq)]
+            if not cands:
+                return
+            pos = max(cands, key=lambda x: float(x.profit))
+            ctx["_recovery_last_ts"] = now_m
+            self.log(f"🧩 [{pk} - Gỡ vốn] Lỗ ròng đã chốt hôm nay {realized:+.2f}$ -> đóng lệnh #{pos.ticket} đang lãi {pos.profit:+.2f}$ (chưa BE) để gỡ vốn")
+            if bool(cfg.get("debug_trace", False)):
+                self._write_trace(pk, {"event": "recovery_close", "ticket": pos.ticket, "realized": round(realized, 2),
+                                       "debt": round(debt, 2), "pos_profit": round(float(pos.profit), 2),
+                                       "sl": pos.sl, "tp": pos.tp})
+            if threading.current_thread() is threading.main_thread():
+                self._dispatch_pos_action_async(("RECOVERY_CLOSE", pos.ticket), self._close_single_pos, pos,
+                                                log_prefix=f"[{pk} - Gỡ vốn] Lệnh #{pos.ticket} -> ")
+            else:
+                ok_r, msg_r = self._close_single_pos(pos)
+                self.log(f"[{pk} - Gỡ vốn] Lệnh #{pos.ticket} -> {msg_r}")
+        except Exception as e:
+            self._write_file_log(f"[{pk}] Lỗi gỡ vốn (recovery_close): {e}", is_error=True)
+
     def _update_open_positions_and_manage(self, symbol: str, profile_key: str = None):
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
@@ -8925,6 +8970,8 @@ class KronosDesktopApp:
             return 0, 0.0
 
         positions = self._get_bot_positions(symbol, profile_key=pk)
+        if positions and bool(cfg.get("recovery_close", False)):
+            self._recovery_close_step(pk, symbol, positions, cfg)
 
         selected_tickets = [tree_widget.item(item, "values")[0] for item in tree_widget.selection()]
         target_rows = []
@@ -10740,6 +10787,18 @@ class KronosDesktopApp:
                 # Khi bật use_confidence_gate: yêu cầu confidence_pct >= min_consensus thay vì chỉ xét bull_pct / bear_pct
                 is_bull_consensus = (confidence_pct >= min_consensus and bull_pct > bear_pct) if use_confidence_gate else (bull_pct >= min_consensus)
                 is_bear_consensus = (confidence_pct >= min_consensus and bear_pct > bull_pct) if use_confidence_gate else (bear_pct >= min_consensus)
+                # Nhận định cấu trúc đỉnh/đáy xoay (khóa structure_direction, mặc định TẮT). Khi bật: hướng vào lệnh
+                # do cấu trúc quyết định (không có tín hiệu cấu trúc thì không vào lệnh); AI vẫn xác nhận biên độ dự báo.
+                struct_sig, struct_reason = None, ""
+                if bool(cfg.get("structure_direction", False)):
+                    try:
+                        _sw = analyze_swing_structure(df["open"].values, df["high"].values, df["low"].values,
+                                                      df["close"].values, atr)
+                        struct_sig, struct_reason = _sw["signal"], _sw["reason"]
+                    except Exception:
+                        struct_sig, struct_reason = None, "lỗi nhận định cấu trúc"
+                    is_bull_consensus = (struct_sig == "BUY")
+                    is_bear_consensus = (struct_sig == "SELL")
 
                 action = None
                 sig_color = "#ffffff"  # Chờ/Đứng ngoài: chữ trắng
@@ -11002,6 +11061,7 @@ class KronosDesktopApp:
                                    "structure": macro_ctx.get("summary_tag") if isinstance(macro_ctx, dict) else None},
                             "decision": {"action": action, "is_bull_consensus": is_bull_consensus, "is_bear_consensus": is_bear_consensus,
                                          "is_high_uncertainty": is_high_uncertainty, "min_consensus": min_consensus,
+                                         "struct_sig": struct_sig, "struct_reason": struct_reason,
                                          "min_effective_move": min_effective_move, "use_confidence_gate": use_confidence_gate,
                                          "entry_ref": entry_ref, "sl_ai": sl_ai_price, "tp": tp_price,
                                          "effective_max_sl": effective_max_sl, "sl_tightened_for_2r": sl_tightened_for_2r,
