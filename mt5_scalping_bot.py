@@ -17,6 +17,7 @@ import time
 import types
 import queue
 import shutil
+import subprocess
 import ctypes
 import traceback
 import threading
@@ -3692,6 +3693,18 @@ class KronosDesktopApp:
         self.bt_progress_canvas.pack(side=tk.RIGHT, padx=(4, 0))
         self.bt_progress_bar = self.bt_progress_canvas.create_rectangle(0, 0, 0, 8, fill=GREEN_UP, outline="")
 
+        tk.Button(
+            status_box, text="🎬 Xem phát lại", bg="#24203a", fg="#c4b5fd", font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=7, pady=0, cursor="hand2", command=self._open_bt_player
+        ).pack(side=tk.RIGHT, padx=(4, 4))
+        if not hasattr(self, "bt_engine_var"):
+            self.bt_engine_var = tk.StringVar(value=self.BT_LIVE_ENGINE_LABEL)
+        ttk.Combobox(
+            status_box, textvariable=self.bt_engine_var, values=[self.BT_LIVE_ENGINE_LABEL, self.BT_LEGACY_ENGINE_LABEL],
+            width=26, state="readonly"
+        ).pack(side=tk.RIGHT, padx=(4, 2))
+        tk.Label(status_box, text="Engine:", bg="#0e131b", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.RIGHT)
+
         # 3. DÃY 6 THẺ KPI SCORECARDS CHỈ SỐ TÀI CHÍNH
         kpi_frame = tk.Frame(self.bt_main_frame, bg=PANEL_BG)
         kpi_frame.pack(fill=tk.X, padx=6, pady=(1, 3))
@@ -4159,6 +4172,10 @@ class KronosDesktopApp:
             self.show_toast("Kiểm thử đang chạy, vui lòng đợi!", is_error=True)
             return
 
+        if self._bt_engine_is_live():
+            self._start_live_engine_backtest()
+            return
+
         self._bt_cancel_flag = False
         self._bt_worker_running = True
         self._reset_backtest_view_for_run()
@@ -4178,10 +4195,296 @@ class KronosDesktopApp:
 
     def _stop_backtest_worker(self):
         """Dừng tiến trình kiểm thử."""
+        if getattr(self, "_bt_proc", None) is not None:
+            self._bt_request_cancel_live()
+            return
         if getattr(self, "_bt_worker_running", False):
             self._bt_cancel_flag = True
             self._update_bt_status("Đang hủy tiến trình kiểm thử...", 0)
             self.show_toast("Đang dừng Backtest...", is_error=False, duration_ms=2000)
+
+    # ── BACKTEST BẰNG CODE LIVE (TIẾN TRÌNH RIÊNG) + TRÌNH PHÁT LẠI ─────────────────────────
+    # Engine "Code Live" chạy tools/live_replay (CHÍNH code bot live trên tick quá khứ, sàn giả lập) ở tiến trình con:
+    # live_replay thay mt5/time/datetime cấp module nên KHÔNG được chạy chung tiến trình với bot live.
+    # Tiến trình con: độ ưu tiên thấp, ít luồng AI; báo tiến độ qua file progress.jsonl, kết quả result.json + player.npz.
+    BT_LIVE_ENGINE_LABEL = "🧠 Code Live (chuẩn, giống bot live)"
+    BT_LEGACY_ENGINE_LABEL = "⚡ Engine cũ (nhanh, KHÁC live)"
+    BT_RUNS_KEEP = 10
+
+    def _bt_engine_is_live(self) -> bool:
+        try:
+            return not str(self.bt_engine_var.get()).startswith("⚡")
+        except Exception:
+            return True
+
+    @staticmethod
+    def _bt_child_threads() -> int:
+        """Số luồng AI cho tiến trình backtest: chừa CPU cho bot live (máy từng bị Kernel-Power 41)."""
+        cpu = os.cpu_count() or 4
+        return max(1, min(2, cpu // 4))
+
+    @staticmethod
+    def _bt_build_replay_command(job_path: str) -> tuple:
+        """Lệnh khởi chạy tiến trình backtest. Bản .exe (launcher + core_engine.bin): chạy lại chính chương trình với biến môi trường
+        KRONOS_REPLAY_JOB -> code bot thấy biến này thì chạy backtest rồi thoát (không mở giao diện). Từ mã nguồn: tools/live_replay.py --job."""
+        env = dict(os.environ)
+        env.pop("KRONOS_REPLAY_JOB", None)
+        main_mod = sys.modules.get("__main__")
+        if getattr(sys, "frozen", False):
+            env["KRONOS_REPLAY_JOB"] = job_path
+            return [sys.executable], env
+        if getattr(main_mod, "_CONTAINER_RAW_DICT", None) and getattr(main_mod, "__file__", None):
+            env["KRONOS_REPLAY_JOB"] = job_path
+            return [sys.executable, os.path.abspath(main_mod.__file__)], env
+        tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "live_replay.py")
+        if not os.path.exists(tool):
+            raise FileNotFoundError(f"Không thấy công cụ phát lại: {tool}")
+        return [sys.executable, "-u", tool, "--job", job_path], env
+
+    def _bt_cleanup_old_runs(self):
+        """Giữ BT_RUNS_KEEP lượt backtest gần nhất trong thư mục backtest_runs (chỉ xóa thư mục run_* do app tạo)."""
+        try:
+            root_dir = os.path.join(SETTINGS_DIR, "backtest_runs")
+            runs = sorted(d for d in os.listdir(root_dir) if d.startswith("run_") and os.path.isdir(os.path.join(root_dir, d)))
+            for d in runs[:-self.BT_RUNS_KEEP]:
+                shutil.rmtree(os.path.join(root_dir, d), ignore_errors=True)
+        except Exception:
+            pass
+
+    def _start_live_engine_backtest(self):
+        """Chạy backtest bằng CODE LIVE ở tiến trình riêng theo cấu hình Backtest (không đọc menu live)."""
+        sym = self.bt_sym_var.get().strip()
+        pk = "BTCUSD" if "BTC" in sym.upper() else "XAUUSD"
+        start_s, end_s = self.bt_start_var.get().strip(), self.bt_end_var.get().strip()
+        try:
+            d0, d1 = datetime.strptime(start_s, "%Y-%m-%d"), datetime.strptime(end_s, "%Y-%m-%d")
+            if d1 < d0:
+                raise ValueError("'Đến ngày' phải sau 'Từ ngày'")
+        except ValueError as e:
+            self.show_toast(f"Ngày không hợp lệ ({e}). Nhập dạng YYYY-MM-DD.", is_error=True, duration_ms=3500)
+            return
+        try:
+            capital = float(self.bt_capital_var.get() or 1000)
+        except ValueError:
+            capital = 1000.0
+        cfg = self._get_bt_cfg(pk)
+        for k in self.BT_SECRET_KEYS:
+            cfg.pop(k, None)
+        threads = self._bt_child_threads()
+        run_dir = os.path.join(SETTINGS_DIR, "backtest_runs", datetime.now().strftime("run_%Y%m%d_%H%M%S"))
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            job_path = os.path.join(run_dir, "job.json")
+            with open(job_path, "w", encoding="utf-8") as f:
+                json.dump({"profile": pk, "symbol": sym, "cfg": cfg, "start": start_s, "end": end_s, "capital": capital,
+                           "threads": threads, "seed": 1, "out_dir": run_dir}, f, ensure_ascii=False, indent=1, default=str)
+            cmd, env = self._bt_build_replay_command(job_path)
+            flags = (0x08000000 | 0x00004000) if os.name == "nt" else 0  # CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+            self._bt_stderr_fh = open(os.path.join(run_dir, "stderr.txt"), "w", encoding="utf-8")
+            self._bt_proc = subprocess.Popen(cmd, env=env, cwd=os.getcwd(), stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.DEVNULL, stderr=self._bt_stderr_fh, creationflags=flags)
+        except Exception as e:
+            self._bt_proc = None
+            self._update_bt_status(f"Lỗi khởi chạy backtest code live: {e}", 0)
+            self.show_toast(f"Không khởi chạy được backtest: {e}", is_error=True, duration_ms=4000)
+            self._write_file_log(f"[BACKTEST] Lỗi khởi chạy tiến trình backtest: {e}", is_error=True)
+            return
+        self._bt_run_dir = run_dir
+        self._bt_prog_pos = 0
+        self._bt_last_event = {}
+        self._bt_live_meta = {"pk": pk, "sym": sym, "capital": capital, "start": start_s, "end": end_s, "threads": threads}
+        self._bt_worker_running = True
+        self._bt_cancel_flag = False
+        self._reset_backtest_view_for_run()
+        self._update_bt_status(f"🧠 Đang chạy CODE LIVE {start_s} → {end_s} (tiến trình riêng, {threads} luồng AI, ưu tiên thấp)...", 1)
+        self.log(f"[BACKTEST] Bắt đầu backtest bằng CODE LIVE [{pk} {sym}] {start_s} → {end_s} | thư mục: {run_dir}")
+        self._bt_cleanup_old_runs()
+        self.root.after(700, self._poll_live_bt)
+
+    def _bt_request_cancel_live(self):
+        run_dir = getattr(self, "_bt_run_dir", None)
+        try:
+            if run_dir:
+                with open(os.path.join(run_dir, "cancel"), "w", encoding="utf-8") as f:
+                    f.write("1")
+        except Exception:
+            pass
+        self._update_bt_status("Đang dừng backtest code live...", 0)
+        self.show_toast("Đang dừng Backtest...", is_error=False, duration_ms=2000)
+        self._bt_cancel_deadline = time.time() + 8.0  # quá hạn mà tiến trình chưa tự dừng -> buộc dừng
+
+    def _bt_kill_child(self):
+        proc = getattr(self, "_bt_proc", None)
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    def _bt_read_progress_events(self) -> list:
+        """Đọc các dòng tiến độ MỚI (chỉ dòng hoàn chỉnh) từ progress.jsonl của lượt đang chạy."""
+        events = []
+        path = os.path.join(getattr(self, "_bt_run_dir", "") or "", "progress.jsonl")
+        try:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    f.seek(self._bt_prog_pos)
+                    data = f.read()
+                cut = data.rfind(b"\n")
+                if cut >= 0:
+                    self._bt_prog_pos += cut + 1
+                    for line in data[:cut + 1].splitlines():
+                        if line.strip():
+                            try:
+                                events.append(json.loads(line.decode("utf-8")))
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+        return events
+
+    def _poll_live_bt(self):
+        proc = getattr(self, "_bt_proc", None)
+        if proc is None:
+            return
+        for ev in self._bt_read_progress_events():
+            self._bt_last_event = ev
+            typ = ev.get("type")
+            if typ == "start":
+                prm = ev.get("params", {})
+                self.log(f"[BACKTEST] {ev.get('note', '')} | Thông số chính: " + ", ".join(f"{k}={v}" for k, v in prm.items()))
+            elif typ == "progress":
+                pct = int(ev.get("pct", 0))
+                mins = float(ev.get("mins", 0.0))
+                eta = f" | còn ~{mins * (100 - pct) / pct:.0f} phút" if pct >= 3 else ""
+                stage = ev.get("stage")
+                when = datetime.fromtimestamp(float(ev.get("t", 0)), VN_TZ).strftime("%d/%m %H:%M") if ev.get("t") else ""
+                txt = stage or (f"🧠 Code live: {pct}% | đang ở {when} | {ev.get('closed', 0)} lệnh đã đóng | "
+                                f"{ev.get('analyses', 0)} lần AI | {mins:.1f} phút{eta}")
+                self._update_bt_status(txt, max(pct, 1))
+        deadline = getattr(self, "_bt_cancel_deadline", None)
+        if deadline and time.time() > deadline and proc.poll() is None:
+            self._bt_kill_child()
+        if proc.poll() is None:
+            self.root.after(700, self._poll_live_bt)
+            return
+        # Tiến trình đã kết thúc
+        try:
+            self._bt_stderr_fh.close()
+        except Exception:
+            pass
+        self._bt_proc = None
+        self._bt_worker_running = False
+        self._bt_cancel_deadline = None
+        run_dir = self._bt_run_dir
+        res_path = os.path.join(run_dir, "result.json")
+        last = getattr(self, "_bt_last_event", {}) or {}
+        if os.path.exists(res_path):
+            try:
+                with open(res_path, "r", encoding="utf-8") as f:
+                    res = json.load(f)
+                self._bt_show_live_result(res, run_dir)
+                return
+            except Exception as e:
+                last = {"type": "error", "msg": f"Không đọc được kết quả: {e}"}
+        if last.get("type") == "cancelled" or os.path.exists(os.path.join(run_dir, "cancel")):
+            self._update_bt_status("⏹ Đã dừng backtest code live.", 0)
+            return
+        msg = last.get("msg") or ""
+        if not msg:
+            try:
+                with open(os.path.join(run_dir, "stderr.txt"), "r", encoding="utf-8", errors="replace") as f:
+                    msg = f.read()[-400:].strip()
+            except Exception:
+                msg = ""
+        msg = msg or f"tiến trình thoát mã {proc.returncode}"
+        self._update_bt_status(f"❌ Lỗi backtest code live: {msg[:160]}", 0)
+        self.show_toast(f"Lỗi Backtest: {msg[:120]}", is_error=True, duration_ms=5000)
+        self._write_file_log(f"[BACKTEST] Lỗi backtest code live: {msg} | {last.get('tb', '')}", is_error=True)
+
+    def _bt_show_live_result(self, res: dict, run_dir: str):
+        """Đổ kết quả backtest code live vào bảng lệnh + thẻ KPI + biểu đồ vốn có sẵn của tab Backtest."""
+        capital = float(res.get("capital", 1000.0))
+        is_btc = "BTC" in str(res.get("symbol", "")).upper()
+        contract = 1.0 if is_btc else 100.0
+        closed = sorted(res.get("closed", []), key=lambda c: float(c.get("close_ms", 0)))
+        trades, equity, eq_curve = [], capital, [(0, capital)]
+        for i, c in enumerate(closed):
+            o_dt = datetime.fromtimestamp(float(c["open_ms"]) / 1000.0, VN_TZ)
+            x_dt = datetime.fromtimestamp(float(c["close_ms"]) / 1000.0, VN_TZ)
+            pnl = round(float(c.get("profit", 0.0)), 2)
+            equity += pnl
+            vol = float(c.get("volume", 0.0))
+            sl0 = float(c.get("sl0", 0.0) or 0.0)
+            trades.append({
+                "ticket": f"#{i + 1:04d}", "date": o_dt.strftime("%Y-%m-%d"),
+                "risk_usd": round(abs(float(c["price_open"]) - sl0) * vol * contract, 2) if sl0 > 0 else 0.0,
+                "cost_spread": 0.0, "cost_kind": "LIVE_REPLAY",
+                "in_time": o_dt.strftime("%d/%m %H:%M:%S"), "out_time": x_dt.strftime("%d/%m %H:%M:%S"),
+                "duration": self._format_duration(int((float(c["close_ms"]) - float(c["open_ms"])) / 1000.0)),
+                "type": c.get("type", ""), "lot": f"{vol:.2f}", "in_price": f"{float(c['price_open']):.2f}",
+                "out_price": f"{float(c['price_close']):.2f}", "pnl": pnl,
+                "reason": c.get("reason_label") or c.get("reason", ""), "mt5_ticket": c.get("ticket"),
+            })
+            eq_curve.append((len(trades), round(equity, 2)))
+        self._bt_trades_cache = trades
+        self._bt_equity_points = eq_curve
+        self._bt_last_result = res
+        self._bt_last_run_dir = run_dir
+        self._render_backtest_results(trades, eq_curve, capital)
+        try:
+            self.bt_tree.bind("<Double-1>", self._on_bt_tree_double_click)
+        except Exception:
+            pass
+        sm = res.get("summary", {})
+        n_err = int(res.get("n_errors", 0))
+        err_tag = f" | ⚠️ {n_err} lỗi trong code bot (xem log.txt)" if n_err else ""
+        self._update_bt_status(
+            f"✅ Xong (code live): {sm.get('n', len(trades))} lệnh | lãi ròng {float(sm.get('net', 0.0)):+.2f}$ | "
+            f"{res.get('n_analyses', 0)} lần AI | {float(res.get('minutes', 0.0)):.1f} phút{err_tag} — bấm '🎬 Xem phát lại' hoặc bấm đúp 1 lệnh", 100)
+        self.log(f"[BACKTEST] Xong backtest CODE LIVE: {sm.get('n', 0)} lệnh, lãi ròng {float(sm.get('net', 0.0)):+.2f}$, "
+                 f"PF {sm.get('pf', 0)}, sụt vốn {sm.get('max_dd', 0)}$, lỗi code bot {n_err}. Log: {os.path.join(run_dir, 'log.txt')}")
+
+    def _on_bt_tree_double_click(self, event=None):
+        try:
+            sel = self.bt_tree.selection()
+            if not sel:
+                return
+            no = str(self.bt_tree.item(sel[0], "values")[0]).lstrip("#")
+            tr = self._bt_trades_cache[int(no) - 1]
+            self._open_bt_player(ticket=tr.get("mt5_ticket"))
+        except Exception:
+            pass
+
+    def _open_bt_player(self, ticket=None):
+        """Mở trình phát lại nến (kiểu TradingView) cho lượt backtest code live gần nhất."""
+        res = getattr(self, "_bt_last_result", None)
+        run_dir = getattr(self, "_bt_last_run_dir", None)
+        if not res or not run_dir:
+            self.show_toast("Chưa có kết quả để phát lại: chạy Backtest bằng engine '🧠 Code Live' trước.", is_error=True, duration_ms=3500)
+            return
+        try:
+            from trading_modules.replay_player import ReplayPlayer
+            with np.load(os.path.join(run_dir, "player.npz")) as z:
+                data = {k: z[k] for k in ("sec", "o", "h", "l", "c")}
+            is_btc = "BTC" in str(res.get("symbol", "")).upper()
+            tf = str(res.get("tf") or "M1").strip()
+            old = getattr(self, "_bt_player", None)
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:
+                    pass
+            self._bt_player = ReplayPlayer(
+                self.root, data, res.get("closed", []), res.get("sltp", []), float(res["start_utc"]), float(res["end_utc"]),
+                contract=1.0 if is_btc else 100.0, tf=tf if tf in ("M1", "M5", "M15") else "M1",
+                title=f"🎬 Phát lại Backtest {res.get('symbol', '')} | {len(res.get('closed', []))} lệnh | "
+                      f"lãi ròng {float(res.get('summary', {}).get('net', 0.0)):+.2f}$")
+            if ticket is not None:
+                self._bt_player.jump_to_trade(ticket)
+        except Exception as e:
+            self.show_toast(f"Không mở được trình phát lại: {e}", is_error=True, duration_ms=4000)
+            self._write_file_log(f"[BACKTEST] Lỗi mở trình phát lại: {e}", is_error=True)
 
     def _fetch_or_load_ticks(self, sym: str, start_dt: datetime, end_dt: datetime):
         """
@@ -6689,6 +6992,10 @@ class KronosDesktopApp:
 
     def _on_close_window(self):
         self._app_closing = True
+        try:
+            self._bt_kill_child()
+        except Exception:
+            pass
         # Chốt an toàn: dù bước dọn dẹp nào bị treo (vd. MT5 không phản hồi), tiến trình vẫn tự thoát sau 8s, không chạy ngầm
         try:
             _wd = threading.Timer(8.0, os._exit, args=(0,))
@@ -12728,6 +13035,52 @@ def ensure_single_app_instance():
         except Exception:
             pass
         sys.exit(0)
+
+
+def _run_packed_replay_job_from_env():
+    """Tiến trình con do tab Backtest khởi chạy (biến môi trường KRONOS_REPLAY_JOB, bản .exe / launcher + core_engine.bin):
+    chạy 1 lượt backtest bằng CODE LIVE rồi THOÁT ngay (không mở giao diện, không đụng bot live đang chạy ở tiến trình khác)."""
+    job = os.environ.pop("KRONOS_REPLAY_JOB", "")
+    if not job:
+        return
+    code = 1
+    try:
+        raw = getattr(sys.modules.get("__main__"), "_CONTAINER_RAW_DICT", None)
+        if raw:
+            import marshal
+            try:
+                import argparse  # noqa: F401 (chỉ dùng khi chạy dòng lệnh)
+            except ImportError:
+                sys.modules["argparse"] = types.ModuleType("argparse")
+            for name in ("bt_ai_cache", "run_backtest", "live_replay"):
+                if name not in raw:
+                    raise RuntimeError(f"core_engine.bin thiếu module {name} (cần đóng gói lại bằng tools/binary_packer.py)")
+                m = sys.modules.get(name)
+                if m is None:
+                    m = types.ModuleType(name)
+                    sys.modules[name] = m
+                if not getattr(m, "_packed_loaded", False):
+                    m.__dict__.setdefault("__file__", os.path.join(os.getcwd(), "tools", name + ".py"))
+                    exec(marshal.loads(raw[name]), m.__dict__)
+                    m._packed_loaded = True
+        else:
+            tools_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools")
+            if tools_dir not in sys.path:
+                sys.path.insert(0, tools_dir)
+        import live_replay
+        code = int(live_replay.run_replay_job(job))
+    except BaseException as e:  # noqa: BLE001 - báo lỗi về app qua file tiến độ
+        try:
+            with open(os.path.join(os.path.dirname(job), "progress.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "error", "msg": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()[-3000:]},
+                                   ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    finally:
+        os._exit(code)
+
+
+_run_packed_replay_job_from_env()
 
 
 if __name__ == "__main__":
