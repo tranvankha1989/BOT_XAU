@@ -310,7 +310,7 @@ PARAM_HELP_GUIDE = {
     "structure_conflict_mode": {
         "title": "Xử lý xung đột Cấu Trúc Đa Khung (M5 vs M15)",
         "what_is_it": "Khi khung Scalping (M5) và Khung Phân Tích (M15) cho cấu trúc đối lập nhau (1 khung Tăng, 1 khung Giảm).",
-        "how_to_set": "- neutral (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- scalp: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- analysis: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn neutral khi thị trường lệch pha giữa 2 khung."
+        "how_to_set": "- Trung lập (không chặn) (Mặc định): Trả về Trung Lập. LƯU Ý: khi 2 khung ngược chiều, bộ lọc cấu trúc KHÔNG chặn cả BUY lẫn SELL (lệnh vẫn được vào).\n- Theo khung vào lệnh: Ưu tiên khung M5 (chặn theo cấu trúc M5).\n- Theo khung phân tích AI: Ưu tiên khung M15 (chặn theo cấu trúc M15). Chặt hơn Trung lập khi thị trường lệch pha giữa 2 khung."
     },
     "debug_trace": {
         "title": "Ghi nhật ký debug theo nến (Debug Trace)",
@@ -386,8 +386,8 @@ PARAM_HELP_GUIDE = {
     },
     "rev_loss_mode": {
         "title": "Chế độ xử lý lệnh đang lỗ khi AI đảo chiều (Reverse Loss Mode)",
-        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'wait_be' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'close_if_strong': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'tighten_sl': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
-        "how_to_set": "- 'wait_be' (Mặc định - An toàn theo sóng hồi).\n- 'close_if_strong' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'tighten_sl' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
+        "what_is_it": "Hành vi xử lý khi AI phát hiện xu hướng đã đảo chiều nhưng lệnh hiện tại đang bị âm:\n- 'Chờ giá hồi về Entry rồi thoát' (Mặc định): Giữ nguyên lệnh, dời TP về hòa vốn (Entry + be_plus_price) để chờ giá hồi thoát nhẹ lãi/hòa.\n- 'Cắt lỗ khi đảo chiều mạnh': Đóng lệnh ngay lập tức nếu AI đảo chiều cực mạnh (Đồng thuận ngược ≥ rev_be_consensus và xuất hiện CHoCH cấu trúc ngược).\n- 'Siết SL còn 50%': Siết đường SL hiện tại lại 50% khoảng cách để thu hẹp rủi ro thua lỗ tối đa.",
+        "how_to_set": "- 'Chờ giá hồi về Entry rồi thoát' (Mặc định - An toàn theo sóng hồi).\n- 'Cắt lỗ khi đảo chiều mạnh' (Khuyên dùng khi muốn dứt khoát cắt lệnh khi thị trường bẻ gãy cấu trúc CHoCH).\n- 'Siết SL còn 50%' (Giảm 1/2 rủi ro nhưng vẫn cho lệnh cơ hội hồi)."
     },
     "basket_tp_usd": {
         "title": "Chốt lời chùm lệnh tổng (Basket TP USD)",
@@ -2489,10 +2489,14 @@ class KronosDesktopApp:
         self._add_checkbutton(sec2.content, "PA Fail-Open (Cho phép khi mất tick/nến)", self.pa_fail_open_var, help_key="pa_fail_open")
         self.trend_filter_var = tk.BooleanVar(value=True)
         self._add_checkbutton(sec2.content, "Lọc cấu trúc thị trường BOS/CHoCH (xác nhận 2 nến)", self.trend_filter_var, help_key="trend_filter")
-        self.structure_conflict_mode_var = self._add_labeled_combo(
+        self.structure_conflict_mode_var = self._add_coded_combo(
             sec2.content,
             "Xử lý xung đột Cấu Trúc (M5 vs M15):",
-            ["neutral", "scalp", "analysis"],
+            {
+                "neutral": "Trung lập (không chặn)",
+                "scalp": "Theo khung vào lệnh",
+                "analysis": "Theo khung phân tích AI",
+            },
             "neutral",
             help_key="structure_conflict_mode"
         )
@@ -2544,9 +2548,13 @@ class KronosDesktopApp:
         self.rev_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh chưa BE (%):", "75", help_key="rev_consensus")
         self.rev_be_consensus_var = self._add_labeled_entry(sec3.content, "   Đồng thuận đảo chiều - Lệnh đã BE (0=Tắt, %):", "90", help_key="rev_be_consensus")
         self.rev_min_move_var = self._add_labeled_entry(sec3.content, "   Biên độ ngược chiều (Giá, 0=Tắt):", "0", help_key="rev_min_move")
-        self.rev_loss_mode_var = self._add_labeled_combo(
+        self.rev_loss_mode_var = self._add_coded_combo(
             sec3.content, "   Chế độ xử lý lệnh đang lỗ:",
-            ["wait_be", "close_if_strong", "tighten_sl"],
+            {
+                "wait_be": "Chờ giá hồi về Entry rồi thoát",
+                "close_if_strong": "Cắt lỗ khi đảo chiều mạnh",
+                "tighten_sl": "Siết SL còn 50%",
+            },
             "wait_be",
             help_key="rev_loss_mode"
         )
@@ -7182,6 +7190,43 @@ class KronosDesktopApp:
         entry.bind("<Return>", lambda e: self.save_user_settings())
         self.__dict__.setdefault("_param_rows", {})[str(var)] = (row, entry)
         return var
+
+    def _add_coded_combo(self, parent, label_text, code_labels: dict, default_code: str, help_key=None):
+        """Ô chọn hiển thị nhãn tiếng Việt, còn biến trả về giữ MÃ lưu cấu hình (code đọc mã như cũ).
+        code_labels: {mã: nhãn tiếng Việt}. Giá trị lạ (không có trong bảng) được giữ nguyên."""
+        code_var = tk.StringVar(value=default_code)
+        label_of = dict(code_labels)
+        code_of = {v: k for k, v in label_of.items()}
+        label_var = self._add_labeled_combo(parent, label_text, list(label_of.values()),
+                                            label_of.get(default_code, default_code), help_key=help_key)
+        rows = self.__dict__.setdefault("_param_rows", {})
+        if str(label_var) in rows:
+            rows[str(code_var)] = rows[str(label_var)]  # cây cha/con tra theo biến mã
+        busy = {"on": False}
+
+        def _from_label(*_a):
+            if busy["on"]:
+                return
+            busy["on"] = True
+            try:
+                lbl = label_var.get()
+                code_var.set(code_of.get(lbl, lbl))
+            finally:
+                busy["on"] = False
+
+        def _from_code(*_a):
+            if busy["on"]:
+                return
+            busy["on"] = True
+            try:
+                c = str(code_var.get()).strip()
+                label_var.set(label_of.get(c, label_of.get(c.lower(), c)))
+            finally:
+                busy["on"] = False
+
+        label_var.trace_add("write", _from_label)
+        code_var.trace_add("write", _from_code)
+        return code_var
 
     def _add_labeled_combo(self, parent, label_text, values, default_val, combo_width=None, help_key=None):
         row = tk.Frame(parent, bg=PANEL_BG)
