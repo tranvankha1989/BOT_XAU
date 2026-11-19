@@ -3705,6 +3705,10 @@ class KronosDesktopApp:
             status_box, text="🎬 Xem phát lại", bg="#24203a", fg="#c4b5fd", font=("Segoe UI", 8, "bold"),
             relief=tk.FLAT, padx=7, pady=0, cursor="hand2", command=self._open_bt_player
         ).pack(side=tk.RIGHT, padx=(4, 4))
+        tk.Button(
+            status_box, text="⏯ Tạm dừng / Phát tiếp", bg="#3a3220", fg="#ffd54f", font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT, padx=7, pady=0, cursor="hand2", command=self._bt_toggle_pause
+        ).pack(side=tk.RIGHT, padx=(4, 0))
         if not hasattr(self, "bt_engine_var"):
             self.bt_engine_var = tk.StringVar(value=self.BT_LIVE_ENGINE_LABEL)
         eng_cb = ttk.Combobox(
@@ -4491,6 +4495,30 @@ class KronosDesktopApp:
         self.log(f"[BACKTEST] Xong backtest CODE LIVE: {sm.get('n', 0)} lệnh, lãi ròng {float(sm.get('net', 0.0)):+.2f}$, "
                  f"PF {sm.get('pf', 0)}, sụt vốn {sm.get('max_dd', 0)}$, lỗi code bot {n_err}. Log: {os.path.join(run_dir, 'log.txt')}")
 
+    def _on_bt_tree_select(self, event=None):
+        """Bấm 1 lệnh trong sổ lệnh Backtest -> tô lệnh đó lên biểu đồ màn hình Backtest (tạm dừng, như tab live)."""
+        try:
+            p = getattr(self, "_bt_player", None)
+            sel = self.bt_tree.selection()
+            if p is None or getattr(p, "_closed", True) or not sel:
+                return
+            no = str(self.bt_tree.item(sel[0], "values")[0]).lstrip("#")
+            tr = self._bt_trades_cache[int(no) - 1]
+            if tr.get("mt5_ticket") is not None:
+                self._bt_set_workspace_visible(True)
+                p.focus_trade(tr.get("mt5_ticket"))
+        except Exception:
+            pass
+
+    def _bt_toggle_pause(self):
+        """Nút ⏸ Tạm dừng / ▶ Phát tiếp ở thanh Backtest: dừng/chạy biểu đồ để kiểm tra (tiến trình tính vẫn chạy nền)."""
+        p = getattr(self, "_bt_player", None)
+        if p is None or getattr(p, "_closed", True):
+            self.show_toast("Chưa có biểu đồ Backtest đang chạy.", is_error=True, duration_ms=2500)
+            return
+        self._bt_set_workspace_visible(True)
+        p.toggle_play()
+
     def _on_bt_tree_double_click(self, event=None):
         try:
             sel = self.bt_tree.selection()
@@ -4598,6 +4626,11 @@ class KronosDesktopApp:
                                        contract=float(contract), tf=tf, parent=self.bt_ws_body, live=live, speed=60)
         self._bt_player_run = run_dir
         self._bt_table_n = -1
+        try:
+            self.bt_tree.bind("<<TreeviewSelect>>", self._on_bt_tree_select)
+            self.bt_tree.bind("<Double-1>", self._on_bt_tree_double_click)
+        except Exception:
+            pass
         if not getattr(self, "_bt_view_loop_on", False):
             self._bt_view_loop_on = True
             self.root.after(400, self._bt_view_loop)

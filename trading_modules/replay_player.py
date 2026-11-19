@@ -157,6 +157,7 @@ class ReplayPlayer:
         self._slider_lock = False
         self._closed = False
         self._last_idx = -1
+        self.focus_ticket = None  # lệnh đang được tô (bấm trong sổ lệnh) - chỉ xem, không đổi thời điểm phát
 
         if self.embedded:
             self.win = tk.Frame(parent, bg=self.BG)
@@ -199,7 +200,7 @@ class ReplayPlayer:
                       relief=tk.FLAT, font=("Segoe UI", 9, "bold"), padx=8, cursor="hand2")
         tk.Button(ctl, text="⏮", command=self.go_start, **bstyle).pack(side=tk.LEFT, padx=(8, 2))
         tk.Button(ctl, text="◀ 1 nến", command=self.step_back, **bstyle).pack(side=tk.LEFT, padx=2)
-        self.play_btn = tk.Button(ctl, text="▶ Phát", command=self.toggle_play, width=9, **bstyle)
+        self.play_btn = tk.Button(ctl, text="▶ Phát tiếp", command=self.toggle_play, width=11, **bstyle)
         self.play_btn.pack(side=tk.LEFT, padx=2)
         tk.Button(ctl, text="1 nến ▶", command=self.step_forward, **bstyle).pack(side=tk.LEFT, padx=2)
         tk.Button(ctl, text="Lệnh kế ⏭", command=self.next_trade, **bstyle).pack(side=tk.LEFT, padx=2)
@@ -359,15 +360,40 @@ class ReplayPlayer:
         if self.finished and self.t >= self.end_utc - 0.5:
             self.t = self.start_utc
         self.playing = not self.playing
+        if self.playing:
+            self.clear_focus()  # phát tiếp -> bỏ tô lệnh, biểu đồ quay về thời điểm đang phát
         self._last = time.perf_counter()
-        self.play_btn.config(text="⏸ Dừng" if self.playing else "▶ Phát")
+        self.play_btn.config(text="⏸ Tạm dừng" if self.playing else "▶ Phát tiếp")
         self._mark()
 
     def pause(self):
         self.playing = False
         self.waiting = False
-        self.play_btn.config(text="▶ Phát")
+        self.play_btn.config(text="▶ Phát tiếp")
         self._mark()
+
+    def focus_trade(self, ticket) -> bool:
+        """Tô 1 lệnh (bấm trong sổ lệnh): TẠM DỪNG, kéo biểu đồ về khung chứa lệnh, tô thời gian mở lệnh + SL/TP từng lần dời.
+        Không đổi thời điểm đang phát (bảng lệnh giữ nguyên). Bấm Phát tiếp / tua -> bỏ tô."""
+        tr = next((t for t in self._closed_recs if int(t["ticket"]) == int(ticket) and t["_cs"] <= self.t + 1e-6), None)
+        if tr is None:
+            tr = next((t for t in self.trades if int(t["ticket"]) == int(ticket) and t["_os"] <= self.t), None)
+        if tr is None:
+            return False
+        if self.playing:
+            self.pause()
+        self.focus_ticket = int(ticket)
+        self._focus_tr = tr
+        self._yr = None
+        self._mark()
+        return True
+
+    def clear_focus(self):
+        if self.focus_ticket is not None:
+            self.focus_ticket = None
+            self._focus_tr = None
+            self._yr = None
+            self._mark()
 
     def set_speed(self, txt):
         v = parse_speed(txt)
@@ -392,6 +418,7 @@ class ReplayPlayer:
         self._mark()
 
     def seek(self, t: float, pause: bool = True):
+        self.clear_focus()
         lo = float(self.sec[0]) if len(self.sec) else self.start_utc
         self.t = float(min(max(t, lo), self._limit()))
         if pause:
@@ -533,18 +560,29 @@ class ReplayPlayer:
         b, fo, fh, fl, fc = forming_bar(self.bars, self.h, self.l, self.c, idx)
         tf = TF_CHOICES[self.tf_name]
         n = self.n_visible
+        cur_b = b
+        ftr = getattr(self, "_focus_tr", None) if self.focus_ticket is not None else None
+        if ftr is not None:
+            # Khung nhìn ôm trọn lệnh đang tô (chỉ dùng nến TRƯỚC thời điểm đang phát: không nhìn trước)
+            starts_all = self.bars["start"]
+            ob = max(int(np.searchsorted(starts_all, ftr["_os"], side="right")) - 1, 0)
+            cb = cur_b if not math.isfinite(ftr["_cs"]) else max(int(np.searchsorted(starts_all, ftr["_cs"], side="right")) - 1, ob)
+            pad = max(5, int(n * 0.15))
+            n = int(min(self.MAX_BARS, max(n, cb - ob + 2 * pad + 1)))
+            b = min(cur_b, cb + pad)
         first = max(0, b - n + 1)
         ks = np.arange(first, b + 1)
         bo, bh, bl, bc = (self.bars[k][first:b + 1].copy() for k in ("o", "h", "l", "c"))
-        bo[-1], bh[-1], bl[-1], bc[-1] = fo, fh, fl, fc
+        if b == cur_b:
+            bo[-1], bh[-1], bl[-1], bc[-1] = fo, fh, fl, fc
         m = len(ks)
         t_ms = self.t * 1000.0
         cur_start = float(self.bars["start"][b])
 
         ai_idx = active_index(self._ai_t, self.t)
-        ai = self.ai_events[ai_idx] if ai_idx >= 0 else None
+        ai = self.ai_events[ai_idx] if ai_idx >= 0 and ftr is None else None  # đang tô lệnh: ẩn dự báo/vùng canh cho gọn
         z_idx = active_index(self._zone_t, self.t)
-        zone = self.zones[z_idx] if z_idx >= 0 and not self.zones[z_idx].get("clear") else None
+        zone = self.zones[z_idx] if z_idx >= 0 and not self.zones[z_idx].get("clear") and ftr is None else None
         pred = (ai.get("pred") or []) if ai else []
         ahead = 0
         if pred:
@@ -561,6 +599,11 @@ class ReplayPlayer:
                     lo, hi = min(lo, v), max(hi, v)
         for p in pred:
             lo, hi = min(lo, float(p[3])), max(hi, float(p[2]))
+        if ftr is not None:
+            for _ms, sl_v, tp_v in self.sltp.get(int(ftr["ticket"]), []):
+                for v in (sl_v, tp_v):
+                    if v and v > 0:
+                        lo, hi = min(lo, v), max(hi, v)
         if zone and zone.get("lo") is not None:
             lo, hi = min(lo, float(zone["lo"])), max(hi, float(zone["hi"]))
         pad = max((hi - lo) * 0.08, 0.5)
@@ -613,6 +656,29 @@ class ReplayPlayer:
             cv.create_text(zx + 4, Y(float(zone["hi"])) - 2, text=f"Vùng canh {zone.get('action', '')} "
                            f"[{float(zone['lo']):.2f} - {float(zone['hi']):.2f}]", anchor="sw", fill=zcol,
                            font=("Consolas", 8), tags="dyn")
+
+        if ftr is not None:
+            starts_v = self.bars["start"]
+
+            def x_of(sec_v):
+                k = int(np.searchsorted(starts_v, sec_v, side="right")) - 1
+                return X(k - first)
+
+            fx0 = max(x0, x_of(ftr["_os"]) - slot / 2.0)
+            fx1 = min(x1, (x_of(ftr["_cs"]) if math.isfinite(ftr["_cs"]) else X(m - 1)) + slot / 2.0)
+            cv.create_rectangle(fx0, y0, fx1, y1, fill="#5c6bc0", outline="", stipple="gray25", tags="dyn")
+            segs = self.sltp.get(int(ftr["ticket"]), [])
+            t_end = ftr["_cs"] if math.isfinite(ftr["_cs"]) else self.t
+            for k_s, (ms_s, sl_v, tp_v) in enumerate(segs):
+                s0 = ms_s / 1000.0
+                s1 = segs[k_s + 1][0] / 1000.0 if k_s + 1 < len(segs) else t_end
+                if s0 > t_end:
+                    break
+                xa, xb = max(x0, x_of(s0)), min(x1, x_of(min(s1, t_end)) + slot / 2.0)
+                for v, col, lbl in ((sl_v, self.DOWN, "SL"), (tp_v, self.UP, "TP")):
+                    if v and v > 0:
+                        cv.create_line(xa, Y(v), xb, Y(v), fill=col, width=2, dash=(6, 3), tags="dyn")
+                        cv.create_text(xa + 2, Y(v) - 2, text=f"{lbl} {v:.2f}", anchor="sw", fill=col, font=("Consolas", 8, "bold"), tags="dyn")
 
         cv.tag_lower("dyn")  # lưới + vùng nằm dưới nến; lệnh/giá vẽ sau nên nằm trên
 
@@ -678,6 +744,8 @@ class ReplayPlayer:
             rc = rel_of(t["_cs"]) if closed else None
             if closed and rc < 0:
                 continue
+            if ro > m - 1:
+                continue
             col = self.BUY if t["type"] == "BUY" else self.SELL
             yo = Y(float(t["price_open"]))
             if ro >= 0:
@@ -687,7 +755,7 @@ class ReplayPlayer:
             else:
                 xo = x0
             if closed:
-                xc, yc = X(rc), Y(float(t["price_close"]))
+                xc, yc = min(X(rc), x1), Y(float(t["price_close"]))
                 pcol = self.UP if float(t["profit"]) >= 0 else self.DOWN
                 cv.create_line(xo, yo, xc, yc, fill=pcol, dash=(3, 2), tags="dyn")
                 cv.create_line(xc - 4, yc - 4, xc + 4, yc + 4, fill=pcol, width=2, tags="dyn")
@@ -715,6 +783,19 @@ class ReplayPlayer:
                 cv.create_text(lx, yo - 9, text=f"{t['type']} {float(t['volume']):.2f} @ {float(t['price_open']):.2f} | {fp:+.2f}$",
                                anchor="w", fill=self.UP if fp >= 0 else self.DOWN, font=("Consolas", 8, "bold"), tags="dyn")
 
+        if ftr is not None:
+            closed_f = math.isfinite(ftr["_cs"])
+            pnl_f = float(ftr["profit"]) if closed_f else floating_pnl(ftr, fc, self.contract)
+            txt = (f"🔎 Lệnh #{ftr['ticket']} {ftr['type']} {float(ftr['volume']):.2f} | Vào {vn_str(ftr['_os'], '%H:%M:%S')} @ {float(ftr['price_open']):.2f}"
+                   + (f" → Ra {vn_str(ftr['_cs'], '%H:%M:%S')} @ {float(ftr['price_close']):.2f}" if closed_f else " | đang mở")
+                   + f" | {pnl_f:+.2f}$" + (f" | {ftr.get('reason_label') or ftr.get('reason', '')}" if closed_f else ""))
+            fcol = self.UP if pnl_f >= 0 else self.DOWN
+            tid = cv.create_text(x0 + 8, y0 + 4, text=txt, anchor="nw", fill=fcol, font=("Consolas", 9, "bold"), tags="dyn")
+            bb = cv.bbox(tid)
+            if bb:
+                cv.create_rectangle(bb[0] - 4, bb[1] - 2, bb[2] + 4, bb[3] + 2, fill="#0e1118", outline=fcol, tags="dyn")
+                cv.tag_raise(tid)
+
         # giá hiện tại
         yp = Y(fc)
         cv.create_line(x0, yp, x1, yp, fill=self.PRICE, dash=(2, 2), tags="dyn")
@@ -727,6 +808,8 @@ class ReplayPlayer:
         flt = sum(floating_pnl(t, fc, self.contract) for t in open_tr)
         info = (f"⏱ {vn_str(self.t)}  |  Giá {fc:.2f}  |  Đang mở: {len(open_tr)} lệnh ({flt:+.2f}$)  |  "
                 f"Đã đóng: {n_closed} lệnh, {realized:+.2f}$  |  {self._speed_label()}  |  {self.tf_name}")
+        if ftr is not None:
+            info += "  |  🔎 đang xem 1 lệnh (▶ Phát tiếp để chạy tiếp)"
         if self.live and not self.finished and self.frontier is not None:
             info += f"  |  🧠 đã tính tới {vn_str(self.frontier, '%d/%m %H:%M:%S')}"
             if self.waiting and self.playing:

@@ -160,6 +160,28 @@ class TestPlayerLive(unittest.TestCase):
         p.render()
         p.close()
 
+    def test_focus_trade_highlight_and_pause(self):
+        p = rp.ReplayPlayer(self.root, series(), [{"ticket": 7, "type": "SELL", "open_ms": (T0 + 600) * 1000, "close_ms": (T0 + 900) * 1000,
+                                                  "price_open": 4100.5, "price_close": 4100.1, "volume": 0.02, "profit": 0.8,
+                                                  "reason_label": "TP đã dời về hòa"}],
+                            [((T0 + 600) * 1000, 7, 4103.0, 4096.0), ((T0 + 840) * 1000, 7, 4103.0, 4100.15)], T0 + 60, T0 + 3500)
+        p.seek(T0 + 3000)
+        p.play()
+        self.assertEqual(p.play_btn.cget("text"), "⏸ Tạm dừng")
+        self.assertFalse(p.focus_trade(999))  # lệnh không có -> không làm gì
+        self.assertTrue(p.focus_trade(7))
+        self.assertFalse(p.playing)  # bấm 1 lệnh -> tạm dừng để xem
+        self.assertEqual(p.play_btn.cget("text"), "▶ Phát tiếp")
+        self.assertAlmostEqual(p.t, T0 + 3000)  # không đổi thời điểm đang phát (bảng lệnh giữ nguyên)
+        p.render()
+        texts = [p.canvas.itemcget(i, "text") for i in p.canvas.find_withtag("dyn") if p.canvas.type(i) == "text"]
+        self.assertTrue(any("Lệnh #7 SELL" in x and "TP đã dời về hòa" in x for x in texts))
+        self.assertTrue(any(x.startswith("TP 4100.15") for x in texts))  # SL/TP theo từng lần dời
+        self.assertTrue(any(x.startswith("TP 4096.00") for x in texts))
+        p.toggle_play()  # phát tiếp -> bỏ tô
+        self.assertIsNone(p.focus_ticket)
+        p.close()
+
     def test_busy_ui_keeps_real_speed(self):
         # App bận (nhịp vẽ cách nhau 1 giây): 10x vẫn phải tiến ~10 giây biểu đồ, không bị chặn 0.25s/nhịp như trước
         p = rp.ReplayPlayer(self.root, series(), [], [], T0 + 60, T0 + 3500)
@@ -271,6 +293,33 @@ class TestAppWorkspace(unittest.TestCase):
         self.assertEqual(rendered[-1], (1, False))  # ⏭ Cuối -> bảng hiện hết
         app._bt_close_ws_player()
         self.assertIsNone(app._bt_player)
+
+    def test_tree_select_focuses_trade_and_pause_button(self):
+        app = self.app
+        run_dir = self.tmp
+        np.savez_compressed(os.path.join(run_dir, "player.npz"), **series())
+        from tkinter import ttk
+        tree = ttk.Treeview(self.root, columns=("a", "b"), show="headings")
+        app.bt_tree = tree
+        app.show_toast = mock.Mock()
+        with mock.patch.object(app.root, "after", lambda *a, **k: None):
+            p = app._bt_make_ws_player(run_dir, T0 + 60, T0 + 3500, 100.0, "M1", live=False,
+                                       closed=[{"ticket": 9, "type": "BUY", "open_ms": (T0 + 100) * 1000, "close_ms": (T0 + 200) * 1000,
+                                                "price_open": 4100.0, "price_close": 4101.0, "volume": 0.02, "profit": 2.0}])
+        p.seek(T0 + 1000)
+        app._bt_trades_cache = [{"ticket": "#0001", "mt5_ticket": 9}]
+        iid = tree.insert("", "end", values=("#0001", "x"))
+        tree.selection_set(iid)
+        app._on_bt_tree_select()
+        self.assertEqual(p.focus_ticket, 9)
+        app._bt_toggle_pause()
+        self.assertTrue(p.playing)
+        self.assertIsNone(p.focus_ticket)
+        app._bt_toggle_pause()
+        self.assertFalse(p.playing)
+        app._bt_close_ws_player()
+        app._bt_toggle_pause()  # không có biểu đồ -> báo, không lỗi
+        app.show_toast.assert_called_once()
 
     def test_render_results_light_mode_skips_status_and_report(self):
         app = self.app
