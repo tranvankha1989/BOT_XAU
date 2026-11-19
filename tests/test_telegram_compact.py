@@ -189,18 +189,54 @@ class TestPlainTextAndChart(unittest.TestCase):
         self.assertEqual(sent["reply_markup"]["inline_keyboard"][0][0]["text"], "Báo cáo")
         self.assertEqual(data["text"], "🧠 VÀNG\n🟢 TÍN HIỆU")  # không sửa dict gốc
 
-    def test_nut_ai_gui_anh_truoc_roi_chu(self):
+    def test_nut_ai_gui_1_tin_anh_kem_chu_va_nut(self):
+        app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
+                       _telegram_send_photo=mock.Mock(return_value={"ok": True, "result": {"message_id": 50}}),
+                       _telegram_send_with_keyboard=mock.Mock(),
+                       _generate_telegram_ai_report=mock.Mock(return_value="R"))
+        app._handle_telegram_callback({"id": "cq1", "data": "tg_ai", "message": {"message_id": 7}}, "1", "T")
+        args, kw = app._telegram_send_photo.call_args
+        self.assertEqual(args, ("T", "1", b"PNG", "R"))
+        self.assertIn("inline_keyboard", kw["reply_markup"])
+        app._telegram_send_with_keyboard.assert_not_called()
+        self.assertEqual(app._tg_last_kb_msg_id, 50)
+
+    def test_gui_anh_loi_thi_gui_chu(self):
         order = []
         app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
-                       _get_profile_cfg=mock.Mock(return_value={"symbol": "XAUUSDm"}),
                        _telegram_send_photo=mock.Mock(side_effect=lambda *a, **k: order.append("photo")),
                        _telegram_send_with_keyboard=mock.Mock(side_effect=lambda *a, **k: order.append("text")),
                        _generate_telegram_ai_report=mock.Mock(return_value="R"))
-        app._handle_telegram_callback({"id": "cq1", "data": "tg_ai", "message": {"message_id": 7}}, "1", "T")
+        app._telegram_send_ai_report("T", "1")
         self.assertEqual(order, ["photo", "text"])
-        args = app._telegram_send_photo.call_args[0]
-        self.assertEqual(args[:3], ("T", "1", b"PNG"))
-        self.assertIn("VÀNG (XAUUSDm)", args[3])
+
+    def test_chu_qua_dai_thi_anh_rieng_roi_chu(self):
+        app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
+                       _telegram_send_photo=mock.Mock(return_value={"ok": True}),
+                       _telegram_send_with_keyboard=mock.Mock(),
+                       _generate_telegram_ai_report=mock.Mock(return_value="x" * 1100))
+        app._telegram_send_ai_report("T", "1")
+        self.assertIn("Biểu đồ VÀNG", app._telegram_send_photo.call_args[0][3])
+        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "x" * 1100)
+
+    def test_chup_khung_scalp_roi_tra_lai_khung_cu(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        fig = Figure(figsize=(3, 2), dpi=50)
+        FigureCanvasAgg(fig)
+        fig.add_subplot(111).plot([1, 2])
+        seen = []
+        views = {"XAUUSD": "M5"}
+        app = make_app(fig=fig, active_profile_key="XAUUSD", chart_view_tf_by_profile=views,
+                       tf_var=_Var("M1"), user_zoomed=True, saved_xlim=(1, 2), saved_ylim=(3, 4),
+                       _request_canvas_redraw=lambda full=True: None)
+        app._refresh_realtime_chart = lambda force_full_redraw=False: seen.append((views["XAUUSD"], app.user_zoomed))
+        png = app._tg_capture_chart_png()
+        self.assertEqual(png[1:4], b"PNG")
+        self.assertEqual(seen, [("M1", False), ("M5", True)])  # vẽ M1 để chụp, rồi trả lại M5 + thu phóng cũ
+        self.assertEqual((views["XAUUSD"], app.saved_xlim, app.saved_ylim), ("M5", (1, 2), (3, 4)))
 
     def test_chup_loi_van_gui_chu(self):
         app = make_app(_tg_capture_chart_png=mock.Mock(side_effect=RuntimeError("x")), _telegram_send_photo=mock.Mock(),

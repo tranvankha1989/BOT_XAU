@@ -328,6 +328,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khi tổng lãi/lỗ ĐÃ CHỐT trong ngày đang âm, bot đóng 1 lệnh đang lãi (chưa dời BE) có lãi >= phần lỗ cần gỡ, để gỡ vốn trước khi giá quay lại hòa vốn. Mỗi lần đóng cách nhau tối thiểu 20 giây.",
         "how_to_set": "- TẮT (Mặc định).\n- BẬT: ưu tiên gỡ vốn trong ngày; đổi lại có thể cắt sớm lệnh lẽ ra chạy tới TP. Mới kiểm thử phát lại 2 ngày, chưa đủ bằng chứng."
     },
+    "stack_half_be": {
+        "title": "Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+",
+        "what_is_it": "Khi số lệnh CÙNG CHIỀU chưa dời BE tăng lên n >= 2, bot chọn n/2 lệnh (làm tròn xuống) có giá vào XẤU NHẤT (BUY: giá cao nhất, SELL: giá thấp nhất) và cho các lệnh đó thoát ở hòa vốn: dời TP về Entry + 'Giá BE+', giá hồi về là đóng. Các lệnh giá đẹp giữ nguyên SL/TP để chạy tiếp.\n- 2 lệnh: thoát 1 lệnh xấu, giữ 1.\n- 3 lệnh: thoát lệnh xấu nhất, giữ 2.\n- 4 lệnh: thoát 2, giữ 2 (6 lệnh: thoát 3, giữ 3).\nChỉ chọn lại khi số lệnh TĂNG; lệnh xấu đóng xong không kéo theo lệnh khác.",
+        "how_to_set": "- TẮT (Mặc định).\n- BẬT: khi dùng nhồi lệnh (Số lệnh tối đa >= 2), nhất là chế độ 'Nhồi giá tốt hơn (DCA)'. Đổi lại: khi giá chạy thẳng tới TP, các lệnh bị chọn chỉ lãi khoảng BE+ thay vì đủ TP. Chưa kiểm chứng bằng phát lại nhiều ngày."
+    },
     "structure_direction": {
         "title": "Hướng vào lệnh theo cấu trúc đỉnh/đáy (Thử nghiệm)",
         "what_is_it": "Khi bật, hướng vào lệnh do cấu trúc đỉnh/đáy xoay M5 quyết định: sóng giảm thì BÁN khi giá hồi về kháng cự và bị từ chối, chỉ MUA khi giá phá đỉnh hồi (đổi cấu trúc); sóng tăng làm ngược lại; đi ngang thì không vào. AI Kronos vẫn phải xác nhận biên độ dự báo.",
@@ -499,6 +504,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Mã ID định danh cá nhân hoặc ID nhóm Telegram của bạn để bot biết gửi tin nhắn cho ai.",
         "how_to_set": "- Mở Telegram tìm kiếm @userinfobot hoặc @RawDataBot, gửi tin nhắn bất kỳ để lấy ID của bạn (dãy số dạng 123456789) và dán vào đây."
     },
+    "telegram_admin_ids": {
+        "title": "ID người điều khiển (chỉ người này được Bật/Tắt bot)",
+        "what_is_it": "ID tài khoản Telegram CÁ NHÂN được phép bật/tắt bot giao dịch (nút Bật/Dừng, lệnh /pause, /resume...), kể cả khi bấm trong nhóm. Người khác trong nhóm chỉ xem được thông báo, Báo cáo, Phân tích AI.\n- Để trống: Chat ID là chat riêng thì như cũ (chính bạn); Chat ID là NHÓM (số âm) thì không ai bật/tắt được qua Telegram.\n- Có thể điền nhiều ID, cách nhau dấu phẩy. Bạn cũng nhắn riêng cho bot để điều khiển được.",
+        "how_to_set": "- Nhắn riêng cho @getidsbot hoặc @userinfobot để lấy ID của bạn (số dương, dạng 123456789) rồi dán vào đây.\n- Không dán ID nhóm (số âm) vào ô này."
+    },
     "telegram_notify_open": {
         "title": "Thông báo khi mở lệnh mới",
         "what_is_it": "Gửi tin nhắn chi tiết kèm giá Entry, SL, TP và tín hiệu AI mỗi khi bot vào một lệnh mới.",
@@ -543,6 +553,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "stack_half_be": False,
         "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
@@ -576,6 +587,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "telegram_enabled": False,
         "telegram_bot_token": "",
         "telegram_chat_id": "",
+        "telegram_admin_ids": "",
         "telegram_notify_open": True,
         "telegram_notify_close": True,
     },
@@ -610,6 +622,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "stack_half_be": False,
         "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
@@ -643,6 +656,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "telegram_enabled": False,
         "telegram_bot_token": "",
         "telegram_chat_id": "",
+        "telegram_admin_ids": "",
         "telegram_notify_open": True,
         "telegram_notify_close": True,
     },
@@ -2584,6 +2598,8 @@ class KronosDesktopApp:
         ).pack(fill=tk.X)
         self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
+        self.stack_half_be_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec3.content, "Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+", self.stack_half_be_var, help_key="stack_half_be")
         self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "15", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
             sec3.content, "   Xử lý khi vượt thời gian:",
@@ -2683,6 +2699,7 @@ class KronosDesktopApp:
         self._add_checkbutton(sec5.content, "Bật thông báo Telegram:", self.telegram_enabled_var, help_key="telegram_enabled")
         self.telegram_bot_token_var = self._add_labeled_entry(sec5.content, "Bot Token:", "", show="*", entry_width=18, help_key="telegram_bot_token")
         self.telegram_chat_id_var = self._add_labeled_entry(sec5.content, "Chat ID:", "", entry_width=18, help_key="telegram_chat_id")
+        self.telegram_admin_ids_var = self._add_labeled_entry(sec5.content, "ID người điều khiển:", "", entry_width=18, help_key="telegram_admin_ids")
 
         # Nút Kiểm tra kết nối Telegram
         test_tg_btn = tk.Button(
@@ -3937,7 +3954,7 @@ class KronosDesktopApp:
     BT_SETTINGS_FILE_NAME = "backtest_settings.json"
     # Khóa không thuộc cấu hình backtest: bí mật (token), kết nối/thông báo, không ảnh hưởng kết quả, hoặc lấy từ thanh Backtest (Mã, Lot)
     BT_EXCLUDED_KEYS = frozenset({
-        "hf_token", "hf_space", "engine", "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
+        "hf_token", "hf_space", "engine", "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids",
         "telegram_notify_open", "telegram_notify_close", "mt5_path", "magic_number", "ai_threads", "debug_trace",
         "fast_sl_cooldown_mins", "symbol", "lot",
     })
@@ -6230,6 +6247,7 @@ class KronosDesktopApp:
             "use_confidence_gate": self.use_confidence_gate_var,
             "debug_trace": self.debug_trace_var,
             "recovery_close": self.recovery_close_var,
+            "stack_half_be": self.stack_half_be_var,
             "structure_direction": self.structure_direction_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
@@ -6263,6 +6281,7 @@ class KronosDesktopApp:
             "telegram_enabled": self.telegram_enabled_var,
             "telegram_bot_token": self.telegram_bot_token_var,
             "telegram_chat_id": self.telegram_chat_id_var,
+            "telegram_admin_ids": self.telegram_admin_ids_var,
             "telegram_notify_open": self.telegram_notify_open_var,
             "telegram_notify_close": self.telegram_notify_close_var,
         }
@@ -6433,7 +6452,7 @@ class KronosDesktopApp:
     # Thông số riêng từng máy: KHÔNG chép khi Xuất / Nhập file cấu hình (người dùng yêu cầu 19/11, tránh đè dữ liệu máy khác):
     # Magic, đường dẫn MT5, số luồng AI (Mục 1) và toàn bộ Mục 5 Telegram (mỗi máy giữ bot / nhóm Telegram riêng)
     MACHINE_LOCAL_KEYS = ("magic_number", "mt5_path", "ai_threads",
-                          "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close")
+                          "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close")
     # Trạng thái riêng từng máy (tab đang mở, chiều cao bảng dưới, bot đang chạy tự động để bật lại sau cập nhật): cũng không chép
     MACHINE_LOCAL_STATE_KEYS = ("last_active_tab", "bottom_panel_height", "auto_running_profiles")
 
@@ -6630,7 +6649,7 @@ class KronosDesktopApp:
                     "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price",
                     "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles",
                     "engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "realtime_chart",
-                    "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"
+                    "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"
                 )
                 for pk in ("XAUUSD", "BTCUSD"):
                     for sk in shared_keys:
@@ -6760,9 +6779,9 @@ class KronosDesktopApp:
     SETTINGS_SECTION_MAP = {
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
         2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
-        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close"]),
+        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
         4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
-        5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
+        5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
     }
 
     def reset_section_settings(self, section_num: int):
@@ -6788,6 +6807,8 @@ class KronosDesktopApp:
                     continue  # Không xóa Telegram bot token khi reset
                 if k == "telegram_chat_id" and cur_tg_chat:
                     continue  # Không xóa Telegram chat ID khi reset
+                if k == "telegram_admin_ids" and str(getattr(self, "telegram_admin_ids_var", tk.StringVar()).get()).strip():
+                    continue  # Không xóa ID người điều khiển khi reset
                 if k in smap and k in defaults:
                     smap[k].set(defaults[k])
                     if pk in self.profile_settings:
@@ -6823,6 +6844,8 @@ class KronosDesktopApp:
                     continue  # Không xóa Telegram bot token khi reset
                 if k == "telegram_chat_id" and cur_tg_chat:
                     continue  # Không xóa Telegram chat ID khi reset
+                if k == "telegram_admin_ids" and str(getattr(self, "telegram_admin_ids_var", tk.StringVar()).get()).strip():
+                    continue  # Không xóa ID người điều khiển khi reset
                 if k in smap:
                     smap[k].set(val)
                     if pk in self.profile_settings:
@@ -6900,10 +6923,41 @@ class KronosDesktopApp:
             out["reply_markup"] = rm
         return out
 
-    def _tg_capture_chart_png(self, timeout: float = 6.0):
-        """Chụp biểu đồ chính đang hiển thị (PNG bytes) để gửi Telegram cùng phân tích AI.
+    def _tg_admin_ids(self) -> set:
+        """ID tài khoản Telegram cá nhân được BẬT/TẮT bot (ô 'ID người điều khiển', cách nhau dấu phẩy/khoảng trắng)."""
+        try:
+            raw = str(getattr(self, "telegram_admin_ids_var", None).get() if getattr(self, "telegram_admin_ids_var", None) else "")
+        except Exception:
+            raw = ""
+        return {x for x in re.split(r"[\s,;]+", raw.strip()) if re.fullmatch(r"-?\d+", x or "")}
+
+    def _tg_sender_allowed(self, chat_id: str, from_id: str, msg_chat: str) -> bool:
+        """Nhận tin/nút: từ đúng chat đã cài (riêng hoặc nhóm), hoặc chat riêng của người điều khiển."""
+        if msg_chat and msg_chat == chat_id:
+            return True
+        return bool(from_id) and msg_chat == from_id and from_id in self._tg_admin_ids()
+
+    def _tg_can_control(self, chat_id: str, from_id: str) -> bool:
+        """Quyền BẬT/TẮT bot (người dùng yêu cầu 19/11/2026: chỉ chủ bot):
+        - Có điền 'ID người điều khiển': chỉ các ID đó.
+        - Chưa điền: Chat ID là chat riêng (số dương) thì như cũ (chính chủ chat đó); Chat ID là nhóm (số âm) thì KHÔNG ai."""
+        admins = self._tg_admin_ids()
+        if admins:
+            return bool(from_id) and from_id in admins
+        return not str(chat_id).startswith("-") and (not from_id or from_id == chat_id)
+
+    def _tg_deny_control_text(self, chat_id: str) -> str:
+        if self._tg_admin_ids():
+            return "Chỉ chủ bot được bật/tắt bot giao dịch."
+        return "Chưa điền 'ID người điều khiển' (Mục 5) nên trong nhóm không ai được bật/tắt bot."
+
+    def _tg_capture_chart_png(self, timeout: float = 10.0):
+        """Chụp biểu đồ chính (PNG bytes) để gửi Telegram cùng phân tích AI.
+        Luôn chụp khung SCALP (Khung vào lệnh, vd M1: vùng canh, SL/TP AI, lệnh đang mở; nến dự báo AI chỉ có ở khung phân tích).
+        Màn hình đang xem khung khác thì vẽ TẠM khung scalp để chụp rồi trả lại khung + thu phóng cũ ngay trong cùng lượt.
         Gọi từ luồng nền: việc vẽ chạy trên luồng Tk chính (matplotlib không an toàn đa luồng), luồng gọi chờ tối đa timeout giây.
-        Ẩn tạm đường chữ thập của chuột khi chụp. Lỗi/hết giờ -> None (chỉ gửi chữ như cũ)."""
+        Ẩn tạm đường chữ thập của chuột khi chụp. Ảnh rộng tối đa ~1280px (Telegram hiển thị tối đa cỡ này).
+        Lỗi/hết giờ -> None (chỉ gửi chữ như cũ)."""
         fig = getattr(self, "fig", None)
         root = getattr(self, "root", None)
         if fig is None or root is None:
@@ -6912,27 +6966,51 @@ class KronosDesktopApp:
         done = threading.Event()
 
         def _grab():
+            views = getattr(self, "chart_view_tf_by_profile", None)
+            pk = getattr(self, "active_profile_key", None)
+            cur_view = views.get(pk) if isinstance(views, dict) else None
+            try:
+                ana_tf = str(self.tf_var.get()).strip()  # khung SCALP (vào lệnh), người dùng chọn 19/11/2026: nhìn dễ hơn
+            except Exception:
+                ana_tf = ""
+            switch = bool(cur_view and ana_tf and cur_view != ana_tf)
+            zoom_saved = (getattr(self, "user_zoomed", False), getattr(self, "saved_xlim", None), getattr(self, "saved_ylim", None))
             try:
                 import io
+                if switch:
+                    views[pk] = ana_tf
+                    self.user_zoomed, self.saved_xlim, self.saved_ylim = False, None, None
+                    self._last_drawn_chart_key = None
+                    self._refresh_realtime_chart(force_full_redraw=True)
                 cross = [a for a in (getattr(self, n, None) for n in
                                      ("cross_vline", "cross_hline", "cross_price_annot", "cross_time_annot")) if a is not None]
                 vis = [a.get_visible() for a in cross]
                 for a in cross:
                     a.set_visible(False)
                 try:
+                    w_in = float(fig.get_size_inches()[0]) or 9.0
+                    dpi = min(max(1280.0 / w_in, float(fig.dpi)), float(fig.dpi) * 1.5)
                     buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=fig.dpi * 1.5, facecolor=fig.get_facecolor())
+                    fig.savefig(buf, format="png", dpi=dpi, facecolor=fig.get_facecolor())
                     box["png"] = buf.getvalue()
                 finally:
                     for a, v in zip(cross, vis):
                         a.set_visible(v)
+            except Exception as e:
+                box["err"] = str(e)
+            finally:
+                if switch:
                     try:
-                        self._request_canvas_redraw(full=True)
+                        views[pk] = cur_view
+                        self.user_zoomed, self.saved_xlim, self.saved_ylim = zoom_saved
+                        self._last_drawn_chart_key = None
+                        self._refresh_realtime_chart(force_full_redraw=True)
                     except Exception:
                         pass
-            except Exception:
-                pass
-            finally:
+                try:
+                    self._request_canvas_redraw(full=True)
+                except Exception:
+                    pass
                 done.set()
 
         if threading.current_thread() is threading.main_thread():
@@ -6943,11 +7021,26 @@ class KronosDesktopApp:
             except Exception:
                 return None
             if not done.wait(timeout):
+                self._tg_diag_log(f"Chụp biểu đồ quá {timeout:g}s (luồng giao diện bận) -> chỉ gửi chữ")
                 return None
+        if box.get("err"):
+            self._tg_diag_log(f"Chụp biểu đồ lỗi: {box['err']} -> chỉ gửi chữ")
         return box.get("png")
 
-    def _telegram_send_photo(self, token: str, chat_id: str, png: bytes, caption: str = "", timeout: int = 25) -> Optional[dict]:
-        """Gửi ảnh PNG lên Telegram (sendPhoto, multipart/form-data qua urllib, không thư viện ngoài)."""
+    def _tg_diag_log(self, msg: str):
+        """Log chẩn đoán Telegram, tối đa 1 dòng/60 giây, không bao giờ ném lỗi."""
+        try:
+            now = time.monotonic()
+            if now - float(getattr(self, "_tg_diag_last_ts", -1e9)) >= 60.0:
+                self._tg_diag_last_ts = now
+                self.log(f"⚠️ [Telegram] {msg}")
+        except Exception:
+            pass
+
+    def _telegram_send_photo(self, token: str, chat_id: str, png: bytes, caption: str = "", timeout: int = 25,
+                             reply_markup: dict = None) -> Optional[dict]:
+        """Gửi ảnh PNG lên Telegram (sendPhoto, multipart/form-data qua urllib, không thư viện ngoài).
+        reply_markup: nút bấm gắn dưới ảnh (đã bỏ icon như tin chữ)."""
         clean_token = (token or "").strip()
         if not clean_token or not chat_id or not png:
             return None
@@ -6961,7 +7054,13 @@ class KronosDesktopApp:
         body = _field("chat_id", str(chat_id))
         cap = self._tg_plain_text(caption or "")
         if cap:
-            body += _field("caption", cap[:1000])
+            body += _field("caption", cap[:1024])
+        if reply_markup:
+            try:
+                rm = self._tg_strip_icons_payload({"reply_markup": reply_markup}).get("reply_markup")
+            except Exception:
+                rm = reply_markup
+            body += _field("reply_markup", json.dumps(rm, ensure_ascii=False))
         body += (f"--{boundary}{crlf}Content-Disposition: form-data; name=\"photo\"; filename=\"chart.png\"{crlf}"
                  f"Content-Type: image/png{crlf}{crlf}").encode("utf-8") + png + f"{crlf}--{boundary}--{crlf}".encode("utf-8")
         req = urllib.request.Request(
@@ -6980,22 +7079,27 @@ class KronosDesktopApp:
             return None
 
     def _telegram_send_ai_report(self, token: str, chat_id: str):
-        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ đang hiển thị trên app trước, rồi tin chữ phân tích kèm nút bấm.
+        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ khung scalp kèm chữ phân tích + nút bấm
+        trong CÙNG 1 tin (nhanh hơn: 1 lần gửi thay vì 2). Chữ dài quá giới hạn chú thích ảnh (1024 ký tự) thì gửi ảnh rồi tin chữ.
         Chụp/gửi ảnh lỗi thì vẫn gửi tin chữ như cũ."""
+        report = self._generate_telegram_ai_report()
         try:
             png = self._tg_capture_chart_png()
             if png:
-                pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
-                name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
-                try:
-                    sym = str(self._get_profile_cfg(pk).get("symbol", pk)).strip()
-                except Exception:
-                    sym = pk
-                cap = f"Biểu đồ {name} ({sym}) lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}"
-                self._telegram_send_photo(token, chat_id, png, cap)
+                if len(self._tg_plain_text(report) or "") <= 1024:
+                    res = self._telegram_send_photo(token, chat_id, png, report,
+                                                    reply_markup=self._get_telegram_inline_keyboard())
+                    if isinstance(res, dict) and res.get("ok"):
+                        self._tg_track_kb_message(token, chat_id, res)
+                        return
+                    self._tg_diag_log("Gửi ảnh biểu đồ thất bại -> gửi tin chữ")
+                else:
+                    pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
+                    name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+                    self._telegram_send_photo(token, chat_id, png, f"Biểu đồ {name} lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}")
         except Exception:
             pass
-        self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
+        self._telegram_send_with_keyboard(token, chat_id, report)
 
     def _get_telegram_inline_keyboard(self) -> dict:
         """
@@ -7034,6 +7138,10 @@ class KronosDesktopApp:
             "text": text,
             "reply_markup": reply_markup or self._get_telegram_inline_keyboard(),
         }, timeout=timeout)
+        return self._tg_track_kb_message(token, chat_id, res)
+
+    def _tg_track_kb_message(self, token: str, chat_id: str, res):
+        """Ghi nhận tin vừa gửi có nút; gỡ nút ở tin có nút trước đó (nút chỉ nằm dưới tin mới nhất). Trả lại res."""
         try:
             new_id = int(res["result"]["message_id"]) if isinstance(res, dict) and res.get("ok") else None
         except Exception:
@@ -7099,6 +7207,12 @@ class KronosDesktopApp:
                         self.log("[Telegram] Đã gỡ bỏ webhook cũ và kích hoạt chế độ lắng nghe độc quyền cho Trading AI PRO.")
                     cleaned_webhook_token = token
                     offset = None
+                    # Tên bot: chỉ làm theo lệnh /lệnh@tên_bot gửi ĐÚNG bot này (nhóm có nhiều bot)
+                    try:
+                        me = self._telegram_api_call(token, "getMe", None, timeout=15)
+                        self._tg_bot_username = str(((me or {}).get("result") or {}).get("username") or "").strip().lower()
+                    except Exception:
+                        self._tg_bot_username = ""
 
                 payload = {"timeout": 15}
                 if offset is not None:
@@ -7116,10 +7230,10 @@ class KronosDesktopApp:
                     # 1. Bắt tương tác từ nút bấm trực tiếp (Inline Keyboard Callback Query)
                     cq = upd.get("callback_query")
                     if cq and isinstance(cq, dict):
-                        cq_sender = str(cq.get("from", {}).get("id", ""))
-                        if not cq_sender and cq.get("message"):
-                            cq_sender = str(cq.get("message", {}).get("chat", {}).get("id", ""))
-                        if cq_sender == chat_id:
+                        # Nút dưới tin trong nhóm: chat của tin = nhóm, người bấm = tài khoản cá nhân -> xét quyền theo người bấm
+                        cq_from = str((cq.get("from") or {}).get("id", ""))
+                        cq_chat = str(((cq.get("message") or {}).get("chat") or {}).get("id", ""))
+                        if self._tg_sender_allowed(chat_id, cq_from, cq_chat or cq_from):
                             self._handle_telegram_callback(cq, chat_id, token)
                         continue
 
@@ -7129,13 +7243,14 @@ class KronosDesktopApp:
                         continue
 
                     sender = str(msg.get("chat", {}).get("id", ""))
-                    # Lá chắn an ninh: Chỉ chấp nhận tin nhắn gửi từ đúng Chat ID đã đăng ký của chủ nhân
-                    if sender != chat_id:
+                    from_id = str((msg.get("from") or {}).get("id", ""))
+                    # Lá chắn an ninh: Chỉ chấp nhận tin từ đúng Chat ID đã đăng ký, hoặc chat riêng của người điều khiển
+                    if not self._tg_sender_allowed(chat_id, from_id, sender):
                         continue
 
                     text = str(msg.get("text", "")).strip()
                     if text:
-                        self._handle_telegram_command(text, chat_id, token)
+                        self._handle_telegram_command(text, chat_id, token, from_id=from_id, in_group=sender.startswith("-"))
 
             except Exception:
                 time.sleep(3)
@@ -7146,6 +7261,12 @@ class KronosDesktopApp:
         data = str(cq.get("data", "")).strip()
         msg_obj = cq.get("message") or {}
         msg_id = msg_obj.get("message_id")
+        # Nút BẬT/TẮT: chỉ người điều khiển (chủ bot); nút xem (Báo cáo, Phân tích AI) ai trong chat cũng bấm được
+        cq_from = str((cq.get("from") or {}).get("id", ""))
+        if data in ("tg_toggle_xau", "tg_toggle_btc", "tg_stop_all", "tg_start_all") and not self._tg_can_control(chat_id, cq_from):
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id, "text": self._tg_deny_control_text(chat_id), "show_alert": True})
+            return
 
         if data == "tg_stats":
             self._telegram_api_call(token, "answerCallbackQuery", {
@@ -7240,13 +7361,23 @@ class KronosDesktopApp:
                     "reply_markup": self._get_telegram_inline_keyboard()
                 })
 
-    def _handle_telegram_command(self, text: str, chat_id: str, token: str):
-        """Xử lý lệnh từ điện thoại gửi về qua tin nhắn văn bản."""
+    def _handle_telegram_command(self, text: str, chat_id: str, token: str, from_id: str = None, in_group: bool = False):
+        """Xử lý lệnh từ điện thoại gửi về qua tin nhắn văn bản.
+        from_id: ID người gửi (None = gọi cũ, coi như chủ chat riêng). in_group: tin trong nhóm."""
         norm_txt = text.lower().strip()
         # A31: chỉ khớp NGUYÊN tin nhắn; bỏ hậu tố @tên_bot của dạng /lệnh@bot (Telegram trong nhóm/chat)
         if norm_txt.startswith("/"):
-            norm_txt = norm_txt.split("@", 1)[0].strip()
+            norm_txt, _, target_bot = norm_txt.partition("@")
+            norm_txt = norm_txt.strip()
+            own_bot = str(getattr(self, "_tg_bot_username", "") or "").lower()
+            if target_bot.strip() and own_bot and target_bot.strip() != own_bot:
+                return  # lệnh gửi cho bot KHÁC trong nhóm
         now_str = datetime.now(tz=VN_TZ).strftime("%H:%M:%S")
+        from_id = chat_id if from_id is None else str(from_id)
+        control_cmds = ("tạm dừng", "/pause", "/stop", "bật bot", "chạy", "/resume", "/run", "/start_bot")
+        if norm_txt in control_cmds and not self._tg_can_control(chat_id, from_id):
+            self._telegram_api_call(token, "sendMessage", {"chat_id": chat_id, "text": self._tg_deny_control_text(chat_id)})
+            return
 
         if norm_txt in ("/start", "/help", "/menu"):
             welcome = (
@@ -7291,8 +7422,8 @@ class KronosDesktopApp:
             )
             self._telegram_send_with_keyboard(token, chat_id, resp)
 
-        else:
-            # Tin nhắn thường (không phải đúng một lệnh): KHÔNG kích hoạt gì, chỉ gợi ý lệnh hợp lệ
+        elif not in_group:
+            # Tin nhắn thường (không phải đúng một lệnh): KHÔNG kích hoạt gì, chỉ gợi ý lệnh hợp lệ (trong nhóm thì im lặng, tránh spam)
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": "ℹ️ Lệnh hợp lệ (gõ đúng nguyên lệnh): /menu, /stats (hoặc 'thống kê'), /ai (hoặc 'phân tích'), /pause (hoặc 'tạm dừng'), /resume (hoặc 'bật bot', 'chạy').",
@@ -10666,6 +10797,47 @@ class KronosDesktopApp:
         except Exception as e:
             self._write_file_log(f"[{pk}] Lỗi gỡ vốn (recovery_close): {e}", is_error=True)
 
+    def _stack_half_be_step(self, pk: str, symbol: str, positions: list, cfg: dict):
+        """Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+ (khóa stack_half_be, mặc định TẮT, người dùng chọn 19/11/2026).
+        Mỗi chiều: khi số lệnh cùng chiều CHƯA dời BE tăng lên n >= 2 -> chọn n//2 lệnh giá vào XẤU NHẤT (BUY: cao nhất,
+        SELL: thấp nhất) đưa vào cơ chế 'chờ về Entry+ thoát' sẵn có (pending_be_exit_tickets: vòng quản lý dời TP về
+        Entry+be_plus và đóng khi giá hồi về). Lệnh còn lại giữ nguyên. Chỉ chọn lại khi số lệnh TĂNG (lệnh xấu đóng xong
+        không kéo theo lệnh khác). Lỗi trong hàm không ảnh hưởng luồng chính."""
+        try:
+            ctx = self.profile_ctx[pk]
+            prev = ctx.setdefault("_stack_half_prev_n", {})
+            eps_eq = self._get_symbol_tolerances(symbol).get("eps_equal", 0.05)
+            try:
+                be_plus = max(float(cfg.get("be_plus_price", 5.0 if pk == "BTCUSD" else 0.2)), 0.0)
+            except (TypeError, ValueError):
+                be_plus = 5.0 if pk == "BTCUSD" else 0.2
+            pend = self.pending_be_exit_tickets
+            for is_buy in (True, False):
+                key = "BUY" if is_buy else "SELL"
+                side = [p for p in (positions or []) if (p.type == mt5.POSITION_TYPE_BUY) == is_buy
+                        and not self._is_pos_at_be(p, eps_eq)]
+                n = len(side)
+                prev_n = int(prev.get(key, 0) or 0)
+                prev[key] = n
+                if n < 2 or n <= prev_n:
+                    continue
+
+                def _marked(p):
+                    be_t = (p.price_open + be_plus) if is_buy else (p.price_open - be_plus)
+                    return p.ticket in pend or (p.tp > 0 and (abs(p.tp - be_t) < eps_eq or abs(p.tp - p.price_open) < eps_eq))
+
+                need = n // 2 - sum(1 for p in side if _marked(p))
+                if need <= 0:
+                    continue
+                cands = sorted((p for p in side if not _marked(p)), key=lambda p: p.price_open, reverse=is_buy)
+                keep_txt = ", ".join(f"{p.price_open:.2f}" for p in cands[need:])
+                for p in cands[:need]:
+                    pend.add(p.ticket)
+                    self.log(f"✂️ [{pk} - Nhồi lệnh {n} lệnh {key}] Lệnh #{p.ticket} giá xấu ({p.price_open:.2f}) -> chờ về "
+                             f"Entry+{be_plus:g} thoát; giữ các lệnh giá đẹp hơn{(': ' + keep_txt) if keep_txt else ''}")
+        except Exception as e:
+            self._write_file_log(f"[{pk}] Lỗi nhồi lệnh thoát nửa ở BE+ (stack_half_be): {e}", is_error=True)
+
     def _update_open_positions_and_manage(self, symbol: str, profile_key: str = None):
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
@@ -10680,6 +10852,8 @@ class KronosDesktopApp:
         positions = self._get_bot_positions(symbol, profile_key=pk)
         if positions and bool(cfg.get("recovery_close", False)):
             self._recovery_close_step(pk, symbol, positions, cfg)
+        if self._cfg_flag(cfg, "stack_half_be"):
+            self._stack_half_be_step(pk, symbol, positions, cfg)
 
         selected_tickets = [tree_widget.item(item, "values")[0] for item in tree_widget.selection()]
         target_rows = []

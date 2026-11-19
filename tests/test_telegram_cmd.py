@@ -90,5 +90,102 @@ class TestTelegramCommand(unittest.TestCase):
         self.assertEqual(app.stop_auto_scan.call_count, 2)
 
 
+class TestOwnerOnlyControl(unittest.TestCase):
+    """19/11/2026: chỉ chủ bot (ô 'ID người điều khiển') được bật/tắt; nhóm có nhiều bot; nút bấm trong nhóm."""
+    GROUP = "-5282444977"
+    OWNER = "111"
+
+    def app(self, admins=OWNER):
+        a = make_app()
+        a.telegram_admin_ids_var = types.SimpleNamespace(get=lambda: admins)
+        a._tg_bot_username = "bot_may1"
+        a._telegram_send_with_keyboard = mock.Mock()
+        return a
+
+    def test_nhom_chi_chu_bot_tat_duoc(self):
+        a = self.app()
+        a._handle_telegram_command("/pause", self.GROUP, "T", from_id="222", in_group=True)
+        a.stop_auto_scan.assert_not_called()
+        self.assertIn("Chỉ chủ bot", a._telegram_api_call.call_args[0][2]["text"])
+        a = self.app()
+        a._handle_telegram_command("/pause", self.GROUP, "T", from_id=self.OWNER, in_group=True)
+        self.assertEqual(a.stop_auto_scan.call_count, 2)
+
+    def test_nguoi_khac_van_xem_bao_cao(self):
+        a = self.app()
+        a._handle_telegram_command("/stats", self.GROUP, "T", from_id="222", in_group=True)
+        a._generate_telegram_stats_report.assert_called_once()
+
+    def test_nhom_chua_dien_id_thi_khong_ai_bat_tat(self):
+        a = self.app(admins="")
+        a._handle_telegram_command("/resume", self.GROUP, "T", from_id=self.OWNER, in_group=True)
+        a.start_auto_scan.assert_not_called()
+        self.assertIn("Chưa điền", a._telegram_api_call.call_args[0][2]["text"])
+
+    def test_chat_rieng_chua_dien_id_nhu_cu(self):
+        a = self.app(admins="")
+        a._handle_telegram_command("/resume", "555", "T", from_id="555")
+        self.assertEqual(a.start_auto_scan.call_count, 2)
+
+    def test_lenh_gui_bot_khac_bi_bo_qua(self):
+        a = self.app()
+        a._handle_telegram_command("/pause@bot_may2", self.GROUP, "T", from_id=self.OWNER, in_group=True)
+        a.stop_auto_scan.assert_not_called()
+        a._telegram_api_call.assert_not_called()
+        a._handle_telegram_command("/pause@Bot_May1", self.GROUP, "T", from_id=self.OWNER, in_group=True)
+        self.assertEqual(a.stop_auto_scan.call_count, 2)
+
+    def test_nhom_khong_goi_y_khi_tin_thuong(self):
+        a = self.app()
+        a._handle_telegram_command("chào cả nhà", self.GROUP, "T", from_id="222", in_group=True)
+        a._telegram_api_call.assert_not_called()
+
+    def test_nut_bat_tat_trong_nhom(self):
+        cq = {"id": "c", "data": "tg_stop_all", "from": {"id": 222}, "message": {"message_id": 5, "chat": {"id": int(self.GROUP)}}}
+        a = self.app()
+        a._handle_telegram_callback(cq, self.GROUP, "T")
+        a.stop_auto_scan.assert_not_called()
+        self.assertTrue(a._telegram_api_call.call_args[0][2]["show_alert"])
+        cq["from"]["id"] = int(self.OWNER)
+        a = self.app()
+        with mock.patch.object(b.time, "sleep"):
+            a._handle_telegram_callback(cq, self.GROUP, "T")
+        self.assertEqual(a.stop_auto_scan.call_count, 2)
+
+    def test_quyen_nhan_tin(self):
+        a = self.app()
+        self.assertTrue(a._tg_sender_allowed(self.GROUP, "222", self.GROUP))       # tin trong nhóm đã cài
+        self.assertTrue(a._tg_sender_allowed(self.GROUP, self.OWNER, self.OWNER))  # chủ bot nhắn riêng
+        self.assertFalse(a._tg_sender_allowed(self.GROUP, "222", "222"))           # người lạ nhắn riêng
+        self.assertFalse(a._tg_sender_allowed(self.GROUP, "222", "-999"))          # nhóm khác
+
+    def test_polling_nhom_nguoi_la_khong_tat_duoc(self):
+        a = self.app()
+        a._app_closing = False
+        a.telegram_enabled_var = types.SimpleNamespace(get=lambda: True)
+        a.telegram_bot_token_var = types.SimpleNamespace(get=lambda: "T")
+        a.telegram_chat_id_var = types.SimpleNamespace(get=lambda: self.GROUP)
+        a.log = mock.Mock()
+        g = int(self.GROUP)
+        upd = {"ok": True, "result": [
+            {"update_id": 1, "message": {"chat": {"id": g}, "from": {"id": 222}, "text": "/pause"}},
+            {"update_id": 2, "message": {"chat": {"id": g}, "from": {"id": 111}, "text": "/resume@bot_may1"}},
+        ]}
+
+        def api(token, method, payload=None, timeout=0):
+            if method == "getMe":
+                return {"ok": True, "result": {"username": "Bot_May1"}}
+            if method == "getUpdates":
+                a._app_closing = True
+                return upd
+            return {"ok": True}
+        a._telegram_api_call = mock.Mock(side_effect=api)
+        with mock.patch.object(b.time, "sleep", side_effect=lambda *_: setattr(a, "_app_closing", True)), \
+                mock.patch.object(b.tk, "StringVar", mock.Mock()):
+            a._telegram_polling_worker()
+        a.stop_auto_scan.assert_not_called()
+        self.assertEqual(a.start_auto_scan.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

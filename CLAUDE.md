@@ -61,7 +61,7 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 `be_plus_price` dùng chung cho BE, giữ lệnh, đảo chiều nên không là con của mục nào.
 
 **Thông số mới gần đây** (mặc định, Mục): `debug_trace` (tắt, 4: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3 nhóm giới hạn ngày: gỡ vốn),
-`structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `fast_sl_same_dir` (tắt, 3: SL nhanh chỉ nghỉ chiều vừa thua), `allow_opposite_entry` (tắt, 2: vẫn vào lệnh ngược chiều khi lệnh cũ đang âm), `trend_filter` + `structure_conflict_mode` ĐÃ ẨN khỏi giao diện (18/11, người dùng không dùng): trend_filter mặc định tắt và bị đặt tắt mỗi lần nạp cấu hình; code lọc còn giữ, thử bằng `--set trend_filter=True`, `max_hold_mins` mặc định 15,
+`structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `fast_sl_same_dir` (tắt, 3: SL nhanh chỉ nghỉ chiều vừa thua), `allow_opposite_entry` (tắt, 2: vẫn vào lệnh ngược chiều khi lệnh cũ đang âm), `stack_half_be` (tắt, 3: n lệnh cùng chiều chưa BE tăng lên n>=2 -> n//2 lệnh giá xấu nhất vào `pending_be_exit_tickets` chờ Entry+BE+ thoát), `trend_filter` + `structure_conflict_mode` ĐÃ ẨN khỏi giao diện (18/11, người dùng không dùng): trend_filter mặc định tắt và bị đặt tắt mỗi lần nạp cấu hình; code lọc còn giữ, thử bằng `--set trend_filter=True`, `max_hold_mins` mặc định 15,
 `max_hold_action` mặc định "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)".
 Mã lý do đóng lệnh ghi vào comment MT5 `KR_<mã>` (TIME, TIMEALL, BE, GOV, REV, REVCUT, BASKET, DAILY, MANUAL, ALL):
 thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` và thêm nhãn vào `_kr_reasons`.

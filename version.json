@@ -1,6 +1,6 @@
 {
-  "version": "1.3.29",
+  "version": "1.3.30",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-19",
-  "description": "Phiên bản v1.3.29:\n- [MỚI] Telegram: bấm nút 'Phân tích AI' (hoặc gõ /ai) bot gửi kèm ẢNH chụp biểu đồ đang hiển thị trên app (nến, dự báo AI, SL/TP AI, vùng canh), rồi mới gửi tin chữ phân tích.\n- Telegram: bỏ hết icon trong tin nhắn và nút bấm, chỉ còn chữ; giữ chấm xanh/đỏ (tin đóng lệnh: thắng chấm xanh, thua chấm đỏ).\n- Tab Lịch Sử: ẩn cụm nút chọn nhanh (Hôm nay, Hôm qua, 7 ngày, 30 ngày, Tháng này); chọn ngày bằng nút khoảng ngày/Lịch Lãi/Lỗ.\n- Không đổi luật giao dịch."
+  "description": "Phiên bản v1.3.30:\n- [MỚI] Telegram: ô 'ID người điều khiển' (Mục 5). Chỉ ID này được Bật/Dừng bot (nút và lệnh /pause, /resume), kể cả khi bấm trong nhóm; người khác trong nhóm chỉ xem thông báo, Báo cáo, Phân tích AI. Chat ID là nhóm mà chưa điền ô này thì không ai bật/tắt được qua Telegram.\n- Telegram trong nhóm: bot im lặng với tin nhắn thường, chỉ trả lời lệnh; lệnh /lệnh@tên_bot chỉ bot đó làm theo (nhóm có nhiều bot); nút bấm dưới tin trong nhóm đã dùng được.\n- Telegram 'Phân tích AI': chụp khung scalp (vào lệnh) và gửi ảnh + chữ + nút trong 1 tin, ảnh gọn hơn nên trả lời nhanh hơn.\n- [MỚI, mặc định TẮT] Mục 3: 'Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+' (n lệnh cùng chiều chưa BE: n/2 lệnh giá xấu nhất dời TP về Entry+BE+, giữ các lệnh giá đẹp). Chưa kiểm chứng bằng phát lại nhiều ngày.\n- Không đổi luật giao dịch khi giữ nguyên cấu hình."
 }
