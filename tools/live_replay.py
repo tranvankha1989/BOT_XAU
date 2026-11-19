@@ -686,6 +686,19 @@ class Replayer:
         except Exception as e:
             app.log_error("REALTIME_TICK_LOOP", e)
 
+    def _next_cooldown_expiry(self, t: float):
+        """Mốc (giây) hết tạm nghỉ gần nhất còn ở tương lai: chuỗi thua / SL nhanh / chốt chùm; None nếu không có."""
+        ctx, best = self._ctx(), None
+        for k in ("cooldown_until", "fast_sl_cooldown_until", "basket_cooldown_until"):
+            v = ctx.get(k)
+            try:
+                s = v.timestamp() if v is not None else None  # datetime giả (giờ máy) -> giây, cùng gốc với đồng hồ phát lại
+            except Exception:
+                s = None
+            if s is not None and s > t and (best is None or s < best):
+                best = s
+        return best
+
     def _busy(self):
         ctx = self._ctx()
         return bool(self.broker.positions) or ctx.get("pending_pullback_order") is not None or self.analysis_due is not None
@@ -731,10 +744,20 @@ class Replayer:
             if not self._busy():
                 # Nhàn rỗi (không lệnh mở, không vùng canh, không phân tích): các hàm vòng tick không làm gì ->
                 # nhảy tới lần vòng nến phát hiện nến phân tích kế tiếp (mốc đóng nến + detect_delay)
-                nxt = (math.floor(t / ana_sec) + 1) * ana_sec + self.detect_delay
+                # Mốc phát hiện nến kế tiếp CÒN Ở PHÍA TRƯỚC: nếu đang ở [đóng nến, đóng nến + detect_delay) thì là mốc của chính
+                # nến vừa đóng (trước đây công thức +1 nến nhảy qua -> bỏ sót phân tích nến đó khi rảnh đúng lúc đổi nến)
+                nxt = math.floor(t / ana_sec) * ana_sec + self.detect_delay
+                if nxt <= t + eps:
+                    nxt += ana_sec
                 if nxt > t_auto:
                     t_auto = nxt
                     t_tick = nxt
+                # Live: HẾT tạm nghỉ (chuỗi thua / SL nhanh / chốt chùm) thì vòng tick phân tích AI lại NGAY (COOLDOWN_EXPIRED),
+                # không chờ nến mới -> không được nhảy qua mốc hết tạm nghỉ (trước đây bỏ lỡ lần phân tích này).
+                cd_exp = self._next_cooldown_expiry(t)
+                if cd_exp is not None and cd_exp < t_tick:
+                    # lùi vòng tick về nhịp đầu tiên sau mốc hết tạm nghỉ, GIỮ nguyên pha giây của vòng tick (vào lệnh nhạy với nhịp kiểm tra)
+                    t_tick -= math.floor(t_tick - cd_exp)
         self.broker.process_ticks(last, end_utc)
 
 # ───────────────────────── Sự kiện trực tiếp cho tab Backtest ─────────────────────────
