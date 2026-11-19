@@ -73,7 +73,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **331 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **334 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
@@ -82,6 +82,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
   Đã đối chiếu 16/11: tín hiệu 18:45 và lệnh 19:00 khớp live (giá vào trùng 64387.48). Báo cáo phải nêu số "Lỗi ghi nhận trong code bot" (phải = 0).
   Khi sửa `_realtime_tick_loop`/`_auto_loop_worker` hoặc dùng hàm MT5 mới: cập nhật `tools/live_replay.py` (Replayer/FakeBroker) trong cùng việc.
   Giới hạn: lệnh khớp ở tick tại thời điểm quyết định (không có trễ mạng); AI ngẫu nhiên nên không trùng từng lệnh với live.
+  Rà 19/11: hết tạm nghỉ (chuỗi thua/SL nhanh/chốt chùm) live phân tích lại NGAY -> Replayer dừng đúng mốc đó (giữ pha giây vòng tick); nhảy nhàn rỗi tính mốc phát hiện nến CÒN PHÍA TRƯỚC (trước đây có thể bỏ sót 1 nến). Replayer chạy nhánh tab NGẦM: trạng thái chỉ ghi ctx mà tab đang mở bị `_sync_self_to_active_ctx` đè (vd basket_cooldown_until) thì backtest KHÁC live.
 - **BACKTEST PHẢI GIỐNG BOT LIVE (bắt buộc, người dùng yêu cầu 18/11/2026):**
   1. Backtest/replay chạy theo file cấu hình y như bot live: MỌI khóa cấu hình có hiệu lực, không bỏ qua khóa nào.
      Dùng engine chạy CHÍNH code live (`tools/live_replay.py`), KHÔNG viết lại luật giao dịch trong engine riêng.
