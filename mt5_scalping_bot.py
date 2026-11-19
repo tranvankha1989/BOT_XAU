@@ -3389,7 +3389,6 @@ class KronosDesktopApp:
         # Cụm nút chọn nhanh ĐÃ ẨN (người dùng yêu cầu 19/11/2026): chọn ngày bằng nút khoảng ngày/lịch.
         # Vẫn tạo nút (không pack) để phần tô sáng nút đang chọn không lỗi.
         quick_seg = tk.Frame(right_ctrl, bg="#2b3648", padx=1, pady=1)
-        quick_seg.pack(side=tk.RIGHT, padx=(0, 8))
         self._hist_quick_btns = {}
         for q_key, q_txt, q_fn in (
             ("today", "Hôm nay", self._set_history_today),
@@ -6847,12 +6846,12 @@ class KronosDesktopApp:
         headers = {
             "User-Agent": "Trading-AI-PRO-Bot",
             "Content-Type": "application/json",
+        }
         # Tin Telegram chỉ chữ thuần (người dùng yêu cầu 19/11/2026): bỏ icon ở chữ tin + nút bấm, giữ chấm 🟢/🔴
         try:
             data = self._tg_strip_icons_payload(data) if data else data
         except Exception:
             pass
-        }
         req_body = json.dumps(data).encode("utf-8") if data else None
         req = urllib.request.Request(url, data=req_body, headers=headers)
         ctx = None
@@ -6866,6 +6865,7 @@ class KronosDesktopApp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
             return None
+
     # Icon/emoji bị bỏ khỏi tin Telegram; giữ lại 🟢 (U+1F7E2) và 🔴 (U+1F534). Không đụng →, ≤, ≥, •, ·, ─.
     _TG_ICON_RE = re.compile(
         "(?:(?![\U0001F7E2\U0001F534])[\U0001F000-\U0001FAFF☀-➿⬀-⯿⌚⌛⌨⏏"
@@ -6996,7 +6996,6 @@ class KronosDesktopApp:
         except Exception:
             pass
         self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
-
 
     def _get_telegram_inline_keyboard(self) -> dict:
         """
@@ -7442,8 +7441,8 @@ class KronosDesktopApp:
         if not bool(getattr(self, "telegram_notify_close_var", None) and self.telegram_notify_close_var.get()):
             return
 
-        # Chỉ giữ chấm xanh/đỏ (người dùng yêu cầu 19/11/2026): thắng 🟢, thua 🔴, hòa vốn không chấm
         category = cd.get("category", "")
+        # Chỉ giữ chấm xanh/đỏ (người dùng yêu cầu 19/11/2026): thắng 🟢, thua 🔴, hòa vốn không chấm
         if category == "WIN":
             icon = "🟢"
         elif category in ("BE", "BE+"):
