@@ -260,13 +260,13 @@ PARAM_HELP_GUIDE = {
     },
     "sl_buffer": {
         "title": "Giá an toàn cộng thêm vào SL (+ Buffer)",
-        "what_is_it": "Khoảng giá cộng dồn thêm ra ngoài vùng cản/đáy dự báo của AI để làm lớp đệm an toàn chống các pha quét râu nến (Spike/Wick).",
+        "what_is_it": "Khoảng giá cộng dồn thêm ra ngoài vùng cản/đáy dự báo của AI để làm lớp đệm an toàn chống các pha quét râu nến (Spike/Wick). Khoảng này KHÔNG nằm trong ô 'SL tối đa': SL thật xa nhất ≈ SL tối đa + Giá an toàn (ví dụ 3.0 + 2.5 = 5.5 giá).",
         "how_to_set": "- Vàng XAUUSD: Khuyên dùng 0.3$ đến 0.5$ (3 - 5 pip).\n- Giúp lệnh không bị dính SL oan rồi giá mới quay đầu chạy đúng xu hướng."
     },
     "max_sl_price": {
         "title": "SL tối đa cố định (Max SL Price)",
-        "what_is_it": "Mức cắt lỗ trần cao nhất tính theo khoảng giá USD. Nếu tính theo AI mà khoảng cách SL vượt quá giá trị này, bot sẽ tự động ép chặt SL về đúng mức trần này.",
-        "how_to_set": "- Vàng XAUUSD: Đặt 4.0$ - 5.0$ (40 - 50 pip).\n- Nếu nhập 0: Bot sẽ hoàn toàn để SL tự do theo tính toán thích ứng của AI."
+        "what_is_it": "Khoảng giá tối đa từ giá vào lệnh tới điểm SL do AI chọn (đỉnh/đáy), CHƯA tính ô 'Giá an toàn cộng thêm vào SL'. Nếu giá hiện tại cách điểm SL của AI xa hơn mức này, bot KHÔNG ép SL lại mà canh giá hồi về gần điểm SL rồi mới vào lệnh. SL thật đặt trên MT5 = điểm SL của AI cộng thêm Giá an toàn, nên SL thật xa nhất ≈ SL tối đa + Giá an toàn (ví dụ 3.0 + 2.5 = 5.5 giá; lot 0.02 ≈ 11$ mỗi lệnh).",
+        "how_to_set": "- Tính mức lỗ chấp nhận được theo tổng: SL tối đa + Giá an toàn (ví dụ muốn SL thật không quá 4.0 giá: đặt 3.0 + 1.0 hoặc 2.0 + 2.0).\n- Đặt nhỏ: SL thật gần hơn nhưng bot phải chờ giá về sát điểm SL nên ít lệnh hơn.\n- Khi TP không đủ 2R, bot có thể tự giảm mức này còn một nửa cho lệnh đó.\n- Nếu nhập 0: Bot để SL tự do theo AI (không giới hạn)."
     },
     "rr": {
         "title": "Tỷ lệ Lợi nhuận / Rủi ro (R:R Ratio)",
@@ -4242,6 +4242,8 @@ class KronosDesktopApp:
         KRONOS_REPLAY_JOB -> code bot thấy biến này thì chạy backtest rồi thoát (không mở giao diện). Từ mã nguồn: tools/live_replay.py --job."""
         env = dict(os.environ)
         env.pop("KRONOS_REPLAY_JOB", None)
+        env["PYTHONIOENCODING"] = "utf-8"  # tiến trình con in chữ Việt: tránh UnicodeEncodeError cp1252
+        env["PYTHONUTF8"] = "1"
         main_mod = sys.modules.get("__main__")
         if getattr(sys, "frozen", False):
             env["KRONOS_REPLAY_JOB"] = job_path
@@ -13056,6 +13058,11 @@ def _run_packed_replay_job_from_env():
     job = os.environ.pop("KRONOS_REPLAY_JOB", "")
     if not job:
         return
+    for _s in (sys.stdout, sys.stderr):  # stdout/stderr con là cp1252 -> chữ Việt lỗi; ép UTF-8
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     code = 1
     try:
         raw = getattr(sys.modules.get("__main__"), "_CONTAINER_RAW_DICT", None)

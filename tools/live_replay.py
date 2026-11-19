@@ -857,6 +857,16 @@ class ReplayCancelled(Exception):
     pass
 
 
+def _force_utf8_stdio():
+    """Bản .exe: stdout/stderr của tiến trình con là file/DEVNULL mã cp1252 -> print chữ Việt ('Đ') lỗi UnicodeEncodeError.
+    Ép UTF-8 (ký tự lạ thay bằng '?'), không bao giờ làm hỏng lượt backtest."""
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def run_replay_job(job_path: str) -> int:
     """Một lượt backtest cho tab Backtest của app, chạy ở TIẾN TRÌNH RIÊNG (không đụng bot live đang chạy).
     job JSON: profile, cfg (cấu hình backtest đã gộp, không token), symbol, start, end (YYYY-MM-DD giờ VN), capital, threads, seed, out_dir.
@@ -864,6 +874,7 @@ def run_replay_job(job_path: str) -> int:
     Có file out_dir/cancel -> dừng sớm. Trả mã thoát: 0 xong, 3 bị hủy, 1 lỗi."""
     import json as _json
     import traceback as _tb
+    _force_utf8_stdio()
     with open(job_path, "r", encoding="utf-8") as f:
         job = _json.load(f)
     out_dir = job["out_dir"]
