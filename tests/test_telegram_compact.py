@@ -132,7 +132,7 @@ class TestCompactMessages(unittest.TestCase):
               "open_price": 3733.14, "close_price": 3733.49, "symbol": "XAUUSDm", "type": "BUY", "ticket": 4182479748}
         app._telegram_notify_order_closed(cd, day_pnl=4.31)
         msg, markup = app._telegram_queue.get_nowait()
-        self.assertEqual(msg, "🎯 VÀNG BUY +0.70$ (+0.08R) · CHỐT TP · 13:10:11\n"
+        self.assertEqual(msg, "🟢 VÀNG BUY +0.70$ (+0.08R) · CHỐT TP · 13:10:11\n"
                               "3733.14 → 3733.49 · giữ 10s · Ngày +4.31$ · #4182479748")
         self.assertIsNone(markup)
         app._get_today_deals_stats.assert_not_called()
@@ -143,7 +143,123 @@ class TestCompactMessages(unittest.TestCase):
               "symbol": "XAUUSDm", "type": "SELL", "ticket": 9}
         app._telegram_notify_order_closed(cd, day_pnl=-7.58)
         msg, _ = app._telegram_queue.get_nowait()
-        self.assertTrue(msg.startswith("🛑 VÀNG SELL -7.58$ · Đã đóng\n"))
+        self.assertTrue(msg.startswith("🔴 VÀNG SELL -7.58$ · Đã đóng\n"))
+
+
+class TestPlainTextAndChart(unittest.TestCase):
+    """19/11/2026: tin Telegram chỉ chữ (giữ chấm 🟢/🔴) + nút Phân tích AI gửi kèm ảnh biểu đồ."""
+
+    def test_bo_icon_giu_cham_xanh_do(self):
+        f = b.KronosDesktopApp._tg_plain_text
+        self.assertEqual(f("🧠 VÀNG · AI M5 lúc 19:00:03 · AUTO BẬT"), "VÀNG · AI M5 lúc 19:00:03 · AUTO BẬT")
+        self.assertEqual(f("🟢 TÍN HIỆU [XAUUSD]: BUY"), "🟢 TÍN HIỆU [XAUUSD]: BUY")
+        self.assertEqual(f("🔴 VÀNG SELL -7.58$"), "🔴 VÀNG SELL -7.58$")
+        self.assertEqual(f("⏳ Đang canh vùng BUY ≤ 3718.79"), "Đang canh vùng BUY ≤ 3718.79")
+        self.assertEqual(f("🟡 VÀNG: ⏸ DỪNG"), "VÀNG: DỪNG")
+        self.assertEqual(f("🟠 BTC: ▶️ BẬT"), "BTC: BẬT")
+        self.assertEqual(f("⏸️ TẠM DỪNG"), "TẠM DỪNG")
+        self.assertEqual(f("3733.14 → 3733.49 · giữ 10s"), "3733.14 → 3733.49 · giữ 10s")
+        self.assertEqual(f("📊 [X] BÁO CÁO\n   • Lãi ngày: +1$\n────"), "[X] BÁO CÁO\n   • Lãi ngày: +1$\n────")
+        self.assertEqual(f("🧠"), "🧠")  # bỏ xong rỗng -> giữ nguyên
+
+    def test_payload_api_bo_icon_ca_nut(self):
+        app = make_app()
+        del app.__dict__["_telegram_api_call"]
+        sent = {}
+
+        class _Resp:
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *a):
+                return False
+
+            def read(s):
+                return b'{"ok": true}'
+
+        def fake_open(req, context=None, timeout=None):
+            import json
+            sent.update(json.loads(req.data.decode("utf-8")))
+            return _Resp()
+        data = {"chat_id": "1", "text": "🧠 VÀNG\n🟢 TÍN HIỆU",
+                "reply_markup": {"inline_keyboard": [[{"text": "📊 Báo cáo", "callback_data": "tg_stats"}]]}}
+        with mock.patch.object(b.urllib.request, "urlopen", side_effect=fake_open):
+            app._telegram_api_call("T", "sendMessage", data)
+        self.assertEqual(sent["text"], "VÀNG\n🟢 TÍN HIỆU")
+        self.assertEqual(sent["reply_markup"]["inline_keyboard"][0][0]["text"], "Báo cáo")
+        self.assertEqual(data["text"], "🧠 VÀNG\n🟢 TÍN HIỆU")  # không sửa dict gốc
+
+    def test_nut_ai_gui_anh_truoc_roi_chu(self):
+        order = []
+        app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
+                       _get_profile_cfg=mock.Mock(return_value={"symbol": "XAUUSDm"}),
+                       _telegram_send_photo=mock.Mock(side_effect=lambda *a, **k: order.append("photo")),
+                       _telegram_send_with_keyboard=mock.Mock(side_effect=lambda *a, **k: order.append("text")),
+                       _generate_telegram_ai_report=mock.Mock(return_value="R"))
+        app._handle_telegram_callback({"id": "cq1", "data": "tg_ai", "message": {"message_id": 7}}, "1", "T")
+        self.assertEqual(order, ["photo", "text"])
+        args = app._telegram_send_photo.call_args[0]
+        self.assertEqual(args[:3], ("T", "1", b"PNG"))
+        self.assertIn("VÀNG (XAUUSDm)", args[3])
+
+    def test_chup_loi_van_gui_chu(self):
+        app = make_app(_tg_capture_chart_png=mock.Mock(side_effect=RuntimeError("x")), _telegram_send_photo=mock.Mock(),
+                       _telegram_send_with_keyboard=mock.Mock(), _generate_telegram_ai_report=mock.Mock(return_value="R"))
+        app._telegram_send_ai_report("T", "1")
+        app._telegram_send_photo.assert_not_called()
+        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "R")
+
+    def test_chup_bieu_do_that_tu_luong_nen(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        fig = Figure(figsize=(3, 2), dpi=50)
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+        ax.plot([1, 2, 3])
+        vline = ax.axvline(1.5)
+        calls = []
+
+        def after(ms, fn=None):  # giả luồng Tk chính: chạy ở luồng khác
+            threading.Thread(target=fn).start()
+        app = make_app(root=types.SimpleNamespace(after=after), fig=fig, cross_vline=vline,
+                       _request_canvas_redraw=lambda full=True: calls.append(full))
+        out = []
+        t = threading.Thread(target=lambda: out.append(app._tg_capture_chart_png(timeout=10)))
+        t.start()
+        t.join(15)
+        self.assertEqual(out[0][1:4], b"PNG")
+        self.assertTrue(vline.get_visible())  # khôi phục chữ thập
+        self.assertEqual(calls, [True])
+
+    def test_gui_anh_multipart(self):
+        app = make_app()
+        seen = {}
+
+        class _Resp:
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *a):
+                return False
+
+            def read(s):
+                return b'{"ok": true}'
+
+        def fake_open(req, context=None, timeout=None):
+            seen["url"] = req.full_url
+            seen["ct"] = req.get_header("Content-type")
+            seen["body"] = req.data
+            return _Resp()
+        with mock.patch.object(b.urllib.request, "urlopen", side_effect=fake_open):
+            res = app._telegram_send_photo("T", "1", b"PNGDATA", "🧠 Biểu đồ VÀNG")
+        self.assertEqual(res, {"ok": True})
+        self.assertTrue(seen["url"].endswith("/sendPhoto"))
+        self.assertIn("multipart/form-data; boundary=", seen["ct"])
+        self.assertIn(b"PNGDATA", seen["body"])
+        self.assertIn("Biểu đồ VÀNG".encode("utf-8"), seen["body"])
+        self.assertNotIn("🧠".encode("utf-8"), seen["body"])
 
 
 class TestFreshClosedDeals(unittest.TestCase):

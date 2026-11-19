@@ -1,6 +1,6 @@
 {
-  "version": "1.3.28",
+  "version": "1.3.29",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-19",
-  "description": "Phiên bản v1.3.28:\n- [MỚI] Nhập sai thông số: dòng báo hiện NGAY DƯỚI ô sai, ghi rõ giá trị đang nhập và mức hợp lệ (VD 'đang nhập 30, phải từ 50 đến 100').\n- [MỚI] Kiểm tra thêm ô chữ/ô chọn và các thông số mâu thuẫn: Mã giao dịch trống; Khung vào lệnh lớn hơn Khung phân tích; Thua liên tiếp > 0 nhưng thời gian nghỉ = 0; Giá an toàn vào SL >= SL tối đa; Đồng thuận đảo chiều lệnh đã BE thấp hơn lệnh chưa BE; bật Telegram thiếu Token/Chat ID; chọn Hugging Face chưa nhập Space.\n- [MỚI] Tab Lịch Sử: nút chọn khoảng ngày mở Lịch Lãi/Lỗ (mỗi ngày ghi lãi xanh / lỗ đỏ, số lệnh, tổng cả tháng; bấm 2 ngày để chọn khoảng), nút chọn nhanh thêm 'Tháng này', thanh chỉ số gọn (Lệnh, Thắng, Hòa, Thua, Win rate, Lãi/Lỗ, PF).\n- Xuất/Nhập file cấu hình không chép thông số riêng từng máy (Magic, đường dẫn MT5, số luồng AI, toàn bộ Mục 5 Telegram, trạng thái bot đang chạy).\n- Không đổi luật giao dịch."
+  "description": "Phiên bản v1.3.29:\n- [MỚI] Telegram: bấm nút 'Phân tích AI' (hoặc gõ /ai) bot gửi kèm ẢNH chụp biểu đồ đang hiển thị trên app (nến, dự báo AI, SL/TP AI, vùng canh), rồi mới gửi tin chữ phân tích.\n- Telegram: bỏ hết icon trong tin nhắn và nút bấm, chỉ còn chữ; giữ chấm xanh/đỏ (tin đóng lệnh: thắng chấm xanh, thua chấm đỏ).\n- Tab Lịch Sử: ẩn cụm nút chọn nhanh (Hôm nay, Hôm qua, 7 ngày, 30 ngày, Tháng này); chọn ngày bằng nút khoảng ngày/Lịch Lãi/Lỗ.\n- Không đổi luật giao dịch."
 }

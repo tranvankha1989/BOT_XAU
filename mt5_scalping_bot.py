@@ -3386,8 +3386,9 @@ class KronosDesktopApp:
             command=self.export_history_to_excel
         ).pack(side=tk.RIGHT, padx=4)
 
+        # Cụm nút chọn nhanh ĐÃ ẨN (người dùng yêu cầu 19/11/2026): chọn ngày bằng nút khoảng ngày/lịch.
+        # Vẫn tạo nút (không pack) để phần tô sáng nút đang chọn không lỗi.
         quick_seg = tk.Frame(right_ctrl, bg="#2b3648", padx=1, pady=1)
-        quick_seg.pack(side=tk.RIGHT, padx=(0, 8))
         self._hist_quick_btns = {}
         for q_key, q_txt, q_fn in (
             ("today", "Hôm nay", self._set_history_today),
@@ -6846,6 +6847,11 @@ class KronosDesktopApp:
             "User-Agent": "Trading-AI-PRO-Bot",
             "Content-Type": "application/json",
         }
+        # Tin Telegram chỉ chữ thuần (người dùng yêu cầu 19/11/2026): bỏ icon ở chữ tin + nút bấm, giữ chấm 🟢/🔴
+        try:
+            data = self._tg_strip_icons_payload(data) if data else data
+        except Exception:
+            pass
         req_body = json.dumps(data).encode("utf-8") if data else None
         req = urllib.request.Request(url, data=req_body, headers=headers)
         ctx = None
@@ -6859,6 +6865,137 @@ class KronosDesktopApp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
             return None
+
+    # Icon/emoji bị bỏ khỏi tin Telegram; giữ lại 🟢 (U+1F7E2) và 🔴 (U+1F534). Không đụng →, ≤, ≥, •, ·, ─.
+    _TG_ICON_RE = re.compile(
+        "(?:(?![\U0001F7E2\U0001F534])[\U0001F000-\U0001FAFF☀-➿⬀-⯿⌚⌛⌨⏏"
+        "⏩-⏺▪▫▶◀◻-◾ℹ〰〽㊗㊙️‍⃣])+ ?"
+    )
+
+    @classmethod
+    def _tg_plain_text(cls, text):
+        """Bỏ icon khỏi chữ gửi Telegram (giữ 🟢/🔴). Nếu bỏ xong rỗng thì trả nguyên văn."""
+        if not isinstance(text, str) or not text:
+            return text
+        out = cls._TG_ICON_RE.sub("", text)
+        out = "\n".join(ln.rstrip() for ln in out.split("\n")).strip()
+        return out or text
+
+    def _tg_strip_icons_payload(self, data: dict) -> dict:
+        """Bản sao payload Telegram với 'text'/'caption' và chữ trên nút inline đã bỏ icon."""
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        for k in ("text", "caption"):
+            if isinstance(out.get(k), str):
+                out[k] = self._tg_plain_text(out[k])
+        rm = out.get("reply_markup")
+        if isinstance(rm, dict) and isinstance(rm.get("inline_keyboard"), list):
+            rm = dict(rm)
+            rm["inline_keyboard"] = [
+                [dict(b, text=self._tg_plain_text(b.get("text"))) if isinstance(b, dict) else b for b in row]
+                if isinstance(row, list) else row
+                for row in rm["inline_keyboard"]
+            ]
+            out["reply_markup"] = rm
+        return out
+
+    def _tg_capture_chart_png(self, timeout: float = 6.0):
+        """Chụp biểu đồ chính đang hiển thị (PNG bytes) để gửi Telegram cùng phân tích AI.
+        Gọi từ luồng nền: việc vẽ chạy trên luồng Tk chính (matplotlib không an toàn đa luồng), luồng gọi chờ tối đa timeout giây.
+        Ẩn tạm đường chữ thập của chuột khi chụp. Lỗi/hết giờ -> None (chỉ gửi chữ như cũ)."""
+        fig = getattr(self, "fig", None)
+        root = getattr(self, "root", None)
+        if fig is None or root is None:
+            return None
+        box = {}
+        done = threading.Event()
+
+        def _grab():
+            try:
+                import io
+                cross = [a for a in (getattr(self, n, None) for n in
+                                     ("cross_vline", "cross_hline", "cross_price_annot", "cross_time_annot")) if a is not None]
+                vis = [a.get_visible() for a in cross]
+                for a in cross:
+                    a.set_visible(False)
+                try:
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", dpi=fig.dpi * 1.5, facecolor=fig.get_facecolor())
+                    box["png"] = buf.getvalue()
+                finally:
+                    for a, v in zip(cross, vis):
+                        a.set_visible(v)
+                    try:
+                        self._request_canvas_redraw(full=True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            finally:
+                done.set()
+
+        if threading.current_thread() is threading.main_thread():
+            _grab()
+        else:
+            try:
+                root.after(0, _grab)
+            except Exception:
+                return None
+            if not done.wait(timeout):
+                return None
+        return box.get("png")
+
+    def _telegram_send_photo(self, token: str, chat_id: str, png: bytes, caption: str = "", timeout: int = 25) -> Optional[dict]:
+        """Gửi ảnh PNG lên Telegram (sendPhoto, multipart/form-data qua urllib, không thư viện ngoài)."""
+        clean_token = (token or "").strip()
+        if not clean_token or not chat_id or not png:
+            return None
+        import uuid
+        boundary = "KronosTg" + uuid.uuid4().hex
+        crlf = "\r\n"
+
+        def _field(name, val):
+            return (f"--{boundary}{crlf}Content-Disposition: form-data; name=\"{name}\"{crlf}{crlf}{val}{crlf}").encode("utf-8")
+
+        body = _field("chat_id", str(chat_id))
+        cap = self._tg_plain_text(caption or "")
+        if cap:
+            body += _field("caption", cap[:1000])
+        body += (f"--{boundary}{crlf}Content-Disposition: form-data; name=\"photo\"; filename=\"chart.png\"{crlf}"
+                 f"Content-Type: image/png{crlf}{crlf}").encode("utf-8") + png + f"{crlf}--{boundary}--{crlf}".encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{clean_token}/sendPhoto", data=body,
+            headers={"User-Agent": "Trading-AI-PRO-Bot", "Content-Type": f"multipart/form-data; boundary={boundary}"})
+        ctx = None
+        try:
+            import ssl
+            ctx = ssl._create_unverified_context()
+        except Exception:
+            pass
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+
+    def _telegram_send_ai_report(self, token: str, chat_id: str):
+        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ đang hiển thị trên app trước, rồi tin chữ phân tích kèm nút bấm.
+        Chụp/gửi ảnh lỗi thì vẫn gửi tin chữ như cũ."""
+        try:
+            png = self._tg_capture_chart_png()
+            if png:
+                pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
+                name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+                try:
+                    sym = str(self._get_profile_cfg(pk).get("symbol", pk)).strip()
+                except Exception:
+                    sym = pk
+                cap = f"Biểu đồ {name} ({sym}) lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}"
+                self._telegram_send_photo(token, chat_id, png, cap)
+        except Exception:
+            pass
+        self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
 
     def _get_telegram_inline_keyboard(self) -> dict:
         """
@@ -7025,7 +7162,7 @@ class KronosDesktopApp:
                 "text": "🧠 Đang lấy phân tích AI mới nhất...",
                 "show_alert": False
             })
-            self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
+            self._telegram_send_ai_report(token, chat_id)
 
         elif data == "tg_toggle_xau":
             xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
@@ -7130,7 +7267,7 @@ class KronosDesktopApp:
             self._telegram_send_with_keyboard(token, chat_id, report)
 
         elif norm_txt in ("/ai", "phân tích", "phân tích ai"):
-            self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
+            self._telegram_send_ai_report(token, chat_id)
 
         elif norm_txt in ("tạm dừng", "/pause", "/stop"):
             self.root.after(0, lambda: self.stop_auto_scan("XAUUSD"))
@@ -7305,12 +7442,13 @@ class KronosDesktopApp:
             return
 
         category = cd.get("category", "")
+        # Chỉ giữ chấm xanh/đỏ (người dùng yêu cầu 19/11/2026): thắng 🟢, thua 🔴, hòa vốn không chấm
         if category == "WIN":
-            icon = "🎯"
+            icon = "🟢"
         elif category in ("BE", "BE+"):
-            icon = "🛡️"
+            icon = ""
         else:
-            icon = "🛑"
+            icon = "🔴"
 
         net_pnl = float(cd.get("net_pnl", 0.0))
         r_str = cd.get("r_ratio_str", "")
@@ -7333,7 +7471,7 @@ class KronosDesktopApp:
 
         # Tin gọn 2 dòng (người dùng chọn 19/11/2026); nút bấm do hàm gửi gắn vào tin mới nhất
         msg = (
-            f"{icon} {sym_tag} {cd.get('type')} {net_pnl:+.2f}${r_suffix} · {status_short}\n"
+            f"{icon + ' ' if icon else ''}{sym_tag} {cd.get('type')} {net_pnl:+.2f}${r_suffix} · {status_short}\n"
             f"{open_p:.2f} → {close_p:.2f} · giữ {dur_str} · Ngày {float(day_pnl):+.2f}$ · #{cd.get('ticket')}"
         )
         self._telegram_queue.put((msg, None))
