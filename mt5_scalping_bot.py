@@ -8279,22 +8279,29 @@ class KronosDesktopApp:
             pending.discard(slot)
 
     def _paint_param_issues(self, issues, widget_of: dict):
-        """Tô ô nhập: lỗi = nền đỏ, cần lưu ý = nền cam, hợp lệ = màu thường. widget_of: khóa -> ô nhập (tk.Entry)."""
+        """Tô ô nhập: lỗi = nền đỏ, cần lưu ý = nền cam, hợp lệ = màu thường. widget_of: khóa -> ô nhập (tk.Entry).
+        Kèm dòng báo ngay DƯỚI ô (giá trị đang nhập + mức hợp lệ) để người dùng thấy ngay chỗ sai."""
         rank = {"error": 2, "warn": 1}
         level_of = {}
+        items_of = {}
         for it in issues or []:
             for k in it.get("keys", ()):
                 if rank.get(it.get("level"), 0) > rank.get(level_of.get(k), 0):
                     level_of[k] = it.get("level")
+                items_of.setdefault(k, []).append(it)
         best = {}  # nhiều khóa dùng chung 1 ô (fast_sl_cooldown_mins) -> lấy mức nặng nhất
         for k, w in (widget_of or {}).items():
             if not isinstance(w, tk.Entry):
                 continue
             lv = level_of.get(k)
             cur = best.get(id(w))
-            if cur is None or rank.get(lv, 0) > rank.get(cur[1], 0):
-                best[id(w)] = (w, lv)
-        for w, lv in best.values():
+            if cur is None:
+                best[id(w)] = [w, lv, list(items_of.get(k, []))]
+                continue
+            if rank.get(lv, 0) > rank.get(cur[1], 0):
+                cur[1] = lv
+            cur[2].extend(it for it in items_of.get(k, []) if it not in cur[2])
+        for w, lv, its in best.values():
             try:
                 if lv == "error":
                     w.config(bg=self.PARAM_ERR_BG, fg="#ffffff")
@@ -8304,6 +8311,32 @@ class KronosDesktopApp:
                     w.config(bg=self.PARAM_OK_BG, fg=TEXT_MAIN)
             except Exception:
                 pass
+            self._show_param_field_hint(w, lv, its)
+
+    def _show_param_field_hint(self, w, level, items):
+        """Dòng báo ngay dưới ô nhập sai / cần lưu ý (chỉ giao diện); ô hợp lệ thì ẩn. Không bao giờ làm hỏng giao diện."""
+        try:
+            hints = self.__dict__.setdefault("_param_hint_lbls", {})
+            lbl = hints.get(str(w))
+            if level not in ("error", "warn"):
+                if lbl is not None and lbl.winfo_exists() and lbl.winfo_manager():
+                    lbl.pack_forget()
+                return
+            row = w.master
+            if row is None or row.winfo_manager() != "pack":
+                return  # ô không nằm trong dòng xếp bằng pack: chỉ tô màu + báo dưới nút Lưu như cũ
+            errs = [it for it in items if it.get("level") == "error"]
+            shown = (errs or list(items))[:2]
+            text = "\n".join(("⛔ " if it.get("level") == "error" else "⚠️ ") + str(it.get("msg", "")) for it in shown)
+            if lbl is None or not lbl.winfo_exists():
+                lbl = tk.Label(row.master, text="", bg=row.cget("bg"), font=("Segoe UI", 7),
+                               justify=tk.LEFT, anchor="w", wraplength=280)
+                hints[str(w)] = lbl
+            lbl.config(text=text, fg=("#ff6b6b" if errs else "#fbbf24"))
+            if not lbl.winfo_manager():
+                lbl.pack(fill=tk.X, after=row, padx=row.pack_info().get("padx", 0), pady=(0, 2))
+        except Exception:
+            pass
 
     def _show_param_issue_text(self, lbl, issues, max_lines: int = 4):
         """Ghi lý do lên nhãn lbl (lỗi trước, lưu ý sau); không có vấn đề thì ẩn nhãn."""

@@ -157,6 +157,12 @@ def _parse_number(raw, typ: str):
     return x, None
 
 
+def _shown_value(raw) -> str:
+    """Giá trị người dùng đang nhập, để ghi vào câu báo (cắt bớt nếu quá dài)."""
+    s = "" if raw is None else str(raw).strip()
+    return s if len(s) <= 20 else s[:20] + "…"
+
+
 def _bound_text(lo, lo_incl: bool, hi) -> str:
     if hi is not None:
         return f"phải từ {lo:g} đến {hi:g}" if lo_incl else f"phải lớn hơn {lo:g} và không quá {hi:g}"
@@ -207,11 +213,12 @@ def validate_param_values(cfg: dict) -> list:
         if err == "empty":
             issues.append(_issue("error", (key,), f"{name}: chưa nhập."))
             continue
+        shown = _shown_value(cfg.get(key))
         if err == "int":
-            issues.append(_issue("error", (key,), f"{name}: phải là số nguyên (VD 2)."))
+            issues.append(_issue("error", (key,), f"{name}: đang nhập '{shown}', phải là số nguyên (VD 2)."))
             continue
         if err is not None:
-            issues.append(_issue("error", (key,), f"{name}: phải là số (dùng dấu chấm, VD 1.5)."))
+            issues.append(_issue("error", (key,), f"{name}: đang nhập '{shown}', phải là số (dùng dấu chấm, VD 1.5)."))
             continue
         if key in ZERO_IS_OFF and x == 0:
             vals[key] = x
@@ -220,7 +227,7 @@ def validate_param_values(cfg: dict) -> list:
             txt = _bound_text(lo, lo_incl, hi)
             if key in ZERO_IS_OFF:
                 txt = "phải bằng 0 (tắt) hoặc " + txt[len("phải "):]
-            issues.append(_issue("error", (key,), f"{name}: {txt}."))
+            issues.append(_issue("error", (key,), f"{name}: đang nhập {shown}, {txt}."))
             continue
         vals[key] = x
 
