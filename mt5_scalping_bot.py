@@ -6920,13 +6920,29 @@ class KronosDesktopApp:
                     w.config(state=("disabled" if locked else "readonly"))
                 elif isinstance(w, tk.Entry):
                     w.config(state=(tk.DISABLED if locked else tk.NORMAL),
-                             disabledbackground="#1a1f2b", disabledforeground=dim)
+                             disabledbackground="#1a1f2b", disabledforeground="#8b95a8")
                 else:
-                    w.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground=dim)
-                for lbl in _labels(row):
-                    lbl.config(fg=(dim if locked else TEXT_MAIN))
+                    # Ô tích: chữ giữ màu thường để vẫn đọc được, chỉ không bấm được
+                    w.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground=str(w.cget("fg")))
             except Exception:
                 pass
+        # Nút khôi phục mặc định + nút Lưu cấu hình mặc định: khóa theo ổ khóa
+        try:
+            btns = [getattr(self, "save_defaults_btn", None)]
+
+            def _find_btns(w):
+                for c in w.winfo_children():
+                    if isinstance(c, tk.Button) and "Khôi phục" in str(c.cget("text")):
+                        btns.append(c)
+                    _find_btns(c)
+
+            for sec in getattr(self, "accordion_sections", []):
+                _find_btns(sec.content)
+            for bt in btns:
+                if bt is not None:
+                    bt.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground=dim)
+        except Exception:
+            pass
         # Thông số con: mở khóa xong phải trả về đúng trạng thái theo cha (cha tắt -> con vẫn mờ)
         for fn in list(self.__dict__.get("_param_syncs", [])):
             try:
@@ -8922,7 +8938,8 @@ class KronosDesktopApp:
                 return True  # đang gõ dở giá trị: không khóa con
 
         def _sync(*_a):
-            on = _is_on() and not getattr(self, "_params_locked", False)
+            parent_on = _is_on()
+            on = parent_on and not getattr(self, "_params_locked", False)
             for row, w in kids:
                 try:
                     if isinstance(w, ttk.Combobox):
@@ -8933,7 +8950,7 @@ class KronosDesktopApp:
                     else:
                         w.config(state=(tk.NORMAL if on else tk.DISABLED))
                     for lbl in _labels(row):
-                        lbl.config(fg=(TEXT_MAIN if on else "#5b6475"))
+                        lbl.config(fg=(TEXT_MAIN if parent_on else "#5b6475"))
                 except Exception:
                     pass
 
@@ -8965,7 +8982,7 @@ class KronosDesktopApp:
                 row_bg = "#123524" if on else PANEL_BG
                 row.config(bg=row_bg)
                 cb.config(fg=(GREEN_UP if on else fg), bg=row_bg, activebackground=row_bg,
-                          activeforeground=(GREEN_UP if on else fg))
+                          activeforeground=(GREEN_UP if on else fg), disabledforeground=(GREEN_UP if on else fg))
             except Exception:
                 pass
 
