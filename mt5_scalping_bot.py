@@ -2807,6 +2807,7 @@ class KronosDesktopApp:
         # Hộp Tín hiệu bên Cột phải (Tích hợp nút Reload % bo tròn & Công tắc gạt START/STOP ở góc phải)
         sig_box = tk.Frame(right_panel, bg=PANEL_BG, padx=12, pady=6)
         sig_box.pack(fill=tk.X, pady=(0, 4))
+        self.live_sig_box = sig_box  # ẩn khi mở màn hình Backtest (Backtest có dòng tín hiệu riêng)
 
         sig_right = tk.Frame(sig_box, bg=PANEL_BG)
         sig_right.pack(side=tk.RIGHT, padx=(12, 0), anchor="center")
@@ -2900,7 +2901,11 @@ class KronosDesktopApp:
         self.right_paned.pack(fill=tk.BOTH, expand=True)
 
         # Biểu đồ Nến tương tác trực tiếp bằng chuột + Thanh công cụ chọn nhanh Khung M1/M5/M15/H1
-        chart_frame = tk.Frame(self.right_paned, bg=PANEL_BG)
+        # Khung chứa: biểu đồ live HOẶC màn hình Backtest riêng (khi mở tab Backtest); đổi qua lại không đụng bot live
+        self.chart_holder = tk.Frame(self.right_paned, bg=PANEL_BG)
+        chart_frame = tk.Frame(self.chart_holder, bg=PANEL_BG)
+        chart_frame.pack(fill=tk.BOTH, expand=True)
+        self.live_chart_frame = chart_frame
 
         chart_toolbar = tk.Frame(chart_frame, bg="#131822", padx=10, pady=4, highlightthickness=1, highlightbackground="#232d3f")
         chart_toolbar.pack(fill=tk.X)
@@ -2990,7 +2995,7 @@ class KronosDesktopApp:
         self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Đưa Khung Biểu Đồ và Bảng Lệnh Đa Tab vào PanedWindow kéo giãn linh hoạt
-        self.right_paned.add(chart_frame, minsize=180, stretch="always")
+        self.right_paned.add(self.chart_holder, minsize=180, stretch="always")
         self.right_paned.add(self.bottom_notebook, minsize=120, stretch="always")
 
         self.right_paned.bind("<ButtonRelease-1>", self._on_sash_released, add="+")
@@ -3557,6 +3562,11 @@ class KronosDesktopApp:
             self.bt_pwd_err_lbl.config(text="")
             self.bt_lock_frame.pack_forget()
             self.bt_main_frame.pack(fill=tk.BOTH, expand=True)
+            try:
+                if self.bottom_notebook.index(self.bottom_notebook.select()) == 3:
+                    self._bt_set_workspace_visible(True)
+            except Exception:
+                pass
             if hasattr(self, "bottom_notebook") and hasattr(self, "backtest_tab"):
                 self.bottom_notebook.tab(self.backtest_tab, text="🧪 KIỂM THỬ CHIẾN LƯỢC (BACKTEST)")
             self.show_toast("Đã mở khóa Quản trị viên (Admin Mode)!", is_error=False, duration_ms=2500)
@@ -3571,6 +3581,10 @@ class KronosDesktopApp:
         self._bt_cancel_flag = True
         self.bt_main_frame.pack_forget()
         self.bt_lock_frame.pack(fill=tk.BOTH, expand=True)
+        try:
+            self._bt_set_workspace_visible(False)
+        except Exception:
+            pass
         if hasattr(self, "bottom_notebook") and hasattr(self, "backtest_tab"):
             self.bottom_notebook.tab(self.backtest_tab, text="🔒 BACKTEST (ADMIN)")
         self.show_toast("Đã khóa lại tính năng Backtest!", is_error=False, duration_ms=2000)
@@ -4181,6 +4195,11 @@ class KronosDesktopApp:
         self._bt_cancel_flag = False
         self._bt_worker_running = True
         self._reset_backtest_view_for_run()
+        try:
+            self._bt_ws_message("⚡ Engine cũ: không có màn hình chạy trực tiếp, kết quả hiện ở bảng lệnh bên dưới.\n"
+                                "Chọn engine '🧠 Code Live' để xem bot chạy theo thời gian như thật.")
+        except Exception:
+            pass
         self._update_bt_status("Đang khởi tạo môi trường kiểm thử...", 2)
 
         def _runner():
@@ -4308,13 +4327,22 @@ class KronosDesktopApp:
         self._bt_prog_pos = 0
         self._bt_last_event = {}
         self._bt_live_meta = {"pk": pk, "sym": sym, "capital": capital, "start": start_s, "end": end_s, "threads": threads}
+        self._bt_ev_pos = 0
         self._bt_worker_running = True
         self._bt_cancel_flag = False
         self._reset_backtest_view_for_run()
+        try:
+            self._bt_goto_workspace()
+            self.bt_ws_title_lbl.config(text=f"🧪 MÀN HÌNH BACKTEST — {sym} | {start_s} → {end_s} | chạy CODE LIVE theo cấu hình Backtest "
+                                             f"(tách riêng, không ảnh hưởng bot live)")
+            self._bt_ws_message("⏳ Đang nạp dữ liệu nến + tick từ MT5 (chỉ đọc)...\n"
+                                "Nạp xong, biểu đồ sẽ chạy theo thời gian như thật (tua được 1x...600x).")
+        except Exception as e:
+            self._write_file_log(f"[BACKTEST] Lỗi mở màn hình Backtest: {e}", is_error=True)
         self._update_bt_status(f"🧠 Đang chạy CODE LIVE {start_s} → {end_s} (tiến trình riêng, {threads} luồng AI, ưu tiên thấp)...", 1)
         self.log(f"[BACKTEST] Bắt đầu backtest bằng CODE LIVE [{pk} {sym}] {start_s} → {end_s} | thư mục: {run_dir}")
         self._bt_cleanup_old_runs()
-        self.root.after(700, self._poll_live_bt)
+        self.root.after(250, self._poll_live_bt)
 
     def _bt_request_cancel_live(self):
         run_dir = getattr(self, "_bt_run_dir", None)
@@ -4377,12 +4405,20 @@ class KronosDesktopApp:
                 txt = stage or (f"🧠 Code live: {pct}% | đang ở {when} | {ev.get('closed', 0)} lệnh đã đóng | "
                                 f"{ev.get('analyses', 0)} lần AI | {mins:.1f} phút{eta}")
                 self._update_bt_status(txt, max(pct, 1))
+            elif typ == "data_ready":
+                self._bt_on_data_ready(ev)
+        self._bt_feed_live_events()
         deadline = getattr(self, "_bt_cancel_deadline", None)
         if deadline and time.time() > deadline and proc.poll() is None:
             self._bt_kill_child()
         if proc.poll() is None:
-            self.root.after(700, self._poll_live_bt)
+            self.root.after(250, self._poll_live_bt)
             return
+        self._bt_feed_live_events()  # sự kiện cuối cùng trước khi tiến trình thoát
+        _p = getattr(self, "_bt_player", None)
+        if _p is not None and getattr(self, "_bt_player_run", None) == self._bt_run_dir and _p.live and not _p.finished:
+            # Tính xong: bỏ giới hạn mốc đã tính. Dừng/lỗi giữa chừng: chỉ phát tới mốc đã tính được.
+            _p.finish(None if os.path.exists(os.path.join(self._bt_run_dir, "result.json")) else _p.frontier)
         # Tiến trình đã kết thúc
         try:
             self._bt_stderr_fh.close()
@@ -4422,8 +4458,208 @@ class KronosDesktopApp:
         capital = float(res.get("capital", 1000.0))
         is_btc = "BTC" in str(res.get("symbol", "")).upper()
         contract = 1.0 if is_btc else 100.0
-        closed = sorted(res.get("closed", []), key=lambda c: float(c.get("close_ms", 0)))
-        trades, equity, eq_curve = [], capital, [(0, capital)]
+        trades, eq_curve = self._bt_rows_from_closed(res.get("closed", []), capital, contract)
+        self._bt_table_n = len(trades)
+        self._bt_trades_cache = trades
+        self._bt_equity_points = eq_curve
+        self._bt_last_result = res
+        self._bt_last_run_dir = run_dir
+        self._render_backtest_results(trades, eq_curve, capital)
+        try:
+            self.bt_tree.bind("<Double-1>", self._on_bt_tree_double_click)
+        except Exception:
+            pass
+        sm = res.get("summary", {})
+        n_err = int(res.get("n_errors", 0))
+        err_tag = f" | ⚠️ {n_err} lỗi trong code bot (xem log.txt)" if n_err else ""
+        self._update_bt_status(
+            f"✅ Xong (code live): {sm.get('n', len(trades))} lệnh | lãi ròng {float(sm.get('net', 0.0)):+.2f}$ | "
+            f"{res.get('n_analyses', 0)} lần AI | {float(res.get('minutes', 0.0)):.1f} phút{err_tag} — bấm đúp 1 lệnh để tua biểu đồ tới lệnh đó", 100)
+        self.log(f"[BACKTEST] Xong backtest CODE LIVE: {sm.get('n', 0)} lệnh, lãi ròng {float(sm.get('net', 0.0)):+.2f}$, "
+                 f"PF {sm.get('pf', 0)}, sụt vốn {sm.get('max_dd', 0)}$, lỗi code bot {n_err}. Log: {os.path.join(run_dir, 'log.txt')}")
+
+    def _on_bt_tree_double_click(self, event=None):
+        try:
+            sel = self.bt_tree.selection()
+            if not sel:
+                return
+            no = str(self.bt_tree.item(sel[0], "values")[0]).lstrip("#")
+            tr = self._bt_trades_cache[int(no) - 1]
+            self._open_bt_player(ticket=tr.get("mt5_ticket"))
+        except Exception:
+            pass
+
+    # ───── Màn hình Backtest riêng (khung biểu đồ phía trên, giống tab Vàng/BTC) ─────
+    def _bt_ensure_workspace(self):
+        """Màn hình Backtest ở khung biểu đồ phía trên (tạo 1 lần, nằm cùng chỗ với biểu đồ live)."""
+        ws = getattr(self, "bt_ws_frame", None)
+        if ws is not None and ws.winfo_exists():
+            return ws
+        ws = tk.Frame(self.chart_holder, bg="#131722")
+        bar = tk.Frame(ws, bg="#2a1f3d", padx=10, pady=3)
+        bar.pack(fill=tk.X)
+        self.bt_ws_title_lbl = tk.Label(
+            bar, text="🧪 MÀN HÌNH BACKTEST (tách riêng, không ảnh hưởng bot live)", bg="#2a1f3d", fg="#d1c4e9",
+            font=("Segoe UI", 9, "bold"), anchor="w")
+        self.bt_ws_title_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.bt_ws_body = tk.Frame(ws, bg="#131722")
+        self.bt_ws_body.pack(fill=tk.BOTH, expand=True)
+        self.bt_ws_placeholder = tk.Label(
+            self.bt_ws_body, bg="#131722", fg="#b2b5be", font=("Segoe UI", 11), justify=tk.CENTER,
+            text="Chọn ngày rồi bấm ▶ BẮT ĐẦU TEST (engine 🧠 Code Live).\n"
+                 "Nạp xong dữ liệu, biểu đồ sẽ chạy theo thời gian như thật: tín hiệu AI, nến dự báo, vùng canh, lệnh, nhật ký.\n"
+                 "Chọn tốc độ tua 1x...600x hoặc 'Tối đa'.")
+        self.bt_ws_placeholder.pack(expand=True)
+        self.bt_ws_frame = ws
+        return ws
+
+    def _bt_set_workspace_visible(self, show: bool):
+        """Đổi khung phía trên giữa biểu đồ live và màn hình Backtest (không dừng/đổi gì của bot live)."""
+        if getattr(self, "chart_holder", None) is None or getattr(self, "live_chart_frame", None) is None:
+            return
+        ws = getattr(self, "bt_ws_frame", None)
+        sb = getattr(self, "live_sig_box", None)
+        if show:
+            ws = self._bt_ensure_workspace()
+            if not ws.winfo_manager():
+                self.live_chart_frame.pack_forget()
+                if sb is not None:
+                    sb.pack_forget()
+                ws.pack(fill=tk.BOTH, expand=True)
+        else:
+            if ws is not None and ws.winfo_exists() and ws.winfo_manager():
+                ws.pack_forget()
+            if not self.live_chart_frame.winfo_manager():
+                self.live_chart_frame.pack(fill=tk.BOTH, expand=True)
+            if sb is not None and not sb.winfo_manager():
+                sb.pack(fill=tk.X, pady=(0, 4), before=self.right_paned)
+
+    def _bt_goto_workspace(self):
+        try:
+            if self.bottom_notebook.index(self.bottom_notebook.select()) != 3:
+                self.bottom_notebook.select(self.backtest_tab)
+        except Exception:
+            pass
+        self._bt_set_workspace_visible(True)
+
+    def _bt_close_ws_player(self):
+        p = getattr(self, "_bt_player", None)
+        if p is not None:
+            try:
+                p.close()
+            except Exception:
+                pass
+        self._bt_player = None
+        self._bt_player_run = None
+
+    def _bt_ws_message(self, text: str):
+        """Thông báo giữa màn hình Backtest (khi chưa có biểu đồ)."""
+        self._bt_ensure_workspace()
+        self._bt_close_ws_player()
+        self.bt_ws_placeholder.config(text=text)
+        if not self.bt_ws_placeholder.winfo_manager():
+            self.bt_ws_placeholder.pack(expand=True)
+
+    def _bt_make_ws_player(self, run_dir: str, start_utc: float, end_utc: float, contract: float, tf: str, live: bool,
+                           closed=(), sltp=()):
+        """Dựng trình phát lại NHÚNG vào màn hình Backtest từ player.npz của lượt chạy."""
+        from trading_modules.replay_player import ReplayPlayer
+        with np.load(os.path.join(run_dir, "player.npz")) as z:
+            data = {k: z[k] for k in ("sec", "o", "h", "l", "c")}
+        self._bt_ensure_workspace()
+        self._bt_close_ws_player()
+        try:
+            self.bt_ws_placeholder.pack_forget()
+        except Exception:
+            pass
+        tf = tf if tf in ("M1", "M5", "M15") else "M1"
+        self._bt_player = ReplayPlayer(self.root, data, list(closed), list(sltp), float(start_utc), float(end_utc),
+                                       contract=float(contract), tf=tf, parent=self.bt_ws_body, live=live, speed=60)
+        self._bt_player_run = run_dir
+        self._bt_table_n = -1
+        if not getattr(self, "_bt_view_loop_on", False):
+            self._bt_view_loop_on = True
+            self.root.after(400, self._bt_view_loop)
+        return self._bt_player
+
+    @staticmethod
+    def _bt_read_jsonl(path: str, pos: int) -> tuple:
+        """Đọc các dòng JSON MỚI (chỉ dòng hoàn chỉnh) từ vị trí pos. Trả (danh sách, vị trí mới)."""
+        out = []
+        try:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    f.seek(pos)
+                    data = f.read()
+                cut = data.rfind(b"\n")
+                if cut >= 0:
+                    pos += cut + 1
+                    for line in data[:cut + 1].splitlines():
+                        if line.strip():
+                            try:
+                                out.append(json.loads(line.decode("utf-8")))
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+        return out, pos
+
+    def _bt_feed_live_events(self):
+        """Đưa sự kiện mới của lượt đang chạy (events.jsonl) vào biểu đồ trực tiếp."""
+        p = getattr(self, "_bt_player", None)
+        run_dir = getattr(self, "_bt_run_dir", None)
+        if p is None or not run_dir or getattr(self, "_bt_player_run", None) != run_dir:
+            return
+        evs, self._bt_ev_pos = self._bt_read_jsonl(os.path.join(run_dir, "events.jsonl"), getattr(self, "_bt_ev_pos", 0))
+        if evs:
+            p.add_events(evs)
+
+    def _bt_on_data_ready(self, ev: dict):
+        """Tiến trình con đã nạp xong nến/tick -> dựng biểu đồ trực tiếp và bắt đầu chạy theo thời gian."""
+        meta = getattr(self, "_bt_live_meta", {}) or {}
+        contract = float(ev.get("contract", 100.0) or 100.0)
+        self._bt_view_meta = {"capital": float(meta.get("capital", 1000.0)), "contract": contract}
+        self._bt_ev_pos = 0
+        try:
+            p = self._bt_make_ws_player(self._bt_run_dir, float(ev["start"]), float(ev["end"]), contract,
+                                        str(ev.get("tf") or "M1").strip(), live=True)
+            p.play()
+        except Exception as e:
+            self._bt_ws_message(f"Không dựng được biểu đồ trực tiếp: {e}")
+            self._write_file_log(f"[BACKTEST] Lỗi dựng biểu đồ trực tiếp: {e}", is_error=True)
+
+    def _bt_view_loop(self):
+        """Đồng bộ bảng lệnh + thẻ KPI theo thời điểm đang phát (khi đang chạy trực tiếp)."""
+        p = getattr(self, "_bt_player", None)
+        if p is None or getattr(p, "_closed", True):
+            self._bt_view_loop_on = False
+            return
+        try:
+            self._bt_sync_table_to_cursor()
+        except Exception as e:
+            if not getattr(self, "_bt_sync_err_logged", False):
+                self._bt_sync_err_logged = True
+                self._write_file_log(f"[BACKTEST] Lỗi đồng bộ bảng lệnh theo biểu đồ: {e}", is_error=True)
+        self.root.after(400, self._bt_view_loop)
+
+    def _bt_sync_table_to_cursor(self):
+        """Đang tính: bảng lệnh chỉ gồm lệnh đã đóng TỚI thời điểm đang phát (như thật). Tính xong: đủ mọi lệnh."""
+        p = self._bt_player
+        n = p.n_closed_at_cursor() if (p.live and not p.finished) else len(p._closed_sorted)
+        if n == getattr(self, "_bt_table_n", -1):
+            return
+        self._bt_table_n = n
+        meta = getattr(self, "_bt_view_meta", {}) or {}
+        capital = float(meta.get("capital", 1000.0))
+        trades, eq = self._bt_rows_from_closed(p._closed_sorted[:n], capital, p.contract)
+        self._bt_trades_cache = trades
+        self._bt_equity_points = eq
+        self._render_backtest_results(trades, eq, capital, final=False)
+
+    def _bt_rows_from_closed(self, closed: list, capital: float, contract: float) -> tuple:
+        """Lệnh đã đóng (định dạng live_replay) -> dòng bảng lệnh + đường vốn của tab Backtest."""
+        closed = sorted(closed, key=lambda c: float(c.get("close_ms", 0)))
+        trades, equity, eq_curve = [], float(capital), [(0, float(capital))]
         for i, c in enumerate(closed):
             o_dt = datetime.fromtimestamp(float(c["open_ms"]) / 1000.0, VN_TZ)
             x_dt = datetime.fromtimestamp(float(c["close_ms"]) / 1000.0, VN_TZ)
@@ -4442,61 +4678,39 @@ class KronosDesktopApp:
                 "reason": c.get("reason_label") or c.get("reason", ""), "mt5_ticket": c.get("ticket"),
             })
             eq_curve.append((len(trades), round(equity, 2)))
-        self._bt_trades_cache = trades
-        self._bt_equity_points = eq_curve
-        self._bt_last_result = res
-        self._bt_last_run_dir = run_dir
-        self._render_backtest_results(trades, eq_curve, capital)
-        try:
-            self.bt_tree.bind("<Double-1>", self._on_bt_tree_double_click)
-        except Exception:
-            pass
-        sm = res.get("summary", {})
-        n_err = int(res.get("n_errors", 0))
-        err_tag = f" | ⚠️ {n_err} lỗi trong code bot (xem log.txt)" if n_err else ""
-        self._update_bt_status(
-            f"✅ Xong (code live): {sm.get('n', len(trades))} lệnh | lãi ròng {float(sm.get('net', 0.0)):+.2f}$ | "
-            f"{res.get('n_analyses', 0)} lần AI | {float(res.get('minutes', 0.0)):.1f} phút{err_tag} — bấm '🎬 Xem phát lại' hoặc bấm đúp 1 lệnh", 100)
-        self.log(f"[BACKTEST] Xong backtest CODE LIVE: {sm.get('n', 0)} lệnh, lãi ròng {float(sm.get('net', 0.0)):+.2f}$, "
-                 f"PF {sm.get('pf', 0)}, sụt vốn {sm.get('max_dd', 0)}$, lỗi code bot {n_err}. Log: {os.path.join(run_dir, 'log.txt')}")
-
-    def _on_bt_tree_double_click(self, event=None):
-        try:
-            sel = self.bt_tree.selection()
-            if not sel:
-                return
-            no = str(self.bt_tree.item(sel[0], "values")[0]).lstrip("#")
-            tr = self._bt_trades_cache[int(no) - 1]
-            self._open_bt_player(ticket=tr.get("mt5_ticket"))
-        except Exception:
-            pass
+        return trades, eq_curve
 
     def _open_bt_player(self, ticket=None):
-        """Mở trình phát lại nến (kiểu TradingView) cho lượt backtest code live gần nhất."""
+        """Xem lại lượt backtest code live trên màn hình Backtest (khung phía trên). ticket: tua tới lệnh đó."""
+        p = getattr(self, "_bt_player", None)
+        if p is not None and not getattr(p, "_closed", True):
+            self._bt_goto_workspace()
+            if ticket is not None:
+                p.jump_to_trade(ticket)
+            else:
+                p.go_start()
+                p.play()
+            return
         res = getattr(self, "_bt_last_result", None)
         run_dir = getattr(self, "_bt_last_run_dir", None)
         if not res or not run_dir:
             self.show_toast("Chưa có kết quả để phát lại: chạy Backtest bằng engine '🧠 Code Live' trước.", is_error=True, duration_ms=3500)
             return
         try:
-            from trading_modules.replay_player import ReplayPlayer
-            with np.load(os.path.join(run_dir, "player.npz")) as z:
-                data = {k: z[k] for k in ("sec", "o", "h", "l", "c")}
+            self._bt_goto_workspace()
             is_btc = "BTC" in str(res.get("symbol", "")).upper()
-            tf = str(res.get("tf") or "M1").strip()
-            old = getattr(self, "_bt_player", None)
-            if old is not None:
-                try:
-                    old.close()
-                except Exception:
-                    pass
-            self._bt_player = ReplayPlayer(
-                self.root, data, res.get("closed", []), res.get("sltp", []), float(res["start_utc"]), float(res["end_utc"]),
-                contract=1.0 if is_btc else 100.0, tf=tf if tf in ("M1", "M5", "M15") else "M1",
-                title=f"🎬 Phát lại Backtest {res.get('symbol', '')} | {len(res.get('closed', []))} lệnh | "
-                      f"lãi ròng {float(res.get('summary', {}).get('net', 0.0)):+.2f}$")
+            contract = 1.0 if is_btc else 100.0
+            self._bt_view_meta = {"capital": float(res.get("capital", 1000.0)), "contract": contract}
+            p = self._bt_make_ws_player(run_dir, float(res["start_utc"]), float(res["end_utc"]), contract,
+                                        str(res.get("tf") or "M1").strip(), live=False, closed=res.get("closed", []),
+                                        sltp=res.get("sltp", []))
+            self._bt_table_n = len(res.get("closed", []))  # bảng đã đủ lệnh: không vẽ lại (giữ dòng đang chọn)
+            evs, _pos = self._bt_read_jsonl(os.path.join(run_dir, "events.jsonl"), 0)
+            p.add_events([e for e in evs if e.get("type") in ("ai", "zone", "log")])
             if ticket is not None:
-                self._bt_player.jump_to_trade(ticket)
+                p.jump_to_trade(ticket)
+            else:
+                p.play()
         except Exception as e:
             self.show_toast(f"Không mở được trình phát lại: {e}", is_error=True, duration_ms=4000)
             self._write_file_log(f"[BACKTEST] Lỗi mở trình phát lại: {e}", is_error=True)
@@ -5330,7 +5544,7 @@ class KronosDesktopApp:
         if len(current_equity) >= 2:
             self._draw_equity_curve(current_equity)
 
-    def _render_backtest_results(self, trades: list, equity_curve: list, init_cap: float):
+    def _render_backtest_results(self, trades: list, equity_curve: list, init_cap: float, final: bool = True):
         """Xuất toàn bộ kết quả lên Treeview bảng lệnh, 6 thẻ Scorecard và biểu đồ Canvas."""
         # 1. Đổ dữ liệu vào Treeview
         if hasattr(self, "bt_tree") and self.bt_tree.winfo_exists():
@@ -5387,6 +5601,9 @@ class KronosDesktopApp:
             self.bt_kpi_maxwin_lbl.config(text=f"{avg_trade:+,.2f} $/lệnh", fg=GREEN_UP if avg_trade >= 0 else RED_DOWN)
 
         # 4. Cập nhật thanh tiến độ và vẽ biểu đồ Equity Curve
+        if not final:  # đang xem trực tiếp: chỉ cập nhật bảng/thẻ/đường vốn theo thời điểm đang phát
+            self._draw_equity_curve(equity_curve)
+            return
         self._update_bt_status(f"✓ Kiểm thử hoàn tất: {total} lệnh | Win Rate: {win_rate:.1f}% | Lãi ròng: {total_pnl:+,.2f} USD.", 100)
         self._draw_equity_curve(equity_curve)
 
@@ -7058,6 +7275,10 @@ class KronosDesktopApp:
 
     def _on_tab_changed(self, event):
         selected_idx = self.bottom_notebook.index(self.bottom_notebook.select())
+        try:
+            self._bt_set_workspace_visible(selected_idx == 3 and bool(getattr(self, "_backtest_unlocked", False)))
+        except Exception as e:
+            self._write_file_log(f"[BACKTEST] Lỗi đổi màn hình Backtest/biểu đồ live: {e}", is_error=True)
         if selected_idx == 0:
             self.chart_mode = "LIVE_POSITIONS"
             self._switch_active_profile("XAUUSD")

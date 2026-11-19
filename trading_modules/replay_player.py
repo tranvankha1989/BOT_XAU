@@ -1,13 +1,18 @@
 """
 trading_modules/replay_player.py
 ────────────────────────────────
-Trình PHÁT LẠI kết quả backtest dạng nến (kiểu TradingView Replay) cho tab Backtest của app.
+Trình PHÁT LẠI backtest dạng nến (kiểu TradingView Replay) cho tab Backtest của app.
 
-- Dữ liệu: nến 1 giây (player.npz do tools/live_replay.run_replay_job ghi), danh sách lệnh đã đóng, lịch sử SL/TP từng lệnh.
-- Phát lại từ kết quả ĐÃ TÍNH SẴN (không chạy AI lúc phát) nên mượt: vẽ bằng Tk Canvas với bộ hình nến dùng lại,
-  khoảng 60 khung hình/giây, nến đang chạy dựng dần từ dữ liệu 1 giây (không nhìn trước tương lai).
-- Điều khiển: Phát/Tạm dừng, lùi/tới 1 nến, tới lệnh kế tiếp, tốc độ 1x..600x, khung M1/M5/M15, phóng to/thu nhỏ, kéo thanh thời gian.
+- Dữ liệu: nến 1 giây (player.npz do tools/live_replay.run_replay_job ghi), lệnh, lịch sử SL/TP từng lệnh,
+  và (khi có) sự kiện trực tiếp events.jsonl: kết quả AI (dòng tín hiệu giống tab live + nến dự báo), vùng canh, nhật ký bot.
+- Hai chế độ:
+  + Cửa sổ riêng (Toplevel) hoặc NHÚNG vào khung có sẵn (parent=...) để thay biểu đồ live khi mở tab Backtest.
+  + live=True: XEM TRỰC TIẾP trong lúc tiến trình backtest còn đang tính: con trỏ thời gian chạy theo tốc độ chọn
+    nhưng không vượt mốc đã tính ("frontier"); tua nhanh hơn tốc độ AI thì tự chờ (giống video đang tải).
+- Vẽ bằng Tk Canvas, bộ hình nến dùng lại, ~60 khung hình/giây, chỉ vẽ lại khi có thay đổi;
+  nến đang chạy dựng dần từ dữ liệu 1 giây (không nhìn trước tương lai).
 """
+import math
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -17,7 +22,11 @@ from tkinter import ttk
 
 VN_TZ = timezone(timedelta(hours=7))
 SPEEDS = [1, 2, 5, 10, 30, 60, 120, 300, 600]
+SPEED_MAX = 10 ** 9           # "Tối đa": bám sát mốc đã tính
+SPEED_MAX_LABEL = "Tối đa"
 TF_CHOICES = {"M1": 60, "M5": 300, "M15": 900}
+TF_SEC_ALL = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400}
+LOG_KEEP = 400
 
 
 # ───────────────────────── Hàm tính (không giao diện, có test) ─────────────────────────
@@ -75,9 +84,25 @@ def vn_str(sec: float, fmt: str = "%d/%m %H:%M:%S") -> str:
     return datetime.fromtimestamp(float(sec), VN_TZ).strftime(fmt)
 
 
-# ───────────────────────── Cửa sổ phát lại ─────────────────────────
+def parse_speed(txt) -> int:
+    s = str(txt).strip()
+    if s == SPEED_MAX_LABEL:
+        return SPEED_MAX
+    try:
+        return max(1, int(s.lower().replace("x", "").strip()))
+    except ValueError:
+        return 0
+
+
+def active_index(times: np.ndarray, t: float) -> int:
+    """Chỉ số sự kiện cuối cùng có thời điểm <= t (-1 nếu chưa có)."""
+    return int(np.searchsorted(times, t, side="right")) - 1 if len(times) else -1
+
+
+# ───────────────────────── Trình phát lại ─────────────────────────
 class ReplayPlayer:
     BG = "#131722"
+    PANEL = "#0e1118"
     GRID = "#232733"
     TEXT = "#b2b5be"
     UP = "#26a69a"
@@ -85,10 +110,14 @@ class ReplayPlayer:
     PRICE = "#f0b90b"
     BUY = "#29b6f6"
     SELL = "#ffa726"
+    PRED_UP = "#80cbc4"
+    PRED_DOWN = "#ef9a9a"
+    FAN = "#3b4556"
     MAX_BARS = 400
 
     def __init__(self, root, data: dict, trades: list, sltp: list, start_utc: float, end_utc: float,
-                 contract: float = 100.0, title: str = "", tf: str = "M1", start_at: float = None):
+                 contract: float = 100.0, title: str = "", tf: str = "M1", start_at: float = None,
+                 parent=None, live: bool = False, speed: int = 60):
         self.root = root
         self.sec = np.asarray(data.get("sec", []), dtype=np.int64)
         self.o = np.asarray(data.get("o", []), dtype=np.float64)
@@ -97,19 +126,27 @@ class ReplayPlayer:
         self.c = np.asarray(data.get("c", []), dtype=np.float64)
         self.start_utc, self.end_utc = float(start_utc), float(end_utc)
         self.contract = float(contract)
-        self.trades = sorted([dict(t) for t in (trades or [])], key=lambda t: t["open_ms"])
-        for t in self.trades:
-            t["_os"] = float(t["open_ms"]) / 1000.0
-            t["_cs"] = float(t["close_ms"]) / 1000.0
+        self.embedded = parent is not None
+        self.live = bool(live)
+        self.finished = not self.live
+        self.frontier = float(start_utc) if self.live else None  # mốc đã tính tới (None = đã có toàn bộ)
+        self.waiting = False
+        self._closed_recs = []
+        self._open_recs = {}
+        for t in trades or []:
+            self._add_closed(dict(t))
+        self._rebuild_trades()
         self.sltp = group_sltp(sltp)
-        closed_sorted = sorted(self.trades, key=lambda t: t["_cs"])
-        self._close_s = np.array([t["_cs"] for t in closed_sorted], dtype=np.float64)
-        self._cum_pnl = np.cumsum([float(t["profit"]) for t in closed_sorted]) if closed_sorted else np.zeros(0)
+        self.ai_events, self._ai_t = [], np.zeros(0)
+        self.zones, self._zone_t = [], np.zeros(0)
+        self.logs, self._log_t = [], np.zeros(0)
+        self._log_shown = 0
+        self._hdr_idx = None
         self.tf_name = tf if tf in TF_CHOICES else "M1"
         self.bars = aggregate_bars(self.sec, self.o, self.h, self.l, self.c, TF_CHOICES[self.tf_name])
         self.t = float(start_at) if start_at is not None else self.start_utc
         self.playing = False
-        self.speed = 60
+        self.speed = int(speed)
         self.n_visible = 90
         self._yr = None
         self._dirty = True
@@ -120,22 +157,43 @@ class ReplayPlayer:
         self._slider_lock = False
         self._closed = False
 
-        self.win = tk.Toplevel(root)
-        self.win.title(title or "Phát lại Backtest")
-        self.win.configure(bg=self.BG)
-        self.win.geometry("1180x660")
-        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        if self.embedded:
+            self.win = tk.Frame(parent, bg=self.BG)
+            self.win.pack(fill=tk.BOTH, expand=True)
+        else:
+            self.win = tk.Toplevel(root)
+            self.win.title(title or "Phát lại Backtest")
+            self.win.configure(bg=self.BG)
+            self.win.geometry("1180x660")
+            self.win.protocol("WM_DELETE_WINDOW", self.close)
 
-        top = tk.Frame(self.win, bg="#0e1118")
+        # Dòng tín hiệu AI (giống đầu tab live) - hiện khi có kết quả AI
+        self.hdr = tk.Frame(self.win, bg=self.PANEL, padx=10, pady=4)
+        self.hdr_title = tk.Label(self.hdr, text="⏳ Chờ lần phân tích AI đầu tiên...", bg=self.PANEL, fg=self.PRICE,
+                                  font=("Segoe UI", 11, "bold"), anchor="w")
+        self.hdr_title.pack(fill=tk.X)
+        self.hdr_detail = tk.Label(self.hdr, text="", bg=self.PANEL, fg="#e0e3eb", font=("Consolas", 8), justify=tk.LEFT, anchor="w")
+        self.hdr_detail.pack(fill=tk.X, pady=(2, 0))
+        if self.live:
+            self.hdr.pack(fill=tk.X)
+
+        top = tk.Frame(self.win, bg=self.PANEL)
         top.pack(fill=tk.X)
-        self.info_lbl = tk.Label(top, text="", bg="#0e1118", fg="#e0e3eb", font=("Consolas", 9), anchor="w", padx=8, pady=4)
+        self.info_lbl = tk.Label(top, text="", bg=self.PANEL, fg="#e0e3eb", font=("Consolas", 9), anchor="w", padx=8, pady=3)
         self.info_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # Nhật ký bot chạy theo thời gian (khung nhúng)
+        self.log_text = None
+        if self.embedded:
+            self.log_text = tk.Text(self.win, height=6, bg="#0b0e14", fg="#c9ccd4", font=("Consolas", 8), relief=tk.FLAT,
+                                    wrap=tk.NONE, state=tk.DISABLED, padx=6)
+            self.log_text.pack(side=tk.BOTTOM, fill=tk.X)
+
+        ctl = tk.Frame(self.win, bg=self.PANEL, pady=4)
+        ctl.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas = tk.Canvas(self.win, bg=self.BG, highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        ctl = tk.Frame(self.win, bg="#0e1118", pady=4)
-        ctl.pack(fill=tk.X)
         bstyle = dict(bg="#1e222d", fg="#e0e3eb", activebackground="#2a2e39", activeforeground="#ffffff",
                       relief=tk.FLAT, font=("Segoe UI", 9, "bold"), padx=8, cursor="hand2")
         tk.Button(ctl, text="⏮", command=self.go_start, **bstyle).pack(side=tk.LEFT, padx=(8, 2))
@@ -144,12 +202,13 @@ class ReplayPlayer:
         self.play_btn.pack(side=tk.LEFT, padx=2)
         tk.Button(ctl, text="1 nến ▶", command=self.step_forward, **bstyle).pack(side=tk.LEFT, padx=2)
         tk.Button(ctl, text="Lệnh kế ⏭", command=self.next_trade, **bstyle).pack(side=tk.LEFT, padx=2)
-        tk.Label(ctl, text="Tốc độ:", bg="#0e1118", fg=self.TEXT, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(10, 2))
-        self.speed_var = tk.StringVar(value=f"{self.speed}x")
-        sp = ttk.Combobox(ctl, textvariable=self.speed_var, values=[f"{s}x" for s in SPEEDS], width=5, state="readonly")
+        tk.Label(ctl, text="Tốc độ:", bg=self.PANEL, fg=self.TEXT, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(10, 2))
+        self.speed_var = tk.StringVar(value=self._speed_label())
+        sp = ttk.Combobox(ctl, textvariable=self.speed_var, values=[f"{s}x" for s in SPEEDS] + [SPEED_MAX_LABEL],
+                          width=7, state="readonly")
         sp.pack(side=tk.LEFT)
         sp.bind("<<ComboboxSelected>>", lambda e: self.set_speed(self.speed_var.get()))
-        tk.Label(ctl, text="Khung:", bg="#0e1118", fg=self.TEXT, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(10, 2))
+        tk.Label(ctl, text="Khung:", bg=self.PANEL, fg=self.TEXT, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(10, 2))
         self.tf_var = tk.StringVar(value=self.tf_name)
         tfc = ttk.Combobox(ctl, textvariable=self.tf_var, values=list(TF_CHOICES), width=4, state="readonly")
         tfc.pack(side=tk.LEFT)
@@ -165,16 +224,118 @@ class ReplayPlayer:
         self._bodies = [self.canvas.create_rectangle(0, 0, 0, 0, fill=self.UP, outline=self.UP, state="hidden")
                         for _ in range(self.MAX_BARS + 1)]
 
-        self.win.bind("<space>", lambda e: self.toggle_play())
-        self.win.bind("<Right>", lambda e: self.step_forward())
-        self.win.bind("<Left>", lambda e: self.step_back())
+        key_target = self.canvas if self.embedded else self.win
+        key_target.bind("<space>", lambda e: self.toggle_play())
+        key_target.bind("<Right>", lambda e: self.step_forward())
+        key_target.bind("<Left>", lambda e: self.step_back())
+        if self.embedded:
+            self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
         self.canvas.bind("<MouseWheel>", lambda e: self.zoom(0.85 if e.delta > 0 else 1.18))
         self.canvas.bind("<Configure>", lambda e: self._mark())
         self._after_id = self.win.after(30, self._tick)
 
+    # ── dữ liệu lệnh / sự kiện ──
+    def _add_closed(self, c: dict):
+        c["_os"] = float(c["open_ms"]) / 1000.0
+        c["_cs"] = float(c["close_ms"]) / 1000.0
+        self._closed_recs.append(c)
+
+    def _rebuild_trades(self):
+        self.trades = sorted(self._closed_recs + list(self._open_recs.values()), key=lambda t: t["_os"])
+        closed_sorted = sorted(self._closed_recs, key=lambda t: t["_cs"])
+        self._closed_sorted = closed_sorted
+        self._close_s = np.array([t["_cs"] for t in closed_sorted], dtype=np.float64)
+        self._cum_pnl = np.cumsum([float(t["profit"]) for t in closed_sorted]) if closed_sorted else np.zeros(0)
+
+    def add_events(self, evs: list):
+        """Nhận sự kiện từ events.jsonl (open/sltp/close/ai/zone/log/t) - gọi được nhiều lần, theo thứ tự ghi."""
+        ch_tr = ch_ai = ch_zone = ch_log = False
+        for ev in evs or []:
+            try:
+                typ = ev.get("type")
+                t = float(ev.get("t", 0.0) or 0.0)
+                if self.live and not self.finished and self.frontier is not None and t > self.frontier:
+                    self.frontier = t
+                if typ == "open":
+                    tk_ = int(ev["ticket"])
+                    self._open_recs[tk_] = {"ticket": tk_, "type": ev.get("side", "BUY"), "open_ms": int(ev["open_ms"]),
+                                            "price_open": float(ev["price"]), "volume": float(ev.get("vol", 0.0)),
+                                            "close_ms": None, "profit": 0.0, "_os": float(ev["open_ms"]) / 1000.0, "_cs": math.inf}
+                    ch_tr = True
+                elif typ == "close":
+                    c = {k: v for k, v in ev.items() if k not in ("type", "t", "side")}
+                    c["type"] = str(ev.get("side") or "BUY")  # "type" của sự kiện là "close"; chiều lệnh nằm ở "side"
+                    self._add_closed(c)
+                    op = self._open_recs.get(int(c["ticket"]))
+                    if op is not None:
+                        rest = float(op["volume"]) - float(c.get("volume", op["volume"]))
+                        if rest <= 1e-9:
+                            del self._open_recs[int(c["ticket"])]
+                        else:
+                            op["volume"] = rest
+                    ch_tr = True
+                elif typ == "sltp":
+                    self.sltp.setdefault(int(ev["ticket"]), []).append((int(round(t * 1000.0)), float(ev["sl"]), float(ev["tp"])))
+                elif typ == "ai":
+                    ev = dict(ev)
+                    ev["_tf_sec"] = TF_SEC_ALL.get(str(ev.get("tf", "")).upper(), 300)
+                    self.ai_events.append(ev)
+                    ch_ai = True
+                elif typ == "zone":
+                    self.zones.append(ev)
+                    ch_zone = True
+                elif typ == "log":
+                    self.logs.append((t, str(ev.get("msg", ""))))
+                    ch_log = True
+            except Exception:
+                continue
+        if ch_tr:
+            self._rebuild_trades()
+        if ch_ai:
+            self.ai_events.sort(key=lambda e: float(e.get("t", 0.0)))
+            self._ai_t = np.array([float(e.get("t", 0.0)) for e in self.ai_events])
+            self._hdr_idx = None
+        if ch_zone:
+            self.zones.sort(key=lambda e: float(e.get("t", 0.0)))
+            self._zone_t = np.array([float(e.get("t", 0.0)) for e in self.zones])
+        if ch_log:
+            self._log_t = np.array([x[0] for x in self.logs])
+        if ch_ai and not self.hdr.winfo_ismapped():
+            try:
+                self.hdr.pack(fill=tk.X, before=self.info_lbl.master)
+            except tk.TclError:
+                pass
+        self._mark()
+
+    def set_frontier(self, t: float):
+        if self.live and not self.finished and t is not None and (self.frontier is None or t > self.frontier):
+            self.frontier = float(t)
+            self._mark()
+
+    def finish(self, end_utc: float = None):
+        """Tiến trình đã tính xong (hoặc dừng): bỏ giới hạn mốc đã tính; end_utc mới khi bị dừng giữa chừng."""
+        if end_utc is not None:
+            self.end_utc = float(end_utc)
+        self.finished = True
+        self.frontier = None
+        self.waiting = False
+        self._mark()
+
+    def n_closed_at_cursor(self) -> int:
+        return int(np.searchsorted(self._close_s, self.t, side="right"))
+
+    def closed_upto_cursor(self) -> list:
+        return self._closed_sorted[:self.n_closed_at_cursor()]
+
     # ── điều khiển ──
     def _mark(self):
         self._dirty = True
+
+    def _limit(self) -> float:
+        return self.end_utc if self.frontier is None else min(self.end_utc, self.frontier)
+
+    def _speed_label(self) -> str:
+        return SPEED_MAX_LABEL if self.speed >= SPEED_MAX else f"{self.speed}x"
 
     def close(self):
         self._closed = True
@@ -188,8 +349,12 @@ class ReplayPlayer:
         except Exception:
             pass
 
+    def play(self):
+        if not self.playing:
+            self.toggle_play()
+
     def toggle_play(self):
-        if self.t >= self.end_utc - 0.5:
+        if self.finished and self.t >= self.end_utc - 0.5:
             self.t = self.start_utc
         self.playing = not self.playing
         self._last = time.perf_counter()
@@ -198,13 +363,17 @@ class ReplayPlayer:
 
     def pause(self):
         self.playing = False
+        self.waiting = False
         self.play_btn.config(text="▶ Phát")
         self._mark()
 
     def set_speed(self, txt):
+        v = parse_speed(txt)
+        if v:
+            self.speed = v
         try:
-            self.speed = max(1, int(str(txt).lower().replace("x", "").strip()))
-        except ValueError:
+            self.speed_var.set(self._speed_label())
+        except Exception:
             pass
         self._mark()
 
@@ -221,7 +390,8 @@ class ReplayPlayer:
         self._mark()
 
     def seek(self, t: float, pause: bool = True):
-        self.t = float(min(max(t, float(self.sec[0]) if len(self.sec) else self.start_utc), self.end_utc))
+        lo = float(self.sec[0]) if len(self.sec) else self.start_utc
+        self.t = float(min(max(t, lo), self._limit()))
         if pause:
             self.pause()
         self._yr = None
@@ -250,7 +420,7 @@ class ReplayPlayer:
 
     def next_trade(self):
         for t in self.trades:
-            if t["_os"] > self.t + 0.5:
+            if t["_os"] > self.t + 0.5 and t["_os"] <= self._limit():
                 self.seek(t["_os"] + 0.5)
                 return
 
@@ -274,11 +444,19 @@ class ReplayPlayer:
         dt = min(now - self._last, 0.25)  # máy bận giật 1 nhịp: không nhảy cóc quá xa
         self._last = now
         if self.playing:
-            self.t = min(self.end_utc, self.t + dt * self.speed)
-            if self.t >= self.end_utc:
+            lim = self._limit()
+            prev = self.t
+            self.t = lim if self.speed >= SPEED_MAX else min(lim, self.t + dt * self.speed)
+            self.waiting = (not self.finished) and self.t >= lim - 1e-6
+            if self.finished and self.t >= self.end_utc:
                 self.pause()
-            self._dirty = True
-        if self._dirty:
+            if self.t != prev:
+                self._dirty = True
+        try:
+            visible = bool(self.canvas.winfo_viewable())
+        except tk.TclError:
+            return
+        if self._dirty and visible:
             t0 = time.perf_counter()
             try:
                 self.render()
@@ -288,9 +466,47 @@ class ReplayPlayer:
             self._render_cost = 0.9 * self._render_cost + 0.1 * cost
             self._frame_ms = 33 if self._render_cost > 0.012 else 16
         try:
-            self._after_id = self.win.after(self._frame_ms, self._tick)
+            self._after_id = self.win.after(self._frame_ms if visible else 120, self._tick)
         except tk.TclError:
             pass
+
+    def _update_header(self, ai_idx: int):
+        if ai_idx == self._hdr_idx:
+            return
+        self._hdr_idx = ai_idx
+        if ai_idx < 0:
+            self.hdr_title.config(text="⏳ Chờ lần phân tích AI đầu tiên...", fg=self.PRICE)
+            self.hdr_detail.config(text="")
+            return
+        ev = self.ai_events[ai_idx]
+        col = str(ev.get("color") or "") or self.PRICE
+        try:
+            self.hdr_title.config(text=f"[{vn_str(ev['t'], '%d/%m %H:%M')}] {ev.get('title', '')}", fg=col)
+        except tk.TclError:
+            self.hdr_title.config(text=str(ev.get("title", "")), fg=self.PRICE)
+        self.hdr_detail.config(text=str(ev.get("detail", "")))
+
+    def _update_logs(self):
+        if self.log_text is None:
+            return
+        target = int(np.searchsorted(self._log_t, self.t, side="right")) if len(self._log_t) else 0
+        if target == self._log_shown:
+            return
+        lt = self.log_text
+        lt.config(state=tk.NORMAL)
+        if target < self._log_shown or target - self._log_shown > LOG_KEEP:
+            lt.delete("1.0", tk.END)
+            lo = max(0, target - LOG_KEEP)
+        else:
+            lo = self._log_shown
+        lines = "".join(f"[{vn_str(t, '%H:%M:%S')}] {m}\n" for t, m in self.logs[lo:target])
+        lt.insert(tk.END, lines)
+        n_lines = int(lt.index("end-1c").split(".")[0])
+        if n_lines > LOG_KEEP + 50:
+            lt.delete("1.0", f"{n_lines - LOG_KEEP}.0")
+        lt.see(tk.END)
+        lt.config(state=tk.DISABLED)
+        self._log_shown = target
 
     def render(self):
         cv = self.canvas
@@ -301,6 +517,7 @@ class ReplayPlayer:
             return
         idx = max(int(np.searchsorted(self.sec, self.t, side="right")) - 1, 0)
         b, fo, fh, fl, fc = forming_bar(self.bars, self.h, self.l, self.c, idx)
+        tf = TF_CHOICES[self.tf_name]
         n = self.n_visible
         first = max(0, b - n + 1)
         ks = np.arange(first, b + 1)
@@ -308,6 +525,18 @@ class ReplayPlayer:
         bo[-1], bh[-1], bl[-1], bc[-1] = fo, fh, fl, fc
         m = len(ks)
         t_ms = self.t * 1000.0
+        cur_start = float(self.bars["start"][b])
+
+        ai_idx = active_index(self._ai_t, self.t)
+        ai = self.ai_events[ai_idx] if ai_idx >= 0 else None
+        z_idx = active_index(self._zone_t, self.t)
+        zone = self.zones[z_idx] if z_idx >= 0 and not self.zones[z_idx].get("clear") else None
+        pred = (ai.get("pred") or []) if ai else []
+        ahead = 0
+        if pred:
+            horizon_end = float(pred[-1][0]) + float(ai["_tf_sec"])
+            ahead = int(min(max(math.ceil((horizon_end - cur_start) / tf), 0), int(n * 0.5)))
+        right_pad = max(4, ahead + 1)
 
         open_tr = [t for t in self.trades if t["_os"] <= self.t < t["_cs"]]
         lo, hi = float(np.min(bl)), float(np.max(bh))
@@ -316,6 +545,10 @@ class ReplayPlayer:
             for v in ((st or (0.0, 0.0)) + (float(t["price_open"]),)):
                 if v and v > 0:
                     lo, hi = min(lo, v), max(hi, v)
+        for p in pred:
+            lo, hi = min(lo, float(p[3])), max(hi, float(p[2]))
+        if zone and zone.get("lo") is not None:
+            lo, hi = min(lo, float(zone["lo"])), max(hi, float(zone["hi"]))
         pad = max((hi - lo) * 0.08, 0.5)
         target = (lo - pad, hi + pad)
         if self._yr is None:
@@ -333,10 +566,14 @@ class ReplayPlayer:
         def Y(p):
             return y1 - (p - y_lo) / span * (y1 - y0)
 
-        slot = (x1 - x0) / float(n + 4)
+        slot = (x1 - x0) / float(n + right_pad)
 
         def X(rel):
             return x0 + (n - m + rel + 0.5) * slot
+
+        def X_time(sec_v):
+            """Thời điểm -> tọa độ x tính từ nến hiện tại (dùng cho nến dự báo ở tương lai)."""
+            return X(m - 1) - slot / 2.0 + (float(sec_v) - cur_start) / tf * slot
 
         # lưới + nhãn giá
         step = _nice_step(span / 6.0)
@@ -354,8 +591,16 @@ class ReplayPlayer:
             cv.create_text(X(j), y1 + 12, text=vn_str(self.bars["start"][ks[j]], "%H:%M"), fill=self.TEXT,
                            font=("Consolas", 8), tags="dyn")
             cv.create_line(X(j), y0, X(j), y1, fill=self.GRID, tags="dyn")
+        # vùng canh vào lệnh (nằm dưới nến)
+        if zone and zone.get("lo") is not None:
+            zx = max(x0, X_time(float(zone["t"])))
+            zcol = self.BUY if zone.get("action") == "BUY" else self.SELL
+            cv.create_rectangle(zx, Y(float(zone["hi"])), x1, Y(float(zone["lo"])), fill=zcol, outline="", stipple="gray12", tags="dyn")
+            cv.create_text(zx + 4, Y(float(zone["hi"])) - 2, text=f"Vùng canh {zone.get('action', '')} "
+                           f"[{float(zone['lo']):.2f} - {float(zone['hi']):.2f}]", anchor="sw", fill=zcol,
+                           font=("Consolas", 8), tags="dyn")
 
-        cv.tag_lower("dyn")  # lưới nằm dưới nến; lệnh/giá vẽ sau nên nằm trên
+        cv.tag_lower("dyn")  # lưới + vùng nằm dưới nến; lệnh/giá vẽ sau nên nằm trên
 
         # nến (dùng lại hình, chỉ ẩn phần thừa so với khung trước)
         bw = max(1.0, slot * 0.36)
@@ -374,6 +619,35 @@ class ReplayPlayer:
             cv.itemconfigure(self._bodies[j], state="hidden")
         self._shown = m
 
+        # dự báo AI: chùm kịch bản + nến dự báo (viền đứt) + SL/TP đề xuất
+        if ai:
+            ptf = float(ai["_tf_sec"])
+            fan = ai.get("fan") or []
+            if pred and fan:
+                xs = [X_time(float(p[0]) + ptf / 2.0) for p in pred]
+                for path in fan:
+                    if len(path) >= len(xs):
+                        pts = []
+                        for xv, yv in zip(xs, path):
+                            pts.extend((xv, Y(float(yv))))
+                        if len(pts) >= 4:
+                            cv.create_line(*pts, fill=self.FAN, tags="dyn")
+            for p in pred:
+                ps, po, ph, pl, pc = (float(v) for v in p[:5])
+                xa, xb = X_time(ps), X_time(ps + ptf)
+                if xa > x1:
+                    break
+                xm, half = (xa + xb) / 2.0, max(1.0, (xb - xa) * 0.32)
+                pcol = self.PRED_UP if pc >= po else self.PRED_DOWN
+                cv.create_line(xm, Y(ph), xm, Y(pl), fill=pcol, dash=(2, 2), tags="dyn")
+                cv.create_rectangle(xm - half, Y(max(po, pc)), xm + half, Y(min(po, pc)) + 1, outline=pcol, dash=(3, 2), tags="dyn")
+            xa_ai = max(x0, X_time(float(ai["t"])))
+            for key, lbl, col in (("sl", "SL AI", self.PRED_DOWN), ("tp", "TP AI", self.PRED_UP)):
+                v = float(ai.get(key) or 0.0)
+                if v > 0 and y_lo <= v <= y_hi:
+                    cv.create_line(xa_ai, Y(v), x1, Y(v), fill=col, dash=(1, 4), tags="dyn")
+                    cv.create_text(xa_ai + 2, Y(v) - 2, text=f"{lbl} {v:.2f}", anchor="sw", fill=col, font=("Consolas", 7), tags="dyn")
+
         # lệnh
         starts = self.bars["start"]
 
@@ -381,6 +655,7 @@ class ReplayPlayer:
             k = int(np.searchsorted(starts, sec_v, side="right")) - 1
             return k - first
 
+        exit_lbl_y = {}  # nhiều lệnh đóng cùng nến (nhồi lệnh): xếp nhãn lãi/lỗ chồng lên nhau, không đè chữ
         for t in self.trades:
             if t["_os"] > self.t:
                 break
@@ -403,7 +678,12 @@ class ReplayPlayer:
                 cv.create_line(xo, yo, xc, yc, fill=pcol, dash=(3, 2), tags="dyn")
                 cv.create_line(xc - 4, yc - 4, xc + 4, yc + 4, fill=pcol, width=2, tags="dyn")
                 cv.create_line(xc - 4, yc + 4, xc + 4, yc - 4, fill=pcol, width=2, tags="dyn")
-                cv.create_text(xc + 6, yc - 9, text=f"{float(t['profit']):+.2f}$", anchor="w", fill=pcol,
+                ly = yc - 9
+                key = int(round(xc))
+                if key in exit_lbl_y and abs(exit_lbl_y[key] - ly) < 12:
+                    ly = exit_lbl_y[key] - 12
+                exit_lbl_y[key] = ly
+                cv.create_text(xc + 6, ly, text=f"{float(t['profit']):+.2f}$", anchor="w", fill=pcol,
                                font=("Consolas", 8, "bold"), tags="dyn")
             else:
                 st = sltp_at(self.sltp, t["ticket"], t_ms)
@@ -427,19 +707,26 @@ class ReplayPlayer:
         cv.create_rectangle(x1 + 1, yp - 8, W - 2, yp + 8, fill=self.PRICE, outline="", tags="dyn")
         cv.create_text(x1 + 6, yp, text=f"{fc:.2f}", anchor="w", fill="#000000", font=("Consolas", 8, "bold"), tags="dyn")
 
-        # thông tin + thanh thời gian
-        n_closed = int(np.searchsorted(self._close_s, self.t, side="right"))
+        # thông tin + thanh thời gian + dòng tín hiệu + nhật ký
+        n_closed = self.n_closed_at_cursor()
         realized = float(self._cum_pnl[n_closed - 1]) if n_closed > 0 else 0.0
         flt = sum(floating_pnl(t, fc, self.contract) for t in open_tr)
-        self.info_lbl.config(text=(f"⏱ {vn_str(self.t)}  |  Giá {fc:.2f}  |  Đang mở: {len(open_tr)} lệnh ({flt:+.2f}$)  |  "
-                                   f"Đã đóng: {n_closed} lệnh, {realized:+.2f}$  |  {self.speed}x  |  {self.tf_name}"))
+        info = (f"⏱ {vn_str(self.t)}  |  Giá {fc:.2f}  |  Đang mở: {len(open_tr)} lệnh ({flt:+.2f}$)  |  "
+                f"Đã đóng: {n_closed} lệnh, {realized:+.2f}$  |  {self._speed_label()}  |  {self.tf_name}")
+        if self.live and not self.finished and self.frontier is not None:
+            info += f"  |  🧠 đã tính tới {vn_str(self.frontier, '%d/%m %H:%M:%S')}"
+            if self.waiting and self.playing:
+                info += "  ⏳ chờ AI tính..."
+        self.info_lbl.config(text=info)
         frac = (self.t - self.start_utc) / max(self.end_utc - self.start_utc, 1.0)
         self._slider_lock = True
         try:
             self.pos_var.set(max(0.0, min(1000.0, frac * 1000.0)))
         finally:
             self._slider_lock = False
-        self._dirty = self.playing or easing  # tạm dừng + thang giá đã ổn: không vẽ lại (đỡ CPU cho bot live)
+        self._update_header(ai_idx)
+        self._update_logs()
+        self._dirty = easing  # chỉ vẽ lại khi thời gian/sự kiện đổi hoặc thang giá còn đang chuyển (đỡ CPU cho bot live)
 
 
 def _nice_step(raw: float) -> float:
