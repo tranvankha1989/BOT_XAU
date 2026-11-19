@@ -156,6 +156,7 @@ class ReplayPlayer:
         self._after_id = None
         self._slider_lock = False
         self._closed = False
+        self._last_idx = -1
 
         if self.embedded:
             self.win = tk.Frame(parent, bg=self.BG)
@@ -441,16 +442,23 @@ class ReplayPlayer:
         if self._closed:
             return
         now = time.perf_counter()
-        dt = min(now - self._last, 0.25)  # máy bận giật 1 nhịp: không nhảy cóc quá xa
+        # Tính theo thời gian THẬT: app bận (nhịp vẽ thưa) vẫn tua đúng tốc độ; chỉ chặn bước nhảy bất thường (máy ngủ/treo lâu)
+        dt = min(now - self._last, 2.0)
         self._last = now
         if self.playing:
             lim = self._limit()
             prev = self.t
             self.t = lim if self.speed >= SPEED_MAX else min(lim, self.t + dt * self.speed)
+            was_waiting = self.waiting
             self.waiting = (not self.finished) and self.t >= lim - 1e-6
             if self.finished and self.t >= self.end_utc:
                 self.pause()
             if self.t != prev:
+                # Chỉ vẽ lại khi sang giây giá mới (nến 1 giây đổi); cùng giây thì hình không đổi -> đỡ CPU
+                idx = int(np.searchsorted(self.sec, self.t, side="right")) - 1 if len(self.sec) else -1
+                if idx != self._last_idx:
+                    self._dirty = True
+            if self.waiting != was_waiting:
                 self._dirty = True
         try:
             visible = bool(self.canvas.winfo_viewable())
@@ -516,6 +524,7 @@ class ReplayPlayer:
             cv.create_text(W / 2, H / 2, text="Không có dữ liệu giá để phát lại", fill=self.TEXT, tags="dyn")
             return
         idx = max(int(np.searchsorted(self.sec, self.t, side="right")) - 1, 0)
+        self._last_idx = int(np.searchsorted(self.sec, self.t, side="right")) - 1
         b, fo, fh, fl, fc = forming_bar(self.bars, self.h, self.l, self.c, idx)
         tf = TF_CHOICES[self.tf_name]
         n = self.n_visible

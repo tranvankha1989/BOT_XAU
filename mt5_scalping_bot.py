@@ -4513,6 +4513,14 @@ class KronosDesktopApp:
         self.bt_ws_frame = ws
         return ws
 
+    def _bt_workspace_shown(self) -> bool:
+        """Màn hình Backtest đang chiếm khung biểu đồ phía trên (biểu đồ live đang ẩn)."""
+        try:
+            ws = getattr(self, "bt_ws_frame", None)
+            return bool(ws is not None and ws.winfo_exists() and ws.winfo_manager())
+        except Exception:
+            return False
+
     def _bt_set_workspace_visible(self, show: bool):
         """Đổi khung phía trên giữa biểu đồ live và màn hình Backtest (không dừng/đổi gì của bot live)."""
         if getattr(self, "chart_holder", None) is None or getattr(self, "live_chart_frame", None) is None:
@@ -8331,7 +8339,10 @@ class KronosDesktopApp:
                         self._check_pending_pullback_order(bg_sym, bg_tick, profile_key=bg_pk)
                         self._pb_heartbeat(bg_pk, bg_sym, bg_tick)
 
-                if self.realtime_chart_var.get() and self.heartbeat_toggle and not self.is_analyzing and self._drag_start_px is None:
+                # Đang xem màn hình Backtest (biểu đồ live bị ẩn): không vẽ biểu đồ live để luồng giao diện rảnh cho biểu đồ Backtest.
+                # Chỉ là vẽ; quản lý lệnh live ở trên vẫn chạy mỗi giây. Quay lại tab live -> _on_tab_changed vẽ lại ngay.
+                if self.realtime_chart_var.get() and self.heartbeat_toggle and not self.is_analyzing and self._drag_start_px is None \
+                        and not self._bt_workspace_shown():
                     self._refresh_realtime_chart(symbol, tf_str)
         except Exception as e:
             self.log_error("REALTIME_TICK_LOOP", e, show_in_ui=False)

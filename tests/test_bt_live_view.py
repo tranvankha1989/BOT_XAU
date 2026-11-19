@@ -160,6 +160,17 @@ class TestPlayerLive(unittest.TestCase):
         p.render()
         p.close()
 
+    def test_busy_ui_keeps_real_speed(self):
+        # App bận (nhịp vẽ cách nhau 1 giây): 10x vẫn phải tiến ~10 giây biểu đồ, không bị chặn 0.25s/nhịp như trước
+        p = rp.ReplayPlayer(self.root, series(), [], [], T0 + 60, T0 + 3500)
+        p.set_speed("10x")
+        p.play()
+        t_before = p.t
+        p._last = time.perf_counter() - 1.0
+        p._tick()
+        self.assertGreater(p.t - t_before, 9.0)
+        p.close()
+
     def test_toplevel_mode_still_works(self):
         p = rp.ReplayPlayer(self.root, series(), [], [], T0 + 60, T0 + 3500)
         self.assertIsNone(p.log_text)
@@ -204,6 +215,9 @@ class TestAppWorkspace(unittest.TestCase):
         self.assertEqual(app.live_chart_frame.winfo_manager(), "pack")
         self.assertEqual(app.live_sig_box.winfo_manager(), "pack")
         self.assertEqual(app.right_panel.pack_slaves()[0], app.live_sig_box)  # dòng tín hiệu live trở lại đúng chỗ (trên biểu đồ)
+        self.assertFalse(app._bt_workspace_shown())
+        app._bt_set_workspace_visible(True)
+        self.assertTrue(app._bt_workspace_shown())  # vòng tick live dùng cờ này để không vẽ biểu đồ live đang ẩn
 
     def test_live_player_and_table_follow_cursor(self):
         app = self.app
