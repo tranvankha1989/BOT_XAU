@@ -57,6 +57,10 @@ Source: "telegram_qr.png"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "telegram_icon.png"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "run_debug.bat"; DestDir: "{app}"; Flags: ignoreversion
 
+; 3.1 File cau hinh MAU (trong/0) + huong dan: nguoi dung tham khao, lien he lay cau hinh that
+Source: "cau_hinh_mau.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "HUONG_DAN_CAU_HINH.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
+
 ; 4. Trinh cai dat Microsoft Visual C++ 2015-2022 x64 (Tu dong cai dat neu may ao chua co)
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
