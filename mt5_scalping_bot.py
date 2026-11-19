@@ -2447,20 +2447,22 @@ class KronosDesktopApp:
 
         mt5_row = tk.Frame(menu_top_card, bg="#121722")
         mt5_row.pack(fill=tk.X, pady=(0, 4))
-        tk.Button(
+        self.mt5_connect_btn = tk.Button(
             mt5_row, text="Kết nối MT5", bg="#2b3548", fg=TEXT_MAIN,
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=2,
             command=self.check_mt5_connection
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        )
+        self.mt5_connect_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         self.auto_trade_var = tk.BooleanVar(value=False)
         self.realtime_chart_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
+        self.realtime_chk = tk.Checkbutton(
             mt5_row, text="Chart Real-Time",
             variable=self.realtime_chart_var, bg="#121722", fg=CYAN_LIVE, selectcolor=BG_DARK,
-            activebackground="#121722", activeforeground=CYAN_LIVE,
+            activebackground="#121722", activeforeground=CYAN_LIVE, disabledforeground=CYAN_LIVE,
             font=("Segoe UI", 8, "bold")
-        ).pack(side=tk.RIGHT)
+        )
+        self.realtime_chk.pack(side=tk.RIGHT)
 
         # Dòng thông tin Số dư nằm riêng bên dưới chữ Kết nối MT5 (không có ô tick)
         self.mt5_status_lbl = tk.Label(
@@ -6928,7 +6930,12 @@ class KronosDesktopApp:
                 pass
         # Nút khôi phục mặc định + nút Lưu cấu hình mặc định: khóa theo ổ khóa
         try:
-            btns = [getattr(self, "save_defaults_btn", None)]
+            btns = [getattr(self, n, None) for n in (
+                "save_defaults_btn", "save_settings_btn", "export_settings_btn", "import_settings_btn", "mt5_connect_btn")]
+            try:
+                self.realtime_chk.config(state=(tk.DISABLED if locked else tk.NORMAL))
+            except Exception:
+                pass
 
             def _find_btns(w):
                 for c in w.winfo_children():
@@ -6940,7 +6947,7 @@ class KronosDesktopApp:
                 _find_btns(sec.content)
             for bt in btns:
                 if bt is not None:
-                    bt.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground=dim)
+                    bt.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground="#8b95a8")
         except Exception:
             pass
         # Thông số con: mở khóa xong phải trả về đúng trạng thái theo cha (cha tắt -> con vẫn mờ)
