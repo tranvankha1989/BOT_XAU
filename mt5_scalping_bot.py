@@ -704,6 +704,10 @@ AI_MANAGED_STATE_ATTRS = frozenset({
     "_last_detail_prefix",
     "_sig_title",
     "_sig_color",
+    # Chốt chùm (Basket): luồng chốt chùm chỉ ghi vào ctx -> KHÔNG đồng bộ đè từ self mỗi giây. Trước đây tab đang mở bị xóa
+    # tạm nghỉ sau chốt chùm sau ~1 giây (vào lệnh lại ngay) và mất khóa chống đóng trùng (rà soát backtest vs live 19/11/2026)
+    "basket_cooldown_until",
+    "is_basket_closing",
 })
 
 
