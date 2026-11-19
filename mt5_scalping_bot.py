@@ -2424,6 +2424,17 @@ class KronosDesktopApp:
         )
         self.drawer_close_btn.pack(side=tk.LEFT, padx=(0, 8))
 
+        # Ổ khóa bên phải tiêu đề: mặc định KHÓA (thông số mờ, không sửa được); bấm để mở khóa chỉnh thông số (chỉ giao diện)
+        self._params_locked = True
+        self._param_syncs = []
+        self.params_lock_btn = tk.Button(
+            drawer_header, text="🔒", bg="#252f42", fg=GOLD_ACCENT,
+            activebackground="#32415c", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0, cursor="hand2",
+            command=self.toggle_params_lock
+        )
+        self.params_lock_btn.pack(side=tk.RIGHT, padx=(8, 0))
+
         self.drawer_title_lbl = tk.Label(
             drawer_header, text="BẢNG ĐIỀU KHIỂN & CÀI ĐẶT (XAUUSD)",
             bg=PANEL_BG, fg=GOLD_ACCENT, font=("Segoe UI", 9, "bold"), anchor="w"
@@ -2436,20 +2447,22 @@ class KronosDesktopApp:
 
         mt5_row = tk.Frame(menu_top_card, bg="#121722")
         mt5_row.pack(fill=tk.X, pady=(0, 4))
-        tk.Button(
+        self.mt5_connect_btn = tk.Button(
             mt5_row, text="Kết nối MT5", bg="#2b3548", fg=TEXT_MAIN,
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=10, pady=2,
             command=self.check_mt5_connection
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        )
+        self.mt5_connect_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         self.auto_trade_var = tk.BooleanVar(value=False)
         self.realtime_chart_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
+        self.realtime_chk = tk.Checkbutton(
             mt5_row, text="Chart Real-Time",
             variable=self.realtime_chart_var, bg="#121722", fg=CYAN_LIVE, selectcolor=BG_DARK,
-            activebackground="#121722", activeforeground=CYAN_LIVE,
+            activebackground="#121722", activeforeground=CYAN_LIVE, disabledforeground=CYAN_LIVE,
             font=("Segoe UI", 8, "bold")
-        ).pack(side=tk.RIGHT)
+        )
+        self.realtime_chk.pack(side=tk.RIGHT)
 
         # Dòng thông tin Số dư nằm riêng bên dưới chữ Kết nối MT5 (không có ô tick)
         self.mt5_status_lbl = tk.Label(
@@ -2786,6 +2799,22 @@ class KronosDesktopApp:
         )
         self.import_settings_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
 
+        self.save_defaults_btn = tk.Button(
+            save_card,
+            text="Lưu cấu hình mặc định",
+            bg="#1e293b",
+            fg="#fbbf24",
+            activebackground="#334155",
+            activeforeground="#fde68a",
+            font=("Segoe UI", 8, "bold"),
+            relief=tk.FLAT,
+            padx=6,
+            pady=3,
+            cursor="hand2",
+            command=self.save_current_as_defaults
+        )
+        self.save_defaults_btn.pack(fill=tk.X, pady=(2, 2))
+
         self.save_status_lbl = tk.Label(
             save_card,
             text="✓ Tự động lưu: ĐÃ BẬT (Sẵn sàng)",
@@ -2802,6 +2831,7 @@ class KronosDesktopApp:
             justify=tk.LEFT, anchor="w", wraplength=300
         )
         self._install_param_validation()
+        self._apply_params_lock()  # khởi động ở trạng thái KHÓA
 
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM Ở GIỮA MENU TRÁI (CO GIÃN TỰ NHIÊN)
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
@@ -6455,6 +6485,9 @@ class KronosDesktopApp:
                           "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close")
     # Trạng thái riêng từng máy (tab đang mở, chiều cao bảng dưới, bot đang chạy tự động để bật lại sau cập nhật): cũng không chép
     MACHINE_LOCAL_STATE_KEYS = ("last_active_tab", "bottom_panel_height", "auto_running_profiles")
+    # Cấu hình mặc định do người dùng đặt (nút "Lưu cấu hình mặc định"): file riêng, KHÔNG gồm khóa riêng máy và token
+    USER_DEFAULTS_FILE_NAME = "user_defaults.json"
+    USER_DEFAULTS_EXCLUDED = frozenset(MACHINE_LOCAL_KEYS) | {"hf_token"}
 
     @classmethod
     def _strip_machine_local(cls, data: dict) -> dict:
@@ -6784,15 +6817,162 @@ class KronosDesktopApp:
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
     }
 
+    def _get_effective_defaults(self, pk: str) -> dict:
+        """Mặc định đang dùng cho nút 'Khôi phục mặc định': mặc định gốc trong code, được ghi đè bởi cấu hình mặc định
+        người dùng đã lưu (user_defaults.json, nút 'Lưu cấu hình mặc định'). Lỗi đọc file -> dùng mặc định gốc."""
+        base = dict(DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"]))
+        try:
+            with open(os.path.join(SETTINGS_DIR, self.USER_DEFAULTS_FILE_NAME), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            ud = data.get(pk) if isinstance(data, dict) else None
+            if isinstance(ud, dict):
+                for k, v in ud.items():
+                    if k in base and k not in self.USER_DEFAULTS_EXCLUDED:
+                        base[k] = v
+        except Exception:
+            pass
+        return base
+
+    def save_current_as_defaults(self):
+        """Nút 'Lưu cấu hình mặc định': lấy thông số ĐANG HIỂN THỊ của tab hiện tại làm mặc định mới
+        (các nút 'Khôi phục mặc định' sẽ trả về cấu hình này thay vì giá trị cứng trong code). Không đổi bot đang chạy."""
+        if getattr(self, "_params_locked", False):
+            self.show_toast("Đang khóa: bấm ổ khóa để mở trước khi lưu mặc định", is_error=True, duration_ms=2500)
+            return
+        try:
+            errs = self._validate_menu_settings()
+        except Exception:
+            errs = []
+        if errs:
+            self.show_toast(f"Chưa lưu mặc định: còn {len(errs)} ô nhập sai (tô đỏ)", is_error=True, duration_ms=3000)
+            return
+        pk = self.active_profile_key
+        try:
+            if not messagebox.askyesno(
+                "Lưu cấu hình mặc định",
+                f"Lấy thông số hiện tại của tab {pk} làm CẤU HÌNH MẶC ĐỊNH?\n\n"
+                "Các nút 'Khôi phục mặc định' sẽ trả về cấu hình này (không gồm Magic, đường dẫn MT5, số luồng AI, token và Telegram).",
+                parent=self.root,
+            ):
+                return
+        except Exception:
+            return
+        smap = self._get_settings_vars_map()
+        cur = {}
+        for k in DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"]):
+            if k in smap and k not in self.USER_DEFAULTS_EXCLUDED:
+                try:
+                    cur[k] = smap[k].get()
+                except Exception:
+                    pass
+        path = os.path.join(SETTINGS_DIR, self.USER_DEFAULTS_FILE_NAME)
+        try:
+            os.makedirs(SETTINGS_DIR, exist_ok=True)
+            data = {}
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {}
+            except Exception:
+                data = {}
+            data[pk] = cur
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:
+            self.log(f"[CÀI ĐẶT] ⚠️ Không lưu được cấu hình mặc định: {e}")
+            self.show_toast("Không thể lưu cấu hình mặc định!", is_error=True, duration_ms=3000)
+            return
+        self.log(f"[CÀI ĐẶT] Đã lưu thông số hiện tại làm cấu hình mặc định cho tab {pk} ({len(cur)} thông số).")
+        self.show_toast(f"Đã lưu cấu hình mặc định [{pk}]", is_error=False, duration_ms=2200)
+
+    def toggle_params_lock(self):
+        """Ổ khóa ở tiêu đề menu: khóa -> thông số mờ, không sửa được; mở khóa -> sửa như bình thường (chỉ giao diện)."""
+        self._params_locked = not getattr(self, "_params_locked", True)
+        self._apply_params_lock()
+        try:
+            self.show_toast("Đã MỞ KHÓA: có thể chỉnh thông số" if not self._params_locked else "Đã KHÓA thông số",
+                            is_error=False, duration_ms=1500)
+        except Exception:
+            pass
+
+    def _apply_params_lock(self):
+        """Khóa/mở khóa mọi ô thông số của menu (làm mờ khi khóa). Giá trị không đổi; đặt giá trị bằng code vẫn hoạt động."""
+        locked = bool(getattr(self, "_params_locked", False))
+        dim = "#5b6475"
+
+        def _labels(w):
+            out = []
+            for c in w.winfo_children():
+                if isinstance(c, tk.Label):
+                    out.append(c)
+                out.extend(_labels(c))
+            return out
+
+        seen = set()
+        for _k, pair in list(self.__dict__.get("_param_rows", {}).items()):
+            try:
+                row, w = pair
+                if id(w) in seen:
+                    continue
+                seen.add(id(w))
+                if isinstance(w, ttk.Combobox):
+                    w.config(state=("disabled" if locked else "readonly"))
+                elif isinstance(w, tk.Entry):
+                    w.config(state=(tk.DISABLED if locked else tk.NORMAL),
+                             disabledbackground="#1a1f2b", disabledforeground="#8b95a8")
+                else:
+                    # Ô tích: chữ giữ màu thường để vẫn đọc được, chỉ không bấm được
+                    w.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground=str(w.cget("fg")))
+            except Exception:
+                pass
+        # Nút khôi phục mặc định + nút Lưu cấu hình mặc định: khóa theo ổ khóa
+        try:
+            btns = [getattr(self, n, None) for n in (
+                "save_defaults_btn", "save_settings_btn", "export_settings_btn", "import_settings_btn", "mt5_connect_btn")]
+            try:
+                self.realtime_chk.config(state=(tk.DISABLED if locked else tk.NORMAL))
+            except Exception:
+                pass
+
+            def _find_btns(w):
+                for c in w.winfo_children():
+                    if isinstance(c, tk.Button) and "Khôi phục" in str(c.cget("text")):
+                        btns.append(c)
+                    _find_btns(c)
+
+            for sec in getattr(self, "accordion_sections", []):
+                _find_btns(sec.content)
+            for bt in btns:
+                if bt is not None:
+                    bt.config(state=(tk.DISABLED if locked else tk.NORMAL), disabledforeground="#8b95a8")
+        except Exception:
+            pass
+        # Thông số con: mở khóa xong phải trả về đúng trạng thái theo cha (cha tắt -> con vẫn mờ)
+        for fn in list(self.__dict__.get("_param_syncs", [])):
+            try:
+                fn()
+            except Exception:
+                pass
+        try:
+            self.params_lock_btn.config(text=("🔒" if locked else "🔓"), fg=(GOLD_ACCENT if locked else "#22c55e"))
+        except Exception:
+            pass
+
     def reset_section_settings(self, section_num: int):
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
+        if getattr(self, "_params_locked", False):
+            self.show_toast("Đang khóa: bấm ổ khóa để mở trước khi khôi phục mặc định", is_error=True, duration_ms=2500)
+            return
         section_map = self.SETTINGS_SECTION_MAP
         if section_num not in section_map:
             return
 
         sec_title, keys = section_map[section_num]
         pk = self.active_profile_key
-        defaults = DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"])
+        defaults = self._get_effective_defaults(pk)
         smap = self._get_settings_vars_map()
         cur_token = str(self.hf_token_var.get()).strip()
         cur_tg_token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
@@ -6823,13 +7003,16 @@ class KronosDesktopApp:
     def reset_all_settings(self):
         """Khôi phục toàn bộ thông số của Tab đang chọn về cấu hình mặc định tối ưu."""
         pk = self.active_profile_key
+        if getattr(self, "_params_locked", False):
+            self.show_toast("Đang khóa: bấm ổ khóa để mở trước khi khôi phục mặc định", is_error=True, duration_ms=2500)
+            return
         if not messagebox.askyesno(
             "Xác nhận khôi phục",
             f"Bạn có chắc chắn muốn khôi phục TẤT CẢ thông số cài đặt của tab {pk} về giá trị mặc định tối ưu?"
         ):
             return
 
-        defaults = DEFAULT_PROFILE_SETTINGS.get(pk, DEFAULT_PROFILE_SETTINGS["XAUUSD"])
+        defaults = self._get_effective_defaults(pk)
         smap = self._get_settings_vars_map()
         cur_token = str(self.hf_token_var.get()).strip()
         cur_tg_token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
@@ -8762,7 +8945,8 @@ class KronosDesktopApp:
                 return True  # đang gõ dở giá trị: không khóa con
 
         def _sync(*_a):
-            on = _is_on()
+            parent_on = _is_on()
+            on = parent_on and not getattr(self, "_params_locked", False)
             for row, w in kids:
                 try:
                     if isinstance(w, ttk.Combobox):
@@ -8773,7 +8957,7 @@ class KronosDesktopApp:
                     else:
                         w.config(state=(tk.NORMAL if on else tk.DISABLED))
                     for lbl in _labels(row):
-                        lbl.config(fg=(TEXT_MAIN if on else "#5b6475"))
+                        lbl.config(fg=(TEXT_MAIN if parent_on else "#5b6475"))
                 except Exception:
                     pass
 
@@ -8781,6 +8965,7 @@ class KronosDesktopApp:
             parent_var.trace_add("write", _sync)
         except Exception:
             pass
+        self.__dict__.setdefault("_param_syncs", []).append(_sync)
         _sync()
 
     def _add_checkbutton(self, parent, text, var, help_key=None, fg=TEXT_MAIN):
@@ -8804,7 +8989,7 @@ class KronosDesktopApp:
                 row_bg = "#123524" if on else PANEL_BG
                 row.config(bg=row_bg)
                 cb.config(fg=(GREEN_UP if on else fg), bg=row_bg, activebackground=row_bg,
-                          activeforeground=(GREEN_UP if on else fg))
+                          activeforeground=(GREEN_UP if on else fg), disabledforeground=(GREEN_UP if on else fg))
             except Exception:
                 pass
 

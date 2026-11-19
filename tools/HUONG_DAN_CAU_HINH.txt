@@ -1,0 +1,21 @@
+HƯỚNG DẪN CẤU HÌNH - TRADING AI PRO by Kha Tran Design
+========================================================
+
+1. Khi mới cài, phần mềm chạy bằng thông số mặc định an toàn:
+   - Chưa tự vào lệnh cho tới khi bạn nối MetaTrader 5 và bật nút AUTO.
+   - Token/Chat ID Telegram, Magic Number để trống.
+
+2. File "cau_hinh_mau.json" (đặt cùng thư mục cài đặt) là MẪU trống/0:
+   - Dùng để tham khảo cấu trúc. Các số đang để 0 và các ô chữ để trống.
+   - KHÔNG nên Nhập file mẫu này vào rồi Áp Dụng ngay: để nguyên 0 thì bot
+     không vào lệnh được (lot = 0...). Hãy điền số thật trước, hoặc dùng file
+     cấu hình thật do nhà cung cấp gửi.
+
+3. Lấy file cấu hình thật:
+   - Liên hệ người bán/nhà cung cấp để nhận file cấu hình đã tối ưu.
+   - Trong app: nút "Nhập File Cấu Hình" -> chọn file .json nhận được.
+   - Thông số riêng máy (Magic, đường dẫn MT5, số luồng AI, Telegram) KHÔNG bị
+     file nhập đè: bạn tự điền trên từng máy.
+
+4. Kích hoạt bản quyền:
+   - Mở app, gửi mã HWID hiển thị cho nhà cung cấp để nhận Key, rồi nhập Key.
