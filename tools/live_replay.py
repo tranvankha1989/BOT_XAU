@@ -25,6 +25,7 @@ Ví dụ:
 
 import argparse
 import csv
+import json
 import math
 import os
 import sys
@@ -156,6 +157,8 @@ class FakeBroker:
     COPY_TICKS_ALL = -1
     TRADE_RETCODE_DONE, TRADE_RETCODE_INVALID_STOPS, TRADE_RETCODE_INVALID_FILL = 10009, 10016, 10030
     TRADE_RETCODE_INVALID_VOLUME, TRADE_RETCODE_POSITION_CLOSED = 10014, 10036
+    TRADE_RETCODE_MARKET_CLOSED = 10018
+    MARKET_CLOSED_GAP_SEC = 60.0  # không có tick mới quá 60s = sàn nghỉ phiên (vàng: nghỉ ~1 giờ mỗi ngày)
     SYMBOL_FILLING_FOK, SYMBOL_FILLING_IOC = 1, 2
 
     def __init__(self, symbol: str, sym_info: dict, ticks_ms, bids, asks, rates_by_tf: dict, clock: SimClock,
@@ -291,8 +294,10 @@ class FakeBroker:
 
     def order_send(self, req):
         c = self._cur()
-        if c is None:
-            return self._result(10018, "Market closed")
+        # MT5 thật từ chối MỌI lệnh gửi (mở/đóng/sửa SL-TP) khi sàn nghỉ phiên: trước đây sàn giả vẫn cho sửa -> khác live
+        if c is None or self.clock.now - c[3] / 1000.0 > self.MARKET_CLOSED_GAP_SEC:
+            self.rejects.append((self.clock.now, "MARKET_CLOSED", req.get("position"), req.get("sl"), req.get("tp"), None, None))
+            return self._result(self.TRADE_RETCODE_MARKET_CLOSED, "Market closed")
         _, bid, ask, ms = c
         act = req.get("action")
         if act == self.TRADE_ACTION_SLTP:
@@ -367,7 +372,7 @@ class FakeBroker:
         rsn = {self.DEAL_REASON_SL: "SL", self.DEAL_REASON_TP: "TP"}.get(reason, "Bot đóng")
         self.closed.append({"ticket": pos.ticket, "type": "BUY" if pos.type == self.POSITION_TYPE_BUY else "SELL",
                             "open_ms": pos.time_msc, "close_ms": ms, "price_open": pos.price_open, "price_close": px,
-                            "sl0": pos._sl0, "tp0": pos._tp0, "sl_last": pos.sl, "volume": vol, "profit": profit,
+                            "sl0": pos._sl0, "tp0": pos._tp0, "sl_last": pos.sl, "tp_last": pos.tp, "volume": vol, "profit": profit,
                             "reason": rsn, "comment": str(d_cmt or "")})
         if vol >= pos.volume - 1e-9:
             self.positions.remove(pos)
@@ -579,6 +584,35 @@ def install_ai_cache(app, cache):
     app._fast_predict_scenarios = cached
 
 
+def install_fetch_memo(app, broker):
+    """fetch_mt5_candles(include_forming=False) chỉ đổi khi có nến đóng mới hoặc nến mới có tick đầu tiên. Vòng nến của live
+    gọi nó mỗi 2 giây -> dựng lại DataFrame pandas (~4ms) hàng chục nghìn lần/ngày. Dùng lại kết quả (trả BẢN SAO) khi khóa
+    (khung, số nến, số nến đã đóng, có nến đang chạy) chưa đổi: code bot nhận dữ liệu y hệt, chỉ nhanh hơn."""
+    real = app.fetch_mt5_candles
+    memo = {}
+
+    def fetch(symbol, timeframe_str, count, include_forming=False):
+        tf_sec = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}.get(str(timeframe_str))
+        arr = broker.rates.get(tf_sec) if tf_sec else None
+        if include_forming or arr is None or len(arr) == 0:
+            return real(symbol, timeframe_str, count, include_forming=include_forming)
+        now = broker.clock.now
+        n_closed = int(np.searchsorted(arr["time"], now - tf_sec, side="right"))
+        fs = int(now // tf_sec) * tf_sec
+        has_forming = broker._idx(now) + 1 > int(np.searchsorted(broker.ms, fs * 1000, side="left"))
+        key = (str(symbol), tf_sec, int(count), n_closed, bool(has_forming))
+        hit = memo.get(key)
+        if hit is None:
+            hit = real(symbol, timeframe_str, count, include_forming=False)
+            if hit is None:
+                return None
+            if len(memo) > 64:
+                memo.clear()
+            memo[key] = hit
+        return hit.copy()
+    app.fetch_mt5_candles = fetch
+
+
 # ───────────────────────── Vòng phát lại ─────────────────────────
 class Replayer:
     """Điều phối 2 vòng của live trên đồng hồ phát lại.
@@ -590,8 +624,10 @@ class Replayer:
     (các hàm vòng tick khi đó không làm gì)."""
 
     def __init__(self, bot_mod, app, broker: FakeBroker, clock: SimClock, pk: str, cfg: dict,
-                 ai_latency: float = 8.5, auto_step: float = 2.0, detect_delay: float = 1.6, progress=None, progress_step: int = 5):
+                 ai_latency: float = 8.5, auto_step: float = 2.0, detect_delay: float = 1.6, progress=None, progress_step: int = 5,
+                 on_step=None):
         self.bot, self.app, self.broker, self.clock, self.pk, self.cfg = bot_mod, app, broker, clock, pk, cfg
+        self.on_step = on_step  # app xem trực tiếp: ghi sự kiện sau mỗi nhịp (không đổi luật)
         self.ai_latency, self.auto_step, self.detect_delay = float(ai_latency), float(auto_step), float(detect_delay)
         self.symbol = str(cfg.get("symbol", "")).strip()
         self.scalp_tf = str(cfg.get("tf", "M5")).strip() or "M5"
@@ -650,6 +686,19 @@ class Replayer:
         except Exception as e:
             app.log_error("REALTIME_TICK_LOOP", e)
 
+    def _next_cooldown_expiry(self, t: float):
+        """Mốc (giây) hết tạm nghỉ gần nhất còn ở tương lai: chuỗi thua / SL nhanh / chốt chùm; None nếu không có."""
+        ctx, best = self._ctx(), None
+        for k in ("cooldown_until", "fast_sl_cooldown_until", "basket_cooldown_until"):
+            v = ctx.get(k)
+            try:
+                s = v.timestamp() if v is not None else None  # datetime giả (giờ máy) -> giây, cùng gốc với đồng hồ phát lại
+            except Exception:
+                s = None
+            if s is not None and s > t and (best is None or s < best):
+                best = s
+        return best
+
     def _busy(self):
         ctx = self._ctx()
         return bool(self.broker.positions) or ctx.get("pending_pullback_order") is not None or self.analysis_due is not None
@@ -683,19 +732,152 @@ class Replayer:
                 self.tick_loop_step()
                 t_tick += 1.0
             last = t
+            if self.on_step:
+                self.on_step(t)
             if self.progress:
                 pct = int((t - start_utc) * 100 / max(end_utc - start_utc, 1))
                 if pct != last_pct and pct % self.progress_step == 0:
                     last_pct = pct
                     self.progress(pct, t)
+            # KHÔNG bỏ qua giờ nghỉ phiên khi đang có lệnh mở: live vẫn thử sửa lệnh mỗi 15s và bị sàn từ chối, các lần thất bại
+            # để lại trạng thái (vd chờ thoát ở Entry+0.35) -> bỏ qua thì kết quả khác live (đã thử 19/11: lệnh #100016 lệch 1.2$).
             if not self._busy():
                 # Nhàn rỗi (không lệnh mở, không vùng canh, không phân tích): các hàm vòng tick không làm gì ->
                 # nhảy tới lần vòng nến phát hiện nến phân tích kế tiếp (mốc đóng nến + detect_delay)
-                nxt = (math.floor(t / ana_sec) + 1) * ana_sec + self.detect_delay
+                # Mốc phát hiện nến kế tiếp CÒN Ở PHÍA TRƯỚC: nếu đang ở [đóng nến, đóng nến + detect_delay) thì là mốc của chính
+                # nến vừa đóng (trước đây công thức +1 nến nhảy qua -> bỏ sót phân tích nến đó khi rảnh đúng lúc đổi nến)
+                nxt = math.floor(t / ana_sec) * ana_sec + self.detect_delay
+                if nxt <= t + eps:
+                    nxt += ana_sec
                 if nxt > t_auto:
                     t_auto = nxt
                     t_tick = nxt
+                # Live: HẾT tạm nghỉ (chuỗi thua / SL nhanh / chốt chùm) thì vòng tick phân tích AI lại NGAY (COOLDOWN_EXPIRED),
+                # không chờ nến mới -> không được nhảy qua mốc hết tạm nghỉ (trước đây bỏ lỡ lần phân tích này).
+                cd_exp = self._next_cooldown_expiry(t)
+                if cd_exp is not None and cd_exp < t_tick:
+                    # lùi vòng tick về nhịp đầu tiên sau mốc hết tạm nghỉ, GIỮ nguyên pha giây của vòng tick (vào lệnh nhạy với nhịp kiểm tra)
+                    t_tick -= math.floor(t_tick - cd_exp)
         self.broker.process_ticks(last, end_utc)
+
+# ───────────────────────── Sự kiện trực tiếp cho tab Backtest ─────────────────────────
+def _ts_sec(ts) -> float:
+    """Mốc thời gian nến (pandas, không múi giờ, cùng gốc với giờ tick) -> giây."""
+    try:
+        return float(ts.value) / 1e9
+    except AttributeError:
+        return float(ts)
+
+
+class EventStream:
+    """Ghi dần sự kiện phát lại ra events.jsonl (mỗi dòng 1 JSON) để app vẽ TRỰC TIẾP trong lúc đang tính:
+    open / sltp / close (lệnh), ai (kết quả phân tích giống dòng tín hiệu tab live + nến dự báo), zone (vùng canh),
+    log (nhật ký bot), t (mốc đã tính tới). Mọi lỗi ghi sự kiện bị nuốt: không bao giờ làm hỏng lượt backtest."""
+    FLUSH_SEC = 0.25
+
+    def __init__(self, path: str, broker, app, pk: str, logs: list, symbol: str):
+        self.f = open(path, "a", encoding="utf-8")
+        self.broker, self.app, self.pk, self.logs, self.symbol = broker, app, pk, logs, symbol
+        self.seen_open = set()
+        self.n_sltp = self.n_closed = self.n_logs = 0
+        self._zone_obj = False  # khác None để lần đầu luôn so
+        self._last_flush = 0.0
+
+    def _w(self, ev: dict):
+        try:
+            self.f.write(json.dumps(ev, ensure_ascii=False, default=float) + "\n")
+        except Exception:
+            pass
+
+    def ai(self, t, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl, tp, analysis_tf):
+        try:
+            pred = []
+            if mean_df is not None:
+                for _, r in mean_df.iterrows():
+                    pred.append([_ts_sec(r["timestamps"]), round(float(r["open"]), 3), round(float(r["high"]), 3),
+                                 round(float(r["low"]), 3), round(float(r["close"]), 3)])
+            fan = []
+            for s_df in (scenarios or [])[:30]:
+                try:
+                    fan.append([round(float(x), 3) for x in s_df["close"].tolist()])
+                except Exception:
+                    pass
+            self._w({"type": "ai", "t": round(float(t), 3), "title": str(sig_title or ""), "color": str(sig_color or ""),
+                     "detail": str(detail_text or ""), "action": str(action or ""), "sl": float(sl or 0.0), "tp": float(tp or 0.0),
+                     "tf": str(analysis_tf or ""), "pred": pred, "fan": fan})
+        except Exception:
+            pass
+
+    def _zone(self, t):
+        try:
+            p = self.app.profile_ctx[self.pk].get("pending_pullback_order")
+        except Exception:
+            return
+        if p is self._zone_obj:
+            return
+        self._zone_obj = p
+        if p is None:
+            self._w({"type": "zone", "t": round(float(t), 3), "clear": True})
+            return
+        try:
+            action = str(p.get("action", ""))
+            sl_ai = float(p.get("sl_ai_price", p.get("sl_price", 0.0)) or 0.0)
+            cap = float(p.get("effective_max_sl", 0.0) or 0.0)
+            try:
+                tols = self.app._get_symbol_tolerances(self.symbol, self.broker.symbol_info_tick(self.symbol))
+            except Exception:
+                tols = {}
+            lo = hi = None
+            if cap > 0.0 and sl_ai > 0.0:
+                far, brk = cap + float(tols.get("max_sl_tol", 0.05)), float(tols.get("sl_break_tol", 0.25))
+                lo, hi = (sl_ai - far, sl_ai - brk) if action == "SELL" else (sl_ai + brk, sl_ai + far)
+            self._w({"type": "zone", "t": round(float(t), 3), "action": action, "lo": lo, "hi": hi, "sl_ai": sl_ai,
+                     "sl": float(p.get("sl_price", 0.0) or 0.0), "tp": float(p.get("target_tp_price") or p.get("tp_price") or 0.0)})
+        except Exception:
+            pass
+
+    def _open_ev(self, ticket, side, open_ms, price, vol):
+        self.seen_open.add(int(ticket))
+        self._w({"type": "open", "t": round(float(open_ms) / 1000.0, 3), "ticket": int(ticket), "side": side,
+                 "open_ms": int(open_ms), "price": float(price), "vol": float(vol)})
+
+    def step(self, t, force_flush: bool = False):
+        try:
+            b = self.broker
+            for p in list(b.positions):
+                if int(p.ticket) not in self.seen_open:
+                    self._open_ev(p.ticket, "BUY" if p.type == 0 else "SELL", p.time_msc, p.price_open, p.volume)
+            while self.n_sltp < len(b.sltp_log):
+                ms, tk, sl, tp = b.sltp_log[self.n_sltp]
+                self.n_sltp += 1
+                self._w({"type": "sltp", "t": round(ms / 1000.0, 3), "ticket": int(tk), "sl": float(sl), "tp": float(tp)})
+            while self.n_closed < len(b.closed):
+                c = b.closed[self.n_closed]
+                self.n_closed += 1
+                if int(c["ticket"]) not in self.seen_open:
+                    self._open_ev(c["ticket"], c["type"], c["open_ms"], c["price_open"], c["volume"])
+                ev = dict(c)
+                ev.update(type="close", t=round(c["close_ms"] / 1000.0, 3), side=c["type"], reason_label=close_reason_label(c))
+                self._w(ev)
+            while self.n_logs < len(self.logs):
+                ts, msg = self.logs[self.n_logs]
+                self.n_logs += 1
+                self._w({"type": "log", "t": round(float(ts), 3), "msg": str(msg)})
+            self._zone(t)
+            now = _real_time.time()
+            if force_flush or now - self._last_flush >= self.FLUSH_SEC:
+                self._last_flush = now
+                self._w({"type": "t", "t": round(float(t), 3)})
+                self.f.flush()
+        except Exception:
+            pass
+
+    def close(self, t):
+        self.step(t, force_flush=True)
+        try:
+            self.f.close()
+        except Exception:
+            pass
 
 
 class _AttrPatch:
@@ -723,7 +905,7 @@ class _AttrPatch:
 # ───────────────────────── Báo cáo ─────────────────────────
 def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc: float, capital: float = 1000.0,
              seed: int = 1, ai_latency: float = 8.5, detect_delay: float = 1.6, use_cache: bool = True, progress=None,
-             progress_step: int = 5) -> dict:
+             progress_step: int = 5, on_data=None, event_path: str = None, keep_trace: bool = False) -> dict:
     """Phát lại CHÍNH code bot live trên tick MT5 (chỉ đọc). cfg đã được nạp và ghi đè (rb.load_strategy_cfg + --set).
     Trả dict: closed (lệnh đã đóng, có cả lệnh đóng cuối kỳ), rejects, logs, errors, n_analyses, cache, end_utc.
     progress(pct, t_sec, n_closed, n_analyses, cache) được gọi định kỳ nếu có."""
@@ -732,6 +914,10 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
     cfg["engine"] = "Chạy trực tiếp máy Local"       # AI chạy trên máy này (cùng mô hình)
     cfg["telegram_enabled"] = False
     cfg["symbol"] = symbol
+    if not keep_trace:
+        # debug_trace chỉ ghi nhật ký chẩn đoán (không đổi luật). Bật ở live thì backtest ghi nối vào 1 file trace/ngày dùng chung
+        # cho mọi lần chạy lại -> file phình (28MB) và mỗi lần ghi mất ~0.5s (75% thời gian chạy). Muốn có: --set debug_trace=True
+        cfg["debug_trace"] = False
     cache_root = os.path.join(bot_mod.SETTINGS_DIR, "replay_cache")
     print("[*] Đang đọc tick + nến từ MT5 (chỉ đọc, có cache)...")
     sym_info, ms, bid, ask, rates = load_market_data(symbol, start_utc, end_utc, cache_dir=cache_root)
@@ -740,6 +926,8 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
     if last_tick_s < end_utc:
         print(f"[*] Dữ liệu tick chỉ tới {vn(last_tick_s, is_ms=False)} -> dừng phát lại tại đó")
         end_utc = last_tick_s
+    if on_data is not None:  # app xem trực tiếp: có nến ngay sau khi nạp dữ liệu, trước khi chạy code bot
+        on_data(ms, bid, end_utc, float(sym_info.get("trade_contract_size", 100.0) or 100.0))
 
     clock = SimClock(start_utc)
     broker = FakeBroker(symbol, sym_info, ms, bid, ask, rates, clock, capital=capital)
@@ -750,6 +938,16 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
     cache = ScenarioCache(os.path.join(bot_mod.SETTINGS_DIR, "bt_ai_cache")) if use_cache else None
     if cache is not None:
         install_ai_cache(app, cache)
+    install_fetch_memo(app, broker)
+    stream = EventStream(event_path, broker, app, pk, logs, symbol) if event_path else None
+    if stream is not None:
+        def _capture_ui(profile_key, df_live_scalp, df_live_ana, scenarios, mean_df, sig_title, sig_color, detail_text,
+                        action, sl_price, tp_price, sym, scalp_tf, analysis_tf):
+            stream.ai(clock.now, scenarios, mean_df, sig_title, sig_color, detail_text, action, sl_price, tp_price, analysis_tf)
+        _capture_ui._kr_capture = True
+        # Live gọi _ui_after(0, _update_ui_results, ...) sau mỗi lần phân tích: chỉ bắt đúng lời gọi đó (dòng tín hiệu + dự báo)
+        app._update_ui_results = _capture_ui
+        app._ui_after = lambda _d, fn, *a: (fn(*a) if getattr(fn, "_kr_capture", False) else None)
 
     patches = [
         _AttrPatch(bot_mod, "mt5", broker), _AttrPatch(bot_mod, "MT5_AVAILABLE", True),
@@ -766,7 +964,7 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
             progress(pct, t, len(broker.closed), rp.n_analyses, cache)
 
     rp = Replayer(bot_mod, app, broker, clock, pk, cfg, ai_latency=ai_latency, detect_delay=detect_delay, progress=_progress,
-                  progress_step=progress_step)
+                  progress_step=progress_step, on_step=stream.step if stream is not None else None)
     rp_holder["rp"] = rp
     app.enqueue_ai_scan = rp.request_scan
     for p in patches:
@@ -784,6 +982,8 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
         if c:
             broker._close(p, c[1] if p.type == 0 else c[2], c[3], broker.DEAL_REASON_EXPERT, p.volume, "end")
             broker.closed[-1]["reason"] = "Đóng cuối kỳ"
+    if stream is not None:
+        stream.close(end_utc)
     return {"closed": broker.closed, "rejects": broker.rejects, "logs": logs, "errors": errors,
             "n_analyses": rp.n_analyses, "cache": cache, "end_utc": end_utc,
             "contract": float(sym_info.get("trade_contract_size", 100.0) or 100.0),
@@ -827,7 +1027,12 @@ def close_reason_label(c: dict) -> str:
         # SL đã được dời (BE/trailing) thì chạm SL có thể lãi hoặc hòa: không gọi là "cắt lỗ"
         return "SL đã dời (có lãi)" if pf > 0.005 else ("SL tại hòa vốn" if pf >= -0.005 else "Cắt lỗ (SL)")
     if rsn == "TP":
-        return "Chốt lãi (TP)"
+        try:
+            tp_moved = abs(float(c.get("tp_last", c.get("tp0", 0.0)) or 0.0) - float(c.get("tp0", 0.0) or 0.0)) > 1e-6
+        except (TypeError, ValueError):
+            tp_moved = False
+        # TP bị dời về gần Entry (giữ lệnh quá giờ / đảo chiều chờ hòa) rồi mới chạm: không phải chốt lãi theo mục tiêu AI
+        return "TP đã dời về hòa" if tp_moved else "Chốt lãi (TP)"
     cmt = str(c.get("comment", "")).upper()
     for k in sorted(KR_REASON_LABELS, key=len, reverse=True):
         if cmt.startswith(k):
@@ -923,8 +1128,21 @@ def run_replay_job(job_path: str) -> int:
                  mins=round((_real_time.perf_counter() - t_wall) / 60.0, 2))
 
         emit(type="progress", pct=0, t=start_utc, closed=0, analyses=0, mins=0.0, stage="Đang đọc dữ liệu tick từ MT5 (chỉ đọc)...")
+        player_path = os.path.join(out_dir, "player.npz")
+        early = {}
+
+        def on_data(ms, bid, end_eff, contract):
+            # Nến 1 giây cho cả kỳ có ngay sau khi nạp dữ liệu -> app vẽ trực tiếp trong lúc code bot đang chạy
+            pdata0 = build_player_data(ms, bid, start_utc, end_eff)
+            tmp_p = os.path.join(out_dir, "player_tmp.npz")
+            np.savez_compressed(tmp_p, **pdata0)
+            os.replace(tmp_p, player_path)
+            early["ok"] = True
+            emit(type="data_ready", start=start_utc, end=float(end_eff), contract=float(contract), tf=cfg.get("tf"),
+                 analysis_tf=cfg.get("analysis_tf"))
+
         res = simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=float(job.get("capital", 1000.0)), seed=seed,
-                       progress=progress, progress_step=1)
+                       progress=progress, progress_step=1, on_data=on_data, event_path=os.path.join(out_dir, "events.jsonl"))
         closed = res["closed"]
         for c in closed:
             c["reason_label"] = close_reason_label(c)
@@ -935,8 +1153,9 @@ def run_replay_job(job_path: str) -> int:
                 f.write("\n===== LỖI =====\n")
                 for t, msg in res["errors"]:
                     f.write(f"[{vn(t, is_ms=False)}] {msg}\n")
-        pdata = build_player_data(res["ticks_ms"], res["ticks_bid"], start_utc, res["end_utc"])
-        np.savez_compressed(os.path.join(out_dir, "player.npz"), **pdata)
+        if not early.get("ok"):
+            pdata = build_player_data(res["ticks_ms"], res["ticks_bid"], start_utc, res["end_utc"])
+            np.savez_compressed(player_path, **pdata)
         cache = res["cache"]
         out = {"status": "done", "profile": pk, "symbol": symbol, "start_utc": start_utc, "end_utc": res["end_utc"],
                "capital": float(job.get("capital", 1000.0)), "note": note, "params": params, "summary": summarize(closed),
@@ -1036,7 +1255,8 @@ def main(argv=None) -> int:
         bot_mod.KronosDesktopApp._cancel_pending_for_new_scan = lambda self, pk: None
         print("[*] So sánh       : TẮT hủy lệnh chờ cũ khi nến mới (--no-cancel-pending)")
     res = simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=args.capital, seed=args.seed,
-                   ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress)
+                   ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress,
+                   keep_trace=any(str(x).strip().startswith("debug_trace=") for x in args.set))
     closed, logs, errors, rejects = res["closed"], res["logs"], res["errors"], res["rejects"]
     n_analyses, cache, end_utc = res["n_analyses"], res["cache"], res["end_utc"]
 

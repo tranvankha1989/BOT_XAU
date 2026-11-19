@@ -1,6 +1,7 @@
 """Kiểm thử sàn giả lập + đồng hồ của tools/live_replay.py (dữ liệu tổng hợp, không MT5)."""
 import os
 import sys
+import types
 import unittest
 
 import numpy as np
@@ -66,6 +67,26 @@ class TestFakeBroker(unittest.TestCase):
         b.process_ticks(T0 + 1, T0 + 10)
         self.assertEqual(b.closed[0]["reason"], "TP")
         self.assertAlmostEqual(b.closed[0]["price_close"], 87.0)  # ask = 85 + 2 là tick đầu <= 88
+
+    def test_san_nghi_phien_tu_choi_moi_lenh_gui(self):
+        # MT5 thật: sàn nghỉ phiên (vàng ~1 giờ/ngày, không có tick) -> từ chối mở/đóng/sửa SL-TP (10018 Market closed).
+        # Trước đây sàn giả vẫn cho sửa SL/TP trong giờ nghỉ -> backtest khác live.
+        b, clk = make_broker([100.0] * 10)
+        clk.now = T0 + 1
+        r = b.order_send({"action": b.TRADE_ACTION_DEAL, "type": b.ORDER_TYPE_BUY, "volume": 0.01, "sl": 90.0, "tp": 120.0, "magic": 1})
+        self.assertEqual(r.retcode, b.TRADE_RETCODE_DONE)
+        clk.now = T0 + 9 + 30  # tick cuối cách 30s: sàn vẫn mở
+        ok = b.order_send({"action": b.TRADE_ACTION_SLTP, "position": r.order, "sl": 95.0, "tp": 120.0})
+        self.assertEqual(ok.retcode, b.TRADE_RETCODE_DONE)
+        clk.now = T0 + 9 + 3600  # 1 giờ không có tick: nghỉ phiên
+        for req in ({"action": b.TRADE_ACTION_SLTP, "position": r.order, "sl": 99.0, "tp": 120.0},
+                    {"action": b.TRADE_ACTION_DEAL, "position": r.order, "volume": 0.01, "type": b.ORDER_TYPE_SELL},
+                    {"action": b.TRADE_ACTION_DEAL, "type": b.ORDER_TYPE_SELL, "volume": 0.01, "sl": 110.0, "tp": 80.0, "magic": 1}):
+            res = b.order_send(req)
+            self.assertEqual(res.retcode, 10018)
+            self.assertIn("market closed", res.comment.lower())  # bot live nhận diện nghỉ phiên qua chữ này
+        self.assertEqual(b.positions[0].sl, 95.0)  # SL/TP không bị sửa trong giờ nghỉ
+        self.assertEqual(len(b.positions), 1)
 
     def test_sua_sltp_sai_phia_bi_tu_choi(self):
         b, clk = make_broker([100.0] * 10)
@@ -143,6 +164,57 @@ class TestFakeBroker(unittest.TestCase):
         self.assertAlmostEqual(s["pf"], 2.5)
         self.assertEqual(s["max_dd"], -2.0)
         self.assertEqual(s["max_loss_streak"], 2)
+
+
+class TestReplayerCooldownExpiry(unittest.TestCase):
+    """Live: hết tạm nghỉ (SL nhanh / chuỗi thua / chốt chùm) -> vòng tick phân tích AI lại NGAY (COOLDOWN_EXPIRED).
+    Bộ phát lại nhảy qua đoạn nhàn rỗi để chạy nhanh nhưng KHÔNG được nhảy qua mốc hết tạm nghỉ."""
+
+    def _run(self, ctx):
+        from datetime import datetime as _dt
+        start = float(T0)
+        calls = []
+        rp = object.__new__(lr.Replayer)
+        rp.__dict__.update(
+            broker=types.SimpleNamespace(positions=[], process_ticks=lambda a, b: None, mark_to_market=lambda: None),
+            clock=lr.SimClock(start), pk="XAUUSD", app=types.SimpleNamespace(profile_ctx={"XAUUSD": ctx}),
+            ana_tf="M5", scalp_tf="M1", auto_step=2.0, detect_delay=1.6, ai_latency=8.5, analysis_due=None, analysis_ts=None,
+            progress=None, progress_step=5, n_analyses=0, on_step=None)
+        rp.auto_loop_step = lambda: None
+        rp.tick_loop_step = lambda: calls.append(rp.clock.now)
+        rp.run(start, start + 600)
+        return start, calls, _dt
+
+    def test_idle_skip_stops_at_cooldown_expiry(self):
+        from datetime import datetime as _dt
+        start = float(T0)
+        ctx = {"pending_pullback_order": None, "fast_sl_cooldown_until": _dt.fromtimestamp(start + 100.3)}
+        _s, calls, _ = self._run(ctx)
+        hit = [c for c in calls if start + 100.3 <= c < start + 101.3]
+        self.assertEqual(len(hit), 1, calls[:5])  # vòng tick chạy trong giây ngay sau mốc hết tạm nghỉ (không đợi nến M5 kế tiếp)
+        self.assertAlmostEqual(hit[0] % 1.0, 0.6, places=6)  # giữ pha giây cũ của vòng tick (mốc nến + 1.6s)
+
+    def test_idle_exactly_at_candle_close_still_detects_that_candle(self):
+        # Rảnh đúng giây đóng nến (vd tạm nghỉ hết ngay trước đó): phải phát hiện CHÍNH nến vừa đóng (đóng + 1.6s),
+        # trước đây công thức nhảy sang nến sau -> bỏ sót phân tích 1 nến
+        from datetime import datetime as _dt
+        start = float(T0) - (float(T0) % 300)
+        auto_calls = []
+        rp = object.__new__(lr.Replayer)
+        ctx = {"pending_pullback_order": None, "fast_sl_cooldown_until": _dt.fromtimestamp(start + 299.5)}
+        rp.__dict__.update(
+            broker=types.SimpleNamespace(positions=[], process_ticks=lambda a, b: None, mark_to_market=lambda: None),
+            clock=lr.SimClock(start), pk="XAUUSD", app=types.SimpleNamespace(profile_ctx={"XAUUSD": ctx}),
+            ana_tf="M5", scalp_tf="M1", auto_step=2.0, detect_delay=1.6, ai_latency=8.5, analysis_due=None, analysis_ts=None,
+            progress=None, progress_step=5, n_analyses=0, on_step=None)
+        rp.auto_loop_step = lambda: auto_calls.append(rp.clock.now)
+        rp.tick_loop_step = lambda: None
+        rp.run(start + 10, start + 700)
+        self.assertTrue(any(abs(c - (start + 301.6)) < 1e-6 for c in auto_calls), auto_calls[:5])
+
+    def test_no_cooldown_keeps_fast_idle_skip(self):
+        start, calls, _ = self._run({"pending_pullback_order": None})
+        self.assertFalse(any(start + 1 < c < start + 300 for c in calls))  # không có gì -> vẫn nhảy thẳng tới nến kế
 
 
 if __name__ == "__main__":

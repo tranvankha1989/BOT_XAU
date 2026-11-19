@@ -73,7 +73,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **312 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **355 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
@@ -81,7 +81,12 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
   Chạy CHÍNH code bot live (vòng tick + vòng nến + phân tích AI) trên tick quá khứ với sàn giả lập; mọi thông số cấu hình có hiệu lực.
   Đã đối chiếu 16/11: tín hiệu 18:45 và lệnh 19:00 khớp live (giá vào trùng 64387.48). Báo cáo phải nêu số "Lỗi ghi nhận trong code bot" (phải = 0).
   Khi sửa `_realtime_tick_loop`/`_auto_loop_worker` hoặc dùng hàm MT5 mới: cập nhật `tools/live_replay.py` (Replayer/FakeBroker) trong cùng việc.
-  Giới hạn: lệnh khớp ở tick tại thời điểm quyết định (không có trễ mạng); AI ngẫu nhiên nên không trùng từng lệnh với live.
+  Giới hạn: lệnh khớp ở tick tại thời điểm quyết định (không có trễ mạng).
+  AI KHÔNG ngẫu nhiên giữa các lần chạy: `kronos_engine` đặt hạt giống theo dữ liệu nến -> cùng nến cho cùng kết quả (19/11: 138/138 nến trùng hệt máy 2).
+  `--ai-latency` mặc định 8.5s là thời gian AI của MÁY NÀY; máy 2 chỉ ~1.7s (phát hiện nến ~1.5s): so với máy 2 phải dùng `--ai-latency 1.7 --detect-delay 1.5`,
+  nếu không lần kiểm tra Price Action/vùng canh lệch pha và lệnh vào khác. Đối chiếu live phải dùng ĐÚNG cấu hình theo từng giờ (log có dòng "Đã áp dụng ... Nút Lưu Cài Đặt")
+  và bỏ các khoảng bot live không chạy. Chi tiết: `docs/SO_SANH_BACKTEST_LIVE_2026-11-19.md`.
+  Rà 19/11: hết tạm nghỉ (chuỗi thua/SL nhanh/chốt chùm) live phân tích lại NGAY -> Replayer dừng đúng mốc đó (giữ pha giây vòng tick); nhảy nhàn rỗi tính mốc phát hiện nến CÒN PHÍA TRƯỚC (trước đây có thể bỏ sót 1 nến). Replayer chạy nhánh tab NGẦM: trạng thái chỉ ghi ctx mà tab đang mở bị `_sync_self_to_active_ctx` đè (vd basket_cooldown_until) thì backtest KHÁC live.
 - **BACKTEST PHẢI GIỐNG BOT LIVE (bắt buộc, người dùng yêu cầu 18/11/2026):**
   1. Backtest/replay chạy theo file cấu hình y như bot live: MỌI khóa cấu hình có hiệu lực, không bỏ qua khóa nào.
      Dùng engine chạy CHÍNH code live (`tools/live_replay.py`), KHÔNG viết lại luật giao dịch trong engine riêng.
@@ -92,7 +97,10 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
   4. Backtest trong app phải chạy ở tiến trình RIÊNG: `live_replay` thay mt5/time/datetime cấp module, chạy chung tiến trình sẽ phá bot live.
      Giới hạn luồng để không tranh CPU với bot live (Kernel-Power 41).
   5. Giao diện xem lại backtest: biểu đồ nến phát lại kiểu TradingView (tua 1x/2x/5x/10x..., tạm dừng, từng bước), thấy rõ điểm vào/SL/TP/thoát.
-     Phải MƯỢT, không giật: phát lại từ kết quả đã tính sẵn (không chạy AI lúc phát), vẽ theo khung hình cố định, chỉ cập nhật phần thay đổi.
+     Phải MƯỢT, không giật: tiến trình UI không chạy AI (tiến trình con tính), vẽ theo khung hình cố định, chỉ cập nhật phần thay đổi.
+     (19/11, người dùng yêu cầu) Mở tab Backtest -> khung biểu đồ PHÍA TRÊN đổi sang màn hình Backtest riêng (giống tab Vàng/BTC);
+     bấm chạy: nạp dữ liệu xong là biểu đồ CHẠY TRỰC TIẾP theo thời gian như thật (dòng tín hiệu AI, nến dự báo, vùng canh, lệnh, nhật ký),
+     tua 1x..600x/"Tối đa", không vượt mốc đã tính (chờ AI như video đang tải).
   Trạng thái 19/11: ĐÃ LÀM cả 5 mục.
   - Mục 3: nút "⚙️ Thông số Backtest" = bảng riêng dựng từ `SETTINGS_SECTION_MAP` + `_param_meta` của menu (thông số mới thêm đúng 6 bước tự có),
     lưu `%APPDATA%/Kronos_MT5_Bot/backtest_settings.json` (không token), đọc bằng `_get_bt_cfg(pk)`.
@@ -102,6 +110,12 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
     Con: ưu tiên thấp, `_bt_child_threads()` luồng; tiến độ `progress.jsonl`, kết quả `result.json` + `player.npz` + `log.txt`; hủy = file `cancel`.
     `tools/binary_packer.py` phải gói 3 công cụ đó (đã thêm). Engine cũ vẫn chọn được ("⚡ Engine cũ", khác live).
   - Mục 5: `trading_modules/replay_player.py` (Tk Canvas, bộ hình nến dùng lại, ~60 khung/giây, đo ~5ms/khung). Nút "🎬 Xem phát lại", bấm đúp 1 lệnh.
+    Xem trực tiếp: con ghi `player.npz` ngay sau khi nạp dữ liệu (sự kiện `data_ready`) + `events.jsonl` (`EventStream` trong live_replay:
+    open/sltp/close/ai/zone/log/t; "ai" bắt từ lời gọi `_ui_after(0, _update_ui_results, ...)` của live). App: `chart_holder` chứa
+    `live_chart_frame` hoặc `bt_ws_frame` (`_bt_set_workspace_visible`, gọi trong `_on_tab_changed`), trình phát nhúng `parent=bt_ws_body, live=True`;
+    bảng lệnh chạy theo thời điểm đang phát khi còn đang tính (`_render_backtest_results(..., final=False)`), tính xong thì đủ lệnh.
+    Đổi chữ ký `_update_ui_results` hoặc cách gọi nó ở live: sửa `simulate` (bắt sự kiện "ai") trong cùng việc.
+    Tốc độ (19/11): backtest TẮT `debug_trace` (trace ghi nối 1 file/ngày dùng chung, file phình làm chậm 5 lần; muốn có: `--set debug_trace=True`), `install_fetch_memo` dùng lại bảng nến đã đóng (trả bản sao). KHÔNG bỏ qua giờ nghỉ phiên khi có lệnh mở (live thử sửa lệnh mỗi 15s, để lại trạng thái). Sàn giả từ chối mọi lệnh gửi khi không có tick > 60s (10018 Market closed) như MT5 thật.
   - Test có app thật + thanh Backtest phải patch `SETTINGS_DIR` sang thư mục tạm (không ghi APPDATA thật).
 - **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
   1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".

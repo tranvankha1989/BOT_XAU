@@ -1,0 +1,201 @@
+"""Telegram 19/11/2026: tin gọn 2 dòng, nút chỉ ở tin mới nhất, nút '🧠 Phân tích AI', báo đóng lệnh nhanh
+(không ghi bộ đệm của luật giao dịch), lãi ngày tính từ cùng danh sách lệnh đã đóng. Toàn bộ mock, không mạng/MT5."""
+import os
+import queue
+import sys
+import threading
+import types
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import mt5_scalping_bot as b
+
+
+class _Var:
+    def __init__(self, v):
+        self.v = v
+
+    def get(self):
+        return self.v
+
+
+def make_app(**kw):
+    app = object.__new__(b.KronosDesktopApp)
+    app.__dict__.update(
+        root=types.SimpleNamespace(after=lambda ms, fn=None: fn() if fn else None),
+        start_auto_scan=mock.Mock(), stop_auto_scan=mock.Mock(),
+        _telegram_api_call=mock.Mock(),
+        _get_telegram_inline_keyboard=mock.Mock(return_value={"inline_keyboard": [[{"text": "x", "callback_data": "tg_stats"}]]}),
+        _generate_telegram_stats_report=mock.Mock(return_value="report"),
+        _tg_kb_lock=threading.Lock(), _tg_last_kb_msg_id=None,
+        _telegram_queue=queue.Queue(), _telegram_sent_deal_tickets=set(),
+        telegram_enabled_var=_Var(True), telegram_notify_open_var=_Var(True), telegram_notify_close_var=_Var(True),
+        profile_ctx={"XAUUSD": {}, "BTCUSD": {}},
+    )
+    app.__dict__.update(kw)
+    return app
+
+
+class TestKeyboard(unittest.TestCase):
+    def test_hang_dau_co_bao_cao_va_phan_tich_ai(self):
+        app = make_app(profile_ctx={"XAUUSD": {"auto_loop_running": True}, "BTCUSD": {}})
+        del app.__dict__["_get_telegram_inline_keyboard"]  # dùng hàm thật
+        kb = app._get_telegram_inline_keyboard()["inline_keyboard"]
+        self.assertEqual([x["callback_data"] for x in kb[0]], ["tg_stats", "tg_ai"])
+        self.assertEqual(kb[1][0]["text"], "🟡 VÀNG: ⏸ DỪNG")
+
+
+class TestSendWithKeyboard(unittest.TestCase):
+    def _api(self):
+        ids = iter([101, 102, 103])
+
+        def call(token, method, data=None, timeout=15):
+            if method == "sendMessage":
+                return {"ok": True, "result": {"message_id": next(ids)}}
+            return {"ok": True}
+        return mock.Mock(side_effect=call)
+
+    def test_go_nut_o_tin_truoc(self):
+        app = make_app(_telegram_api_call=self._api())
+        app._telegram_send_with_keyboard("T", "1", "tin 1")
+        self.assertEqual(app._telegram_api_call.call_count, 1)
+        app._telegram_send_with_keyboard("T", "1", "tin 2")
+        calls = app._telegram_api_call.call_args_list
+        self.assertEqual(calls[1][0][1], "sendMessage")
+        self.assertIn("inline_keyboard", calls[1][0][2]["reply_markup"])
+        self.assertEqual(calls[2][0][1], "editMessageReplyMarkup")
+        self.assertEqual(calls[2][0][2]["message_id"], 101)
+        self.assertEqual(calls[2][0][2]["reply_markup"], {"inline_keyboard": []})
+        self.assertEqual(app._tg_last_kb_msg_id, 102)
+
+    def test_gui_loi_khong_go_nut_cu(self):
+        app = make_app(_telegram_api_call=mock.Mock(return_value=None), _tg_last_kb_msg_id=55)
+        self.assertIsNone(app._telegram_send_with_keyboard("T", "1", "tin"))
+        self.assertEqual(app._telegram_api_call.call_count, 1)
+        self.assertEqual(app._tg_last_kb_msg_id, 55)
+
+
+class TestAiButton(unittest.TestCase):
+    def test_bam_nut_ai(self):
+        app = make_app(_telegram_send_with_keyboard=mock.Mock(), _generate_telegram_ai_report=mock.Mock(return_value="AI-REPORT"))
+        app._handle_telegram_callback({"id": "cq1", "data": "tg_ai", "message": {"message_id": 7}}, "1", "T")
+        self.assertEqual(app._telegram_api_call.call_args[0][1], "answerCallbackQuery")
+        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "AI-REPORT")
+
+    def test_lenh_go_ai(self):
+        for t in ("/ai", "phân tích", "Phân tích AI"):
+            app = make_app(_telegram_send_with_keyboard=mock.Mock(), _generate_telegram_ai_report=mock.Mock(return_value="R"))
+            app._handle_telegram_command(t, "1", "T")
+            app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "R")
+            app.start_auto_scan.assert_not_called()
+            app.stop_auto_scan.assert_not_called()
+
+    def test_noi_dung_phan_tich(self):
+        ctx = {
+            "_tg_ai_info": {"ts": "13:10:03", "tf": "M5"}, "auto_loop_running": True,
+            "_sig_title": "🔴 TÍN HIỆU [XAUUSD]: SELL XAUUSDm — Đồng thuận 91%",
+            "_last_detail_prefix": "Giá đóng nến: 3732.37  |  Dự báo 6 nến: 3730.09 (-2.28$)\nGợi ý AI ->  Entry: 3732.37   |   SL: 3738.03",
+            "pending_pullback_order": {"zone_watch": True, "action": "SELL", "sl_ai_price": 3735.53, "effective_max_sl": 4.0},
+        }
+        app = make_app(profile_ctx={"XAUUSD": ctx, "BTCUSD": {}})
+        rep = app._generate_telegram_ai_report()
+        self.assertIn("🧠 VÀNG · AI M5 lúc 13:10:03 · AUTO BẬT", rep)
+        self.assertIn("Đồng thuận 91%", rep)
+        self.assertIn("Giá đóng nến: 3732.37 | Dự báo 6 nến: 3730.09 (-2.28$)", rep)
+        self.assertIn("⏳ Đang canh vùng SELL ≥ 3731.53", rep)
+        self.assertNotIn("BTC", rep)
+
+    def test_chua_co_phan_tich(self):
+        self.assertIn("Chưa có kết quả", make_app()._generate_telegram_ai_report())
+
+
+class TestCompactMessages(unittest.TestCase):
+    def test_tin_vao_lenh(self):
+        app = make_app(profile_ctx={"XAUUSD": {"cached_consensus": "91"}, "BTCUSD": {}})
+        app._telegram_notify_order_opened(4182479748, "XAUUSDm", "BUY", 0.02, 3733.14, 3729.00, 3748.50, "XAUUSD")
+        msg, markup = app._telegram_queue.get_nowait()
+        l1, l2 = msg.split("\n")
+        self.assertTrue(l1.startswith("🚀 VÀNG BUY 0.02 @ 3733.14 · "))
+        self.assertEqual(l2, "SL 3729.00 (-4.14) · TP 3748.50 (+15.36 · 3.7R) · AI 91% · #4182479748")
+        self.assertIsNone(markup)
+
+    def test_tin_vao_lenh_chua_co_dong_thuan(self):
+        app = make_app()
+        app._telegram_notify_order_opened(5, "XAUUSDm", "SELL", 0.02, 3734.24, 3738.03, 3718.0, "XAUUSD")
+        msg, _ = app._telegram_queue.get_nowait()
+        self.assertNotIn("AI", msg.split("\n")[1])
+
+    def test_tin_dong_lenh(self):
+        app = make_app(_get_today_deals_stats=mock.Mock(return_value=(99.0, 0, None)))
+        cd = {"category": "WIN", "net_pnl": 0.70, "r_ratio_str": "+0.08R", "duration": "10s", "status": "ĐÃ CHỐT TP (13:10:11)",
+              "open_price": 3733.14, "close_price": 3733.49, "symbol": "XAUUSDm", "type": "BUY", "ticket": 4182479748}
+        app._telegram_notify_order_closed(cd, day_pnl=4.31)
+        msg, markup = app._telegram_queue.get_nowait()
+        self.assertEqual(msg, "🎯 VÀNG BUY +0.70$ (+0.08R) · CHỐT TP · 13:10:11\n"
+                              "3733.14 → 3733.49 · giữ 10s · Ngày +4.31$ · #4182479748")
+        self.assertIsNone(markup)
+        app._get_today_deals_stats.assert_not_called()
+
+    def test_tin_dong_lenh_ly_do_khong_co_gio(self):
+        app = make_app()
+        cd = {"category": "LOSS", "net_pnl": -7.58, "status": "Đã đóng", "open_price": 1, "close_price": 2,
+              "symbol": "XAUUSDm", "type": "SELL", "ticket": 9}
+        app._telegram_notify_order_closed(cd, day_pnl=-7.58)
+        msg, _ = app._telegram_queue.get_nowait()
+        self.assertTrue(msg.startswith("🛑 VÀNG SELL -7.58$ · Đã đóng\n"))
+
+
+class TestFreshClosedDeals(unittest.TestCase):
+    def test_doc_nhanh_khi_lenh_bien_mat(self):
+        fresh = [{"ticket": 111, "net_pnl": -7.58}]
+        app = make_app(_get_closed_deals_by_range=mock.Mock(return_value=fresh))
+        pos = [types.SimpleNamespace(ticket=111)]
+        clock = {"t": 1000.0}
+        with mock.patch.object(b.time, "monotonic", side_effect=lambda: clock["t"]):
+            self.assertEqual(app._telegram_fresh_closed_deals("XAUUSD", "XAUUSDm", pos, []), [])
+            app._get_closed_deals_by_range.assert_not_called()
+            # lệnh biến mất, danh sách đã đóng (bộ đệm) chưa có -> đọc mới, không ghi bộ đệm dùng chung
+            clock["t"] = 1001.0
+            self.assertEqual(app._telegram_fresh_closed_deals("XAUUSD", "XAUUSDm", [], []), fresh)
+            kw = app._get_closed_deals_by_range.call_args[1]
+            self.assertEqual((kw["use_cache"], kw["store_cache"], kw["profile_key"]), (False, False, "XAUUSD"))
+            # cùng giây: không đọc lại
+            clock["t"] = 1001.5
+            self.assertEqual(app._telegram_fresh_closed_deals("XAUUSD", "XAUUSDm", [], []), [])
+            self.assertEqual(app._get_closed_deals_by_range.call_count, 1)
+            # đã gửi tin -> thôi chờ
+            app._telegram_sent_deal_tickets.add(111)
+            clock["t"] = 1003.0
+            self.assertEqual(app._telegram_fresh_closed_deals("XAUUSD", "XAUUSDm", [], []), [])
+            self.assertEqual(app._get_closed_deals_by_range.call_count, 1)
+
+    def test_het_20_giay_thi_thoi(self):
+        app = make_app(_get_closed_deals_by_range=mock.Mock(return_value=[]))
+        clock = {"t": 0.0}
+        with mock.patch.object(b.time, "monotonic", side_effect=lambda: clock["t"]):
+            app._telegram_fresh_closed_deals("XAUUSD", "S", [types.SimpleNamespace(ticket=5)], [])
+            clock["t"] = 1.0
+            app._telegram_fresh_closed_deals("XAUUSD", "S", [], [])
+            clock["t"] = 30.0
+            app._telegram_fresh_closed_deals("XAUUSD", "S", [], [])
+        self.assertEqual(app._get_closed_deals_by_range.call_count, 1)
+
+
+class TestStoreCacheFlag(unittest.TestCase):
+    def _app(self):
+        return make_app(_get_profile_magic_number=lambda pk: 1, _resolve_profile_by_symbol=lambda s: "XAUUSD",
+                        _mt5_lock=threading.RLock(), _cached_closed_deals_map={})
+
+    def test_khong_ghi_bo_dem_khi_store_cache_false(self):
+        fake_mt5 = types.SimpleNamespace(history_deals_get=lambda *a, **k: (), history_orders_get=lambda *a, **k: ())
+        with mock.patch.object(b, "MT5_AVAILABLE", True), mock.patch.object(b, "mt5", fake_mt5):
+            app = self._app()
+            app._get_closed_deals_by_range(symbol="XAUUSDm", use_cache=False, profile_key="XAUUSD", store_cache=False)
+            self.assertEqual(app._cached_closed_deals_map, {})
+            app._get_closed_deals_by_range(symbol="XAUUSDm", use_cache=False, profile_key="XAUUSD")
+            self.assertEqual(len(app._cached_closed_deals_map), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

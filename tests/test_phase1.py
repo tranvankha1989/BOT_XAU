@@ -413,6 +413,20 @@ class TestAnalysisNoSignal(Base):
     def test_plain_no_consensus(self):
         app, ctx = self.run_worker([2.0] * 4 + [-2.0] * 4, use_gate=False)
         self.check(app, ctx, "ĐỨNG NGOÀI")
+        self.assertNotIn("BIÊN ĐỘ NHỎ", ctx["_sig_title"])
+
+    def test_small_move_bear_shows_reason(self):
+        # 8/8 kịch bản giảm (100%) nhưng chỉ -1.0$ < min_move 1.2$: ghi rõ lý do đứng ngoài (19/11)
+        app, ctx = self.run_worker([-1.0] * 8, use_gate=False)
+        self.check(app, ctx, "ĐỨNG NGOÀI (BIÊN ĐỘ NHỎ)")
+        self.assertIn("Giảm 100%", ctx["_sig_title"])
+        self.assertIn("-1.00$ < Biên độ tối thiểu 1.20$", ctx["_sig_title"])
+
+    def test_small_move_bull_shows_reason(self):
+        app, ctx = self.run_worker([1.0] * 8, use_gate=False)
+        self.check(app, ctx, "ĐỨNG NGOÀI (BIÊN ĐỘ NHỎ)")
+        self.assertIn("Tăng 100%", ctx["_sig_title"])
+        self.assertIn("+1.00$ < Biên độ tối thiểu 1.20$", ctx["_sig_title"])
 
 
 if __name__ == "__main__":
