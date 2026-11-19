@@ -372,7 +372,7 @@ class FakeBroker:
         rsn = {self.DEAL_REASON_SL: "SL", self.DEAL_REASON_TP: "TP"}.get(reason, "Bot đóng")
         self.closed.append({"ticket": pos.ticket, "type": "BUY" if pos.type == self.POSITION_TYPE_BUY else "SELL",
                             "open_ms": pos.time_msc, "close_ms": ms, "price_open": pos.price_open, "price_close": px,
-                            "sl0": pos._sl0, "tp0": pos._tp0, "sl_last": pos.sl, "volume": vol, "profit": profit,
+                            "sl0": pos._sl0, "tp0": pos._tp0, "sl_last": pos.sl, "tp_last": pos.tp, "volume": vol, "profit": profit,
                             "reason": rsn, "comment": str(d_cmt or "")})
         if vol >= pos.volume - 1e-9:
             self.positions.remove(pos)
@@ -968,7 +968,12 @@ def close_reason_label(c: dict) -> str:
         # SL đã được dời (BE/trailing) thì chạm SL có thể lãi hoặc hòa: không gọi là "cắt lỗ"
         return "SL đã dời (có lãi)" if pf > 0.005 else ("SL tại hòa vốn" if pf >= -0.005 else "Cắt lỗ (SL)")
     if rsn == "TP":
-        return "Chốt lãi (TP)"
+        try:
+            tp_moved = abs(float(c.get("tp_last", c.get("tp0", 0.0)) or 0.0) - float(c.get("tp0", 0.0) or 0.0)) > 1e-6
+        except (TypeError, ValueError):
+            tp_moved = False
+        # TP bị dời về gần Entry (giữ lệnh quá giờ / đảo chiều chờ hòa) rồi mới chạm: không phải chốt lãi theo mục tiêu AI
+        return "TP đã dời về hòa" if tp_moved else "Chốt lãi (TP)"
     cmt = str(c.get("comment", "")).upper()
     for k in sorted(KR_REASON_LABELS, key=len, reverse=True):
         if cmt.startswith(k):
