@@ -1125,6 +1125,9 @@ class KronosDesktopApp:
         self._telegram_sent_deal_tickets = set()
         self._telegram_queue = queue.Queue()
         self._app_session_start_ts = int(time.time())
+        # Nút bấm chỉ nằm dưới tin Telegram MỚI NHẤT: nhớ mã tin đang có nút để gỡ khi gửi tin mới
+        self._tg_kb_lock = threading.Lock()
+        self._tg_last_kb_msg_id = None
 
         # Trạng thái Module Kiểm thử Chiến Lược (Backtest Tick-Level Engine)
         self._backtest_unlocked = False
@@ -6705,7 +6708,8 @@ class KronosDesktopApp:
         return {
             "inline_keyboard": [
                 [
-                    {"text": "📊 Xem Báo Cáo & Lệnh Đang Mở", "callback_data": "tg_stats"}
+                    {"text": "📊 Báo cáo", "callback_data": "tg_stats"},
+                    {"text": "🧠 Phân tích AI", "callback_data": "tg_ai"}
                 ],
                 [
                     {"text": xau_text, "callback_data": "tg_toggle_xau"},
@@ -6717,6 +6721,33 @@ class KronosDesktopApp:
                 ]
             ]
         }
+
+    def _telegram_send_with_keyboard(self, token: str, chat_id: str, text: str, reply_markup: dict = None, timeout: int = 15):
+        """Gửi tin kèm nút bấm rồi gỡ nút ở tin có nút trước đó: nút chỉ nằm dưới tin MỚI NHẤT (khung chat gọn).
+        Trả về kết quả sendMessage như _telegram_api_call."""
+        res = self._telegram_api_call(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": text,
+            "reply_markup": reply_markup or self._get_telegram_inline_keyboard(),
+        }, timeout=timeout)
+        try:
+            new_id = int(res["result"]["message_id"]) if isinstance(res, dict) and res.get("ok") else None
+        except Exception:
+            new_id = None
+        lock = getattr(self, "_tg_kb_lock", None)
+        if new_id is None or lock is None:
+            return res
+        with lock:
+            old_id = getattr(self, "_tg_last_kb_msg_id", None)
+            self._tg_last_kb_msg_id = new_id
+        if old_id and old_id != new_id:
+            try:
+                self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": chat_id, "message_id": old_id, "reply_markup": {"inline_keyboard": []},
+                }, timeout=10)
+            except Exception:
+                pass
+        return res
 
     def _telegram_dispatcher_loop(self):
         """Luồng ngầm gửi tin nhắn từ hàng đợi ra Telegram hoàn toàn bất đồng bộ (0 giật lag UI / 0 nghẽn MT5)."""
@@ -6734,12 +6765,10 @@ class KronosDesktopApp:
             chat_id = str(getattr(self, "telegram_chat_id_var", tk.StringVar()).get()).strip()
 
             if token and chat_id:
-                payload = {
-                    "chat_id": chat_id,
-                    "text": msg_text,
-                    "reply_markup": reply_markup or self._get_telegram_inline_keyboard(),
-                }
-                self._telegram_api_call(token, "sendMessage", payload, timeout=12)
+                try:
+                    self._telegram_send_with_keyboard(token, chat_id, msg_text, reply_markup=reply_markup, timeout=12)
+                except Exception:
+                    pass  # không để luồng gửi tin chết vì 1 tin lỗi
 
     def _telegram_polling_worker(self):
         """Luồng ngầm lắng nghe lệnh điều khiển từ xa từ điện thoại người dùng qua Telegram (Long-Polling)."""
@@ -6821,11 +6850,15 @@ class KronosDesktopApp:
                 "show_alert": False
             })
             report = self._generate_telegram_stats_report()
-            self._telegram_api_call(token, "sendMessage", {
-                "chat_id": chat_id,
-                "text": report,
-                "reply_markup": self._get_telegram_inline_keyboard()
+            self._telegram_send_with_keyboard(token, chat_id, report)
+
+        elif data == "tg_ai":
+            self._telegram_api_call(token, "answerCallbackQuery", {
+                "callback_query_id": cq_id,
+                "text": "🧠 Đang lấy phân tích AI mới nhất...",
+                "show_alert": False
             })
+            self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
 
         elif data == "tg_toggle_xau":
             xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
@@ -6923,19 +6956,14 @@ class KronosDesktopApp:
                 "text": "🔄 Đã kích hoạt chế độ phím bấm trực tiếp (Inline Buttons).",
                 "reply_markup": {"remove_keyboard": True}
             })
-            self._telegram_api_call(token, "sendMessage", {
-                "chat_id": chat_id,
-                "text": welcome,
-                "reply_markup": self._get_telegram_inline_keyboard()
-            })
+            self._telegram_send_with_keyboard(token, chat_id, welcome)
 
         elif norm_txt in ("thống kê", "/stats", "/status"):
             report = self._generate_telegram_stats_report()
-            self._telegram_api_call(token, "sendMessage", {
-                "chat_id": chat_id,
-                "text": report,
-                "reply_markup": self._get_telegram_inline_keyboard()
-            })
+            self._telegram_send_with_keyboard(token, chat_id, report)
+
+        elif norm_txt in ("/ai", "phân tích", "phân tích ai"):
+            self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
 
         elif norm_txt in ("tạm dừng", "/pause", "/stop"):
             self.root.after(0, lambda: self.stop_auto_scan("XAUUSD"))
@@ -6946,11 +6974,7 @@ class KronosDesktopApp:
                 "Trạng thái: ĐÃ TẮT TỰ ĐỘNG VÀO LỆNH (Vàng & Bitcoin).\n"
                 "Các lệnh đang mở vẫn được bảo vệ SL/TP và Trailing Stop bình thường."
             )
-            self._telegram_api_call(token, "sendMessage", {
-                "chat_id": chat_id,
-                "text": resp,
-                "reply_markup": self._get_telegram_inline_keyboard()
-            })
+            self._telegram_send_with_keyboard(token, chat_id, resp)
 
         elif norm_txt in ("bật bot", "chạy", "/resume", "/run", "/start_bot"):
             self.root.after(0, lambda: self.start_auto_scan("XAUUSD"))
@@ -6961,18 +6985,44 @@ class KronosDesktopApp:
                 "Trạng thái: ĐANG CHẠY (RUNNING - Vàng & Bitcoin).\n"
                 "Bot đã sẵn sàng quét tín hiệu AI và vào lệnh tự động."
             )
-            self._telegram_api_call(token, "sendMessage", {
-                "chat_id": chat_id,
-                "text": resp,
-                "reply_markup": self._get_telegram_inline_keyboard()
-            })
+            self._telegram_send_with_keyboard(token, chat_id, resp)
 
         else:
             # Tin nhắn thường (không phải đúng một lệnh): KHÔNG kích hoạt gì, chỉ gợi ý lệnh hợp lệ
             self._telegram_api_call(token, "sendMessage", {
                 "chat_id": chat_id,
-                "text": "ℹ️ Lệnh hợp lệ (gõ đúng nguyên lệnh): /menu, /stats (hoặc 'thống kê'), /pause (hoặc 'tạm dừng'), /resume (hoặc 'bật bot', 'chạy').",
+                "text": "ℹ️ Lệnh hợp lệ (gõ đúng nguyên lệnh): /menu, /stats (hoặc 'thống kê'), /ai (hoặc 'phân tích'), /pause (hoặc 'tạm dừng'), /resume (hoặc 'bật bot', 'chạy').",
             })
+
+    def _generate_telegram_ai_report(self) -> str:
+        """Tin cho nút '🧠 Phân tích AI' / lệnh /ai: kết quả phân tích AI mới nhất của từng mã (dòng tín hiệu, dự báo,
+        gợi ý Entry/SL/TP như trên app) + vùng đang canh. Chỉ đọc dữ liệu đã có, không gọi AI/MT5."""
+        parts = []
+        for pk, name in (("XAUUSD", "VÀNG"), ("BTCUSD", "BTC")):
+            ctx = (getattr(self, "profile_ctx", None) or {}).get(pk) or {}
+            info = ctx.get("_tg_ai_info")
+            if not isinstance(info, dict):
+                continue
+            try:
+                running = bool(ctx.get("auto_loop_running", False))
+                lines = [f"🧠 {name} · AI {info.get('tf', '')} lúc {info.get('ts', '')} · AUTO {'BẬT' if running else 'TẮT'}",
+                         str(ctx.get("_sig_title") or "").strip()]
+                for ln in str(ctx.get("_last_detail_prefix") or "").splitlines():
+                    if ln.strip():
+                        lines.append(re.sub(r"\s{2,}", " ", ln).strip())
+                pend = ctx.get("pending_pullback_order")
+                if isinstance(pend, dict) and pend.get("zone_watch") and pend.get("action") in ("BUY", "SELL") and pend.get("sl_ai_price"):
+                    eff = float(pend.get("effective_max_sl") or 0.0)
+                    if eff > 0.0:
+                        is_buy = pend["action"] == "BUY"
+                        zone = float(pend["sl_ai_price"]) + (eff if is_buy else -eff)
+                        lines.append(f"⏳ Đang canh vùng {pend['action']} {'≤' if is_buy else '≥'} {zone:.2f}")
+                parts.append("\n".join(x for x in lines if x))
+            except Exception:
+                continue
+        if not parts:
+            return "🧠 Chưa có kết quả phân tích AI (bot vừa khởi động hoặc chưa phân tích nến nào)."
+        return "\n\n".join(parts)
 
     def _generate_telegram_stats_report(self) -> str:
         """Tạo chuỗi báo cáo chi tiết tài khoản và tách biệt thống kê cho từng cặp Vàng (XAU) và Bitcoin (BTC)."""
@@ -7062,77 +7112,93 @@ class KronosDesktopApp:
         now_str = datetime.now(tz=VN_TZ).strftime("%H:%M:%S")
         sl_dist = abs(price - sl)
         tp_dist = abs(tp - price)
-        rr_val = round(tp_dist / max(sl_dist, 0.01), 2)
+        rr_val = tp_dist / max(sl_dist, 0.01)
 
         ctx = self.profile_ctx.get(profile_key, {})
-        ai_consensus = ctx.get("cached_consensus", self.consensus_var.get())
-        ai_conf = ctx.get("cached_confidence", "")
-        conf_str = f" (Tin cậy: {ai_conf}%)" if ai_conf else ""
-        cfg = self._get_profile_cfg(profile_key)
-        tf_str = str(cfg.get("tf", "M5")).strip()
+        # Đồng thuận THẬT của lần phân tích gần nhất (ghi lúc phân tích xong); trước đây luôn hiện ngưỡng cài đặt
+        ai_consensus = ctx.get("cached_consensus")
+        ai_str = f" · AI {ai_consensus}%" if ai_consensus not in (None, "") else ""
 
-        sym_tag = "🟡 VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else f"🟠 {symbol}"
+        sym_tag = "VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else symbol
 
+        # Tin gọn 2 dòng (người dùng chọn 19/11/2026); nút bấm do hàm gửi gắn vào tin mới nhất
         msg = (
-            f"🚀 [TRADING AI PRO - {sym_tag}] VÀO LỆNH MỚI\n"
-            "────────────────────────\n"
-            f"• Lệnh: #{ticket} ({action})\n"
-            f"• Cặp: {symbol} | Khối lượng: {lot:.2f} Lot\n"
-            f"• Giá vào (Entry): {price:.2f}\n"
-            f"• Cắt lỗ (SL): {sl:.2f} (-{sl_dist:.2f} giá)\n"
-            f"• Chốt lời (TP): {tp:.2f} (+{tp_dist:.2f} giá | {rr_val}R)\n"
-            f"• Tín hiệu AI: {tf_str} Đồng thuận {ai_consensus}%{conf_str}\n"
-            f"• Thời gian: {now_str}"
+            f"🚀 {sym_tag} {action} {lot:.2f} @ {price:.2f} · {now_str}\n"
+            f"SL {sl:.2f} (-{sl_dist:.2f}) · TP {tp:.2f} (+{tp_dist:.2f} · {rr_val:.1f}R){ai_str} · #{ticket}"
         )
-        self._telegram_queue.put((msg, self._get_telegram_inline_keyboard()))
+        self._telegram_queue.put((msg, None))
 
-    def _telegram_notify_order_closed(self, cd: dict):
-        """Gửi thông báo đóng lệnh (chốt lời / cắt lỗ / hòa vốn) lên Telegram."""
+    def _telegram_notify_order_closed(self, cd: dict, day_pnl: float = None):
+        """Gửi thông báo đóng lệnh (chốt lời / cắt lỗ / hòa vốn) lên Telegram.
+        day_pnl: lãi/lỗ đã chốt hôm nay của profile tính từ CÙNG danh sách lệnh đã đóng (có lệnh vừa đóng);
+        trước đây lấy từ bộ đệm 10 giây nên có lúc chưa tính lệnh vừa đóng (vd 19/11 12:34 báo +21.82$ thay vì ~+3.6$)."""
         if not bool(getattr(self, "telegram_enabled_var", None) and self.telegram_enabled_var.get()):
             return
         if not bool(getattr(self, "telegram_notify_close_var", None) and self.telegram_notify_close_var.get()):
             return
 
-        now_str = datetime.now(tz=VN_TZ).strftime("%H:%M:%S")
         category = cd.get("category", "")
         if category == "WIN":
-            cat_tag = "CHỐT LÃI"
             icon = "🎯"
         elif category in ("BE", "BE+"):
-            cat_tag = "HÒA VỐN"
             icon = "🛡️"
         else:
-            cat_tag = "CẮT LỖ"
             icon = "🛑"
 
         net_pnl = float(cd.get("net_pnl", 0.0))
         r_str = cd.get("r_ratio_str", "")
         r_suffix = f" ({r_str})" if r_str else ""
         dur_str = cd.get("duration", "---")
-        status_str = cd.get("status", "Đã đóng")
+        status_str = str(cd.get("status", "Đã đóng"))
         open_p = cd.get("open_price", 0.0)
         close_p = cd.get("close_price", 0.0)
         symbol = str(cd.get("symbol", "")).strip()
 
-        cfg = self._get_profile_cfg(self.active_profile_key)
-        sym = str(cfg.get("symbol", "")).strip()
-        realized_pnl, _, _ = self._get_today_deals_stats(symbol=sym)
+        if day_pnl is None:
+            cfg = self._get_profile_cfg(self.active_profile_key)
+            sym = str(cfg.get("symbol", "")).strip()
+            day_pnl, _, _ = self._get_today_deals_stats(symbol=sym)
 
-        sym_tag = "🟡 VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else f"🟠 {symbol}"
+        sym_tag = "VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else symbol
+        # "ĐÃ CHỐT TP (13:10:11)" -> "CHỐT TP · 13:10:11"
+        m_st = re.match(r"^\s*(?:ĐÃ\s+)?(.*?)\s*\((\d{1,2}:\d{2}:\d{2})\)\s*$", status_str)
+        status_short = f"{m_st.group(1)} · {m_st.group(2)}" if m_st else status_str
 
+        # Tin gọn 2 dòng (người dùng chọn 19/11/2026); nút bấm do hàm gửi gắn vào tin mới nhất
         msg = (
-            f"{icon} [TRADING AI PRO - {sym_tag}] ĐÃ ĐÓNG LỆNH ({cat_tag})\n"
-            "────────────────────────\n"
-            f"• Lệnh: #{cd.get('ticket')} ({cd.get('type')})\n"
-            f"• Cặp: {symbol} | {cd.get('volume', 0.0):.2f} Lot\n"
-            f"• Giá: {open_p:.2f} ➜ {close_p:.2f}\n"
-            f"• Thời gian giữ: {dur_str}\n"
-            f"• Kết quả: {net_pnl:+.2f} USD{r_suffix}\n"
-            f"• Lý do: {status_str}\n"
-            f"• Lãi ngày ({sym_tag}): {realized_pnl:+.2f} USD\n"
-            f"• Thời gian: {now_str}"
+            f"{icon} {sym_tag} {cd.get('type')} {net_pnl:+.2f}${r_suffix} · {status_short}\n"
+            f"{open_p:.2f} → {close_p:.2f} · giữ {dur_str} · Ngày {float(day_pnl):+.2f}$ · #{cd.get('ticket')}"
         )
-        self._telegram_queue.put((msg, self._get_telegram_inline_keyboard()))
+        self._telegram_queue.put((msg, None))
+
+    def _telegram_fresh_closed_deals(self, pk: str, symbol: str, positions, closed_deals: list) -> list:
+        """Telegram báo đóng lệnh nhanh (~1-2 giây thay vì tới 15 giây): lệnh bot vừa biến mất khỏi danh sách đang mở mà
+        danh sách lệnh đã đóng (bộ đệm 15 giây) chưa có -> đọc lịch sử MỚI, tối đa 1 lần/giây, chờ tối đa 20 giây.
+        KHÔNG ghi vào bộ đệm dùng chung (store_cache=False): luật SL nhanh/chuỗi thua giữ nguyên thời điểm như cũ."""
+        try:
+            ctx = self.profile_ctx[pk]
+            now_m = time.monotonic()
+            cur_open = {int(p.ticket) for p in (positions or [])}
+            prev_open = ctx.get("_tg_open_tickets")
+            ctx["_tg_open_tickets"] = cur_open
+            waiting = ctx.setdefault("_tg_wait_close", {})
+            if prev_open:
+                for t in prev_open - cur_open:
+                    waiting[t] = now_m + 20.0
+            known = {int(c.get("ticket") or 0) for c in (closed_deals or [])}
+            sent = getattr(self, "_telegram_sent_deal_tickets", set())
+            for t in list(waiting):
+                if t in known or t in sent or t in cur_open or waiting[t] < now_m:
+                    waiting.pop(t, None)
+            if not waiting or now_m - float(ctx.get("_tg_fresh_ts", 0.0)) < 1.0:
+                return closed_deals
+            ctx["_tg_fresh_ts"] = now_m
+            today_s = datetime.now(tz=VN_TZ).strftime("%Y-%m-%d")
+            fresh = self._get_closed_deals_by_range(symbol=symbol, start_date_str=today_s, end_date_str=today_s,
+                                                    use_cache=False, profile_key=pk, store_cache=False)
+            return fresh if fresh else closed_deals
+        except Exception:
+            return closed_deals
 
     def test_telegram_connection(self):
         """Gửi tin nhắn thử nghiệm kiểm tra tính hợp lệ của Bot Token & Chat ID."""
@@ -7163,12 +7229,7 @@ class KronosDesktopApp:
                 "• Chế độ nút bấm trực tiếp (Inline Buttons) đã được kích hoạt.\n"
                 "• Bấm nút bên dưới để điều khiển bật/tắt bot hoặc xem thống kê:"
             )
-            payload = {
-                "chat_id": chat_id,
-                "text": msg,
-                "reply_markup": self._get_telegram_inline_keyboard()
-            }
-            res = self._telegram_api_call(token, "sendMessage", payload, timeout=10)
+            res = self._telegram_send_with_keyboard(token, chat_id, msg, timeout=10)
             if res and res.get("ok"):
                 self.root.after(0, lambda: self.show_toast("Đã gửi tin nhắn thử thành công đến Telegram!", is_error=False, duration_ms=3500))
                 self.log("✅ [Telegram] Đã gửi tin nhắn thử nghiệm thành công tới Telegram!")
@@ -8575,7 +8636,7 @@ class KronosDesktopApp:
                     pass
             return cached_entry[1] if cached_entry is not None else (0.0, 0, None)
 
-    def _get_closed_deals_by_range(self, symbol: str = None, start_date_str: str = None, end_date_str: str = None, use_cache: bool = True, profile_key: str = None, magic_scope: str = "PROFILE") -> list:
+    def _get_closed_deals_by_range(self, symbol: str = None, start_date_str: str = None, end_date_str: str = None, use_cache: bool = True, profile_key: str = None, magic_scope: str = "PROFILE", store_cache: bool = True) -> list:
         """Lấy danh sách các lệnh đã đóng theo khoảng ngày (theo giờ VN GMT+7) kèm phân loại WIN / LOSS / BE+ cho Bot."""
         if not MT5_AVAILABLE:
             return []
@@ -8630,7 +8691,8 @@ class KronosDesktopApp:
                 all_orders = mt5.history_orders_get(query_from, query_to)
 
             if not deals:
-                self._cached_closed_deals_map[range_key] = (now_mono, [])
+                if store_cache:
+                    self._cached_closed_deals_map[range_key] = (now_mono, [])
                 return []
 
             entry_by_pos = {}
@@ -8764,7 +8826,9 @@ class KronosDesktopApp:
                 closed_items.append(cd_item)
                 self._closed_deals_by_ticket[int(d.position_id)] = cd_item
 
-            self._cached_closed_deals_map[range_key] = (now_mono, closed_items)
+            # store_cache=False (Telegram đọc nhanh): không ghi bộ đệm dùng chung -> luật SL nhanh/chuỗi thua giữ nguyên thời điểm
+            if store_cache:
+                self._cached_closed_deals_map[range_key] = (now_mono, closed_items)
             return closed_items
         except Exception as e:
             self.log_error("GET_CLOSED_DEALS", e, show_in_ui=False)
@@ -10423,7 +10487,10 @@ class KronosDesktopApp:
         if getattr(self, "telegram_enabled_var", None) and self.telegram_enabled_var.get():
             if getattr(self, "telegram_notify_close_var", None) and self.telegram_notify_close_var.get():
                 app_start_ts = getattr(self, "_app_session_start_ts", int(time.time()))
-                for cd in closed_deals:
+                # Đọc nhanh lệnh vừa đóng cho Telegram (không ghi bộ đệm của luật giao dịch); bảng trên app vẫn dùng closed_deals
+                tg_deals = self._telegram_fresh_closed_deals(pk, symbol, positions, closed_deals)
+                tg_day_pnl = sum(float(c.get("net_pnl", 0.0) or 0.0) for c in tg_deals)
+                for cd in tg_deals:
                     t_id = cd.get("ticket")
                     if not t_id:
                         continue
@@ -10437,7 +10504,7 @@ class KronosDesktopApp:
                     # A45: close_ts là giờ SERVER; đổi về UTC trước khi so với giờ bật app
                     if close_ts - int(self._server_offset_sec(cd.get("symbol") or "")) >= app_start_ts:
                         try:
-                            self._telegram_notify_order_closed(cd)
+                            self._telegram_notify_order_closed(cd, day_pnl=tg_day_pnl)
                         except Exception:
                             pass
 
@@ -12163,6 +12230,12 @@ class KronosDesktopApp:
                 ctx["cached_tp"] = tp_price
                 ctx["_sig_title"] = sig_title
                 ctx["_sig_color"] = sig_color
+                # Telegram (tin vào lệnh + nút '🧠 Phân tích AI'): đồng thuận thật và giờ của lần phân tích này. Chỉ hiển thị.
+                try:
+                    ctx["cached_consensus"] = f"{float(dir_pct):.0f}"
+                    ctx["_tg_ai_info"] = {"ts": datetime.now(tz=VN_TZ).strftime("%H:%M:%S"), "tf": str(analysis_tf)}
+                except Exception:
+                    pass
 
                 # XỬ LÝ 3 QUY TẮC BẢO VỆ KHI AI BÁO ĐẢO CHIỀU NGƯỢC LỆNH ĐANG GIỮ
                 # Phân tầng thông minh: Lệnh CHƯA DỜI BE áp dụng rev_consensus (Mục 3), Lệnh ĐÃ DỜI BE áp dụng rev_be_consensus (mặc định 90%, 0=Tắt)
