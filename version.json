@@ -1,6 +1,6 @@
 {
-  "version": "1.3.30",
+  "version": "1.3.31",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-19",
-  "description": "Phiên bản v1.3.30:\n- [MỚI] Telegram: ô 'ID người điều khiển' (Mục 5). Chỉ ID này được Bật/Dừng bot (nút và lệnh /pause, /resume), kể cả khi bấm trong nhóm; người khác trong nhóm chỉ xem thông báo, Báo cáo, Phân tích AI. Chat ID là nhóm mà chưa điền ô này thì không ai bật/tắt được qua Telegram.\n- Telegram trong nhóm: bot im lặng với tin nhắn thường, chỉ trả lời lệnh; lệnh /lệnh@tên_bot chỉ bot đó làm theo (nhóm có nhiều bot); nút bấm dưới tin trong nhóm đã dùng được.\n- Telegram 'Phân tích AI': chụp khung scalp (vào lệnh) và gửi ảnh + chữ + nút trong 1 tin, ảnh gọn hơn nên trả lời nhanh hơn.\n- [MỚI, mặc định TẮT] Mục 3: 'Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+' (n lệnh cùng chiều chưa BE: n/2 lệnh giá xấu nhất dời TP về Entry+BE+, giữ các lệnh giá đẹp). Chưa kiểm chứng bằng phát lại nhiều ngày.\n- Không đổi luật giao dịch khi giữ nguyên cấu hình."
+  "description": "Phiên bản v1.3.31:\n- Telegram (Mục 5): ô 'Chat ID' đổi tên thành 'ID nhóm chat (có thể trống)'. Điền ID nhóm thì bot báo vào nhóm; để TRỐNG thì bot gửi riêng cho 'ID người điều khiển'. Ai đang dán ID cá nhân vào ô này vẫn chạy như cũ.\n- Kiểm tra cấu hình: chỉ nhắc khi bật Telegram mà trống CẢ 'ID nhóm chat' lẫn 'ID người điều khiển'.\n- Không đổi luật giao dịch."
 }
