@@ -500,9 +500,9 @@ PARAM_HELP_GUIDE = {
         "how_to_set": "- Mở ứng dụng Telegram, tìm kiếm @BotFather, gửi lệnh /newbot để tạo bot và copy mã token dán vào đây."
     },
     "telegram_chat_id": {
-        "title": "Telegram Chat ID",
-        "what_is_it": "Mã ID định danh cá nhân hoặc ID nhóm Telegram của bạn để bot biết gửi tin nhắn cho ai.",
-        "how_to_set": "- Mở Telegram tìm kiếm @userinfobot hoặc @RawDataBot, gửi tin nhắn bất kỳ để lấy ID của bạn (dãy số dạng 123456789) và dán vào đây."
+        "title": "ID nhóm chat Telegram (có thể để trống)",
+        "what_is_it": "ID nhóm Telegram mà bot gửi thông báo vào (số âm, dạng -5282444977 hoặc -100...).\n- Để TRỐNG: bot gửi tin RIÊNG cho 'ID người điều khiển' (ô bên dưới).\n- Vẫn dán được ID cá nhân (số dương) như bản cũ.",
+        "how_to_set": "- Thêm @getidsbot (hoặc @RawDataBot) vào nhóm, lấy số 'id' của phần 'This chat' (có dấu -), dán vào đây; lấy xong xóa bot đó khỏi nhóm.\n- Không dùng nhóm: để trống và điền 'ID người điều khiển'."
     },
     "telegram_admin_ids": {
         "title": "ID người điều khiển (chỉ người này được Bật/Tắt bot)",
@@ -2698,7 +2698,7 @@ class KronosDesktopApp:
         self.telegram_enabled_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec5.content, "Bật thông báo Telegram:", self.telegram_enabled_var, help_key="telegram_enabled")
         self.telegram_bot_token_var = self._add_labeled_entry(sec5.content, "Bot Token:", "", show="*", entry_width=18, help_key="telegram_bot_token")
-        self.telegram_chat_id_var = self._add_labeled_entry(sec5.content, "Chat ID:", "", entry_width=18, help_key="telegram_chat_id")
+        self.telegram_chat_id_var = self._add_labeled_entry(sec5.content, "ID nhóm chat (có thể trống):", "", entry_width=18, help_key="telegram_chat_id")
         self.telegram_admin_ids_var = self._add_labeled_entry(sec5.content, "ID người điều khiển:", "", entry_width=18, help_key="telegram_admin_ids")
 
         # Nút Kiểm tra kết nối Telegram
@@ -6923,13 +6923,31 @@ class KronosDesktopApp:
             out["reply_markup"] = rm
         return out
 
-    def _tg_admin_ids(self) -> set:
-        """ID tài khoản Telegram cá nhân được BẬT/TẮT bot (ô 'ID người điều khiển', cách nhau dấu phẩy/khoảng trắng)."""
+    def _tg_admin_id_list(self) -> list:
+        """ID tài khoản Telegram cá nhân được BẬT/TẮT bot (ô 'ID người điều khiển', cách nhau dấu phẩy/khoảng trắng), giữ thứ tự."""
         try:
             raw = str(getattr(self, "telegram_admin_ids_var", None).get() if getattr(self, "telegram_admin_ids_var", None) else "")
         except Exception:
             raw = ""
-        return {x for x in re.split(r"[\s,;]+", raw.strip()) if re.fullmatch(r"-?\d+", x or "")}
+        out = []
+        for x in re.split(r"[\s,;]+", raw.strip()):
+            if re.fullmatch(r"-?\d+", x or "") and x not in out:
+                out.append(x)
+        return out
+
+    def _tg_admin_ids(self) -> set:
+        return set(self._tg_admin_id_list())
+
+    def _tg_target_chat_id(self) -> str:
+        """Nơi bot gửi tin: 'ID nhóm chat' nếu có; để trống thì gửi riêng cho ID người điều khiển ĐẦU TIÊN; không có cả hai -> ''."""
+        try:
+            cid = str(getattr(self, "telegram_chat_id_var", None).get() if getattr(self, "telegram_chat_id_var", None) else "").strip()
+        except Exception:
+            cid = ""
+        if cid:
+            return cid
+        admins = self._tg_admin_id_list()
+        return admins[0] if admins else ""
 
     def _tg_sender_allowed(self, chat_id: str, from_id: str, msg_chat: str) -> bool:
         """Nhận tin/nút: từ đúng chat đã cài (riêng hoặc nhóm), hoặc chat riêng của người điều khiển."""
@@ -7174,7 +7192,7 @@ class KronosDesktopApp:
 
             msg_text, reply_markup = item
             token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
-            chat_id = str(getattr(self, "telegram_chat_id_var", tk.StringVar()).get()).strip()
+            chat_id = self._tg_target_chat_id()  # ID nhóm chat, trống -> gửi riêng ID người điều khiển
 
             if token and chat_id:
                 try:
@@ -7194,7 +7212,7 @@ class KronosDesktopApp:
                     continue
 
                 token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
-                chat_id = str(getattr(self, "telegram_chat_id_var", tk.StringVar()).get()).strip()
+                chat_id = self._tg_target_chat_id()  # ID nhóm chat, trống -> gửi riêng ID người điều khiển
                 if not token or not chat_id:
                     time.sleep(3)
                     continue
@@ -7639,9 +7657,9 @@ class KronosDesktopApp:
     def test_telegram_connection(self):
         """Gửi tin nhắn thử nghiệm kiểm tra tính hợp lệ của Bot Token & Chat ID."""
         token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
-        chat_id = str(getattr(self, "telegram_chat_id_var", tk.StringVar()).get()).strip()
+        chat_id = self._tg_target_chat_id()  # ID nhóm chat, trống -> gửi riêng ID người điều khiển
         if not token or not chat_id:
-            self.show_toast("Vui lòng nhập đầy đủ Bot Token và Chat ID!", is_error=True, duration_ms=3000)
+            self.show_toast("Vui lòng nhập Bot Token và ID nhóm chat (hoặc ID người điều khiển)!", is_error=True, duration_ms=3000)
             return
 
         def _worker():

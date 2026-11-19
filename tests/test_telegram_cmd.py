@@ -152,6 +152,25 @@ class TestOwnerOnlyControl(unittest.TestCase):
             a._handle_telegram_callback(cq, self.GROUP, "T")
         self.assertEqual(a.stop_auto_scan.call_count, 2)
 
+    def test_id_nhom_trong_thi_gui_rieng_nguoi_dieu_khien(self):
+        a = self.app(admins="111, 333")
+        a.telegram_chat_id_var = types.SimpleNamespace(get=lambda: "  ")
+        self.assertEqual(a._tg_target_chat_id(), "111")
+        a.telegram_chat_id_var = types.SimpleNamespace(get=lambda: self.GROUP)
+        self.assertEqual(a._tg_target_chat_id(), self.GROUP)
+        a = self.app(admins="")
+        a.telegram_chat_id_var = types.SimpleNamespace(get=lambda: "")
+        self.assertEqual(a._tg_target_chat_id(), "")
+
+    def test_canh_bao_cau_hinh_cho_phep_trong_id_nhom(self):
+        from trading_modules import param_rules as pr
+        warn = [i for i in pr.validate_param_values({"telegram_enabled": True, "telegram_bot_token": "x", "telegram_chat_id": "",
+                                                "telegram_admin_ids": "111"}) if "Telegram" in i["msg"]]
+        self.assertEqual(warn, [])
+        warn = [i for i in pr.validate_param_values({"telegram_enabled": True, "telegram_bot_token": "x", "telegram_chat_id": "",
+                                                "telegram_admin_ids": ""}) if "Telegram" in i["msg"]]
+        self.assertIn("ID nhóm chat hoặc ID người điều khiển", warn[0]["msg"])
+
     def test_quyen_nhan_tin(self):
         a = self.app()
         self.assertTrue(a._tg_sender_allowed(self.GROUP, "222", self.GROUP))       # tin trong nhóm đã cài
