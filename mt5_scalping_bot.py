@@ -6951,10 +6951,13 @@ class KronosDesktopApp:
             return "Chỉ chủ bot được bật/tắt bot giao dịch."
         return "Chưa điền 'ID người điều khiển' (Mục 5) nên trong nhóm không ai được bật/tắt bot."
 
-    def _tg_capture_chart_png(self, timeout: float = 6.0):
-        """Chụp biểu đồ chính đang hiển thị (PNG bytes) để gửi Telegram cùng phân tích AI.
+    def _tg_capture_chart_png(self, timeout: float = 10.0):
+        """Chụp biểu đồ chính (PNG bytes) để gửi Telegram cùng phân tích AI.
+        Luôn chụp khung SCALP (Khung vào lệnh, vd M1: vùng canh, SL/TP AI, lệnh đang mở; nến dự báo AI chỉ có ở khung phân tích).
+        Màn hình đang xem khung khác thì vẽ TẠM khung scalp để chụp rồi trả lại khung + thu phóng cũ ngay trong cùng lượt.
         Gọi từ luồng nền: việc vẽ chạy trên luồng Tk chính (matplotlib không an toàn đa luồng), luồng gọi chờ tối đa timeout giây.
-        Ẩn tạm đường chữ thập của chuột khi chụp. Lỗi/hết giờ -> None (chỉ gửi chữ như cũ)."""
+        Ẩn tạm đường chữ thập của chuột khi chụp. Ảnh rộng tối đa ~1280px (Telegram hiển thị tối đa cỡ này).
+        Lỗi/hết giờ -> None (chỉ gửi chữ như cũ)."""
         fig = getattr(self, "fig", None)
         root = getattr(self, "root", None)
         if fig is None or root is None:
@@ -6963,27 +6966,51 @@ class KronosDesktopApp:
         done = threading.Event()
 
         def _grab():
+            views = getattr(self, "chart_view_tf_by_profile", None)
+            pk = getattr(self, "active_profile_key", None)
+            cur_view = views.get(pk) if isinstance(views, dict) else None
+            try:
+                ana_tf = str(self.tf_var.get()).strip()  # khung SCALP (vào lệnh), người dùng chọn 19/11/2026: nhìn dễ hơn
+            except Exception:
+                ana_tf = ""
+            switch = bool(cur_view and ana_tf and cur_view != ana_tf)
+            zoom_saved = (getattr(self, "user_zoomed", False), getattr(self, "saved_xlim", None), getattr(self, "saved_ylim", None))
             try:
                 import io
+                if switch:
+                    views[pk] = ana_tf
+                    self.user_zoomed, self.saved_xlim, self.saved_ylim = False, None, None
+                    self._last_drawn_chart_key = None
+                    self._refresh_realtime_chart(force_full_redraw=True)
                 cross = [a for a in (getattr(self, n, None) for n in
                                      ("cross_vline", "cross_hline", "cross_price_annot", "cross_time_annot")) if a is not None]
                 vis = [a.get_visible() for a in cross]
                 for a in cross:
                     a.set_visible(False)
                 try:
+                    w_in = float(fig.get_size_inches()[0]) or 9.0
+                    dpi = min(max(1280.0 / w_in, float(fig.dpi)), float(fig.dpi) * 1.5)
                     buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=fig.dpi * 1.5, facecolor=fig.get_facecolor())
+                    fig.savefig(buf, format="png", dpi=dpi, facecolor=fig.get_facecolor())
                     box["png"] = buf.getvalue()
                 finally:
                     for a, v in zip(cross, vis):
                         a.set_visible(v)
+            except Exception as e:
+                box["err"] = str(e)
+            finally:
+                if switch:
                     try:
-                        self._request_canvas_redraw(full=True)
+                        views[pk] = cur_view
+                        self.user_zoomed, self.saved_xlim, self.saved_ylim = zoom_saved
+                        self._last_drawn_chart_key = None
+                        self._refresh_realtime_chart(force_full_redraw=True)
                     except Exception:
                         pass
-            except Exception:
-                pass
-            finally:
+                try:
+                    self._request_canvas_redraw(full=True)
+                except Exception:
+                    pass
                 done.set()
 
         if threading.current_thread() is threading.main_thread():
@@ -6994,11 +7021,26 @@ class KronosDesktopApp:
             except Exception:
                 return None
             if not done.wait(timeout):
+                self._tg_diag_log(f"Chụp biểu đồ quá {timeout:g}s (luồng giao diện bận) -> chỉ gửi chữ")
                 return None
+        if box.get("err"):
+            self._tg_diag_log(f"Chụp biểu đồ lỗi: {box['err']} -> chỉ gửi chữ")
         return box.get("png")
 
-    def _telegram_send_photo(self, token: str, chat_id: str, png: bytes, caption: str = "", timeout: int = 25) -> Optional[dict]:
-        """Gửi ảnh PNG lên Telegram (sendPhoto, multipart/form-data qua urllib, không thư viện ngoài)."""
+    def _tg_diag_log(self, msg: str):
+        """Log chẩn đoán Telegram, tối đa 1 dòng/60 giây, không bao giờ ném lỗi."""
+        try:
+            now = time.monotonic()
+            if now - float(getattr(self, "_tg_diag_last_ts", -1e9)) >= 60.0:
+                self._tg_diag_last_ts = now
+                self.log(f"⚠️ [Telegram] {msg}")
+        except Exception:
+            pass
+
+    def _telegram_send_photo(self, token: str, chat_id: str, png: bytes, caption: str = "", timeout: int = 25,
+                             reply_markup: dict = None) -> Optional[dict]:
+        """Gửi ảnh PNG lên Telegram (sendPhoto, multipart/form-data qua urllib, không thư viện ngoài).
+        reply_markup: nút bấm gắn dưới ảnh (đã bỏ icon như tin chữ)."""
         clean_token = (token or "").strip()
         if not clean_token or not chat_id or not png:
             return None
@@ -7012,7 +7054,13 @@ class KronosDesktopApp:
         body = _field("chat_id", str(chat_id))
         cap = self._tg_plain_text(caption or "")
         if cap:
-            body += _field("caption", cap[:1000])
+            body += _field("caption", cap[:1024])
+        if reply_markup:
+            try:
+                rm = self._tg_strip_icons_payload({"reply_markup": reply_markup}).get("reply_markup")
+            except Exception:
+                rm = reply_markup
+            body += _field("reply_markup", json.dumps(rm, ensure_ascii=False))
         body += (f"--{boundary}{crlf}Content-Disposition: form-data; name=\"photo\"; filename=\"chart.png\"{crlf}"
                  f"Content-Type: image/png{crlf}{crlf}").encode("utf-8") + png + f"{crlf}--{boundary}--{crlf}".encode("utf-8")
         req = urllib.request.Request(
@@ -7031,22 +7079,27 @@ class KronosDesktopApp:
             return None
 
     def _telegram_send_ai_report(self, token: str, chat_id: str):
-        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ đang hiển thị trên app trước, rồi tin chữ phân tích kèm nút bấm.
+        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ khung scalp kèm chữ phân tích + nút bấm
+        trong CÙNG 1 tin (nhanh hơn: 1 lần gửi thay vì 2). Chữ dài quá giới hạn chú thích ảnh (1024 ký tự) thì gửi ảnh rồi tin chữ.
         Chụp/gửi ảnh lỗi thì vẫn gửi tin chữ như cũ."""
+        report = self._generate_telegram_ai_report()
         try:
             png = self._tg_capture_chart_png()
             if png:
-                pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
-                name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
-                try:
-                    sym = str(self._get_profile_cfg(pk).get("symbol", pk)).strip()
-                except Exception:
-                    sym = pk
-                cap = f"Biểu đồ {name} ({sym}) lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}"
-                self._telegram_send_photo(token, chat_id, png, cap)
+                if len(self._tg_plain_text(report) or "") <= 1024:
+                    res = self._telegram_send_photo(token, chat_id, png, report,
+                                                    reply_markup=self._get_telegram_inline_keyboard())
+                    if isinstance(res, dict) and res.get("ok"):
+                        self._tg_track_kb_message(token, chat_id, res)
+                        return
+                    self._tg_diag_log("Gửi ảnh biểu đồ thất bại -> gửi tin chữ")
+                else:
+                    pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
+                    name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+                    self._telegram_send_photo(token, chat_id, png, f"Biểu đồ {name} lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}")
         except Exception:
             pass
-        self._telegram_send_with_keyboard(token, chat_id, self._generate_telegram_ai_report())
+        self._telegram_send_with_keyboard(token, chat_id, report)
 
     def _get_telegram_inline_keyboard(self) -> dict:
         """
@@ -7085,6 +7138,10 @@ class KronosDesktopApp:
             "text": text,
             "reply_markup": reply_markup or self._get_telegram_inline_keyboard(),
         }, timeout=timeout)
+        return self._tg_track_kb_message(token, chat_id, res)
+
+    def _tg_track_kb_message(self, token: str, chat_id: str, res):
+        """Ghi nhận tin vừa gửi có nút; gỡ nút ở tin có nút trước đó (nút chỉ nằm dưới tin mới nhất). Trả lại res."""
         try:
             new_id = int(res["result"]["message_id"]) if isinstance(res, dict) and res.get("ok") else None
         except Exception:
