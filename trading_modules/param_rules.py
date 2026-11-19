@@ -157,6 +157,12 @@ def _parse_number(raw, typ: str):
     return x, None
 
 
+def _shown_value(raw) -> str:
+    """Giá trị người dùng đang nhập, để ghi vào câu báo (cắt bớt nếu quá dài)."""
+    s = "" if raw is None else str(raw).strip()
+    return s if len(s) <= 20 else s[:20] + "…"
+
+
 def _bound_text(lo, lo_incl: bool, hi) -> str:
     if hi is not None:
         return f"phải từ {lo:g} đến {hi:g}" if lo_incl else f"phải lớn hơn {lo:g} và không quá {hi:g}"
@@ -188,6 +194,48 @@ def window_item_ok(item: str) -> bool:
     return False
 
 
+_TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+
+
+def _conflict_issues(cfg: dict, vals: dict) -> list:
+    """Ô chữ / ô chọn và xung đột giữa các ô (chỉ khi các khóa liên quan có trong cfg). Mỗi luật ghi rõ vì sao theo code bot."""
+    out = []
+    if "symbol" in cfg and not str(cfg.get("symbol") or "").strip():
+        out.append(_issue("error", ("symbol",), "Mã giao dịch (Symbol): chưa nhập, bot sẽ bỏ qua profile này."))
+    tf, atf = str(cfg.get("tf") or "").strip().upper(), str(cfg.get("analysis_tf") or "").strip().upper()
+    if tf in _TF_MINUTES and atf in _TF_MINUTES and _TF_MINUTES[tf] > _TF_MINUTES[atf]:
+        out.append(_issue("warn", ("tf", "analysis_tf"),
+                          f"Khung vào lệnh {tf} lớn hơn Khung phân tích AI {atf}: thường đặt khung vào lệnh nhỏ hơn hoặc bằng "
+                          f"(VD phân tích M5, vào lệnh M1)."))
+    # Chuỗi thua: bot tắt tạm nghỉ khi số lệnh thua = 0 HOẶC thời gian nghỉ = 0 (_check_daily_profit_loss_limits)
+    mcl, cdm = vals.get("max_consec_loss"), vals.get("cooldown_mins")
+    if mcl is not None and mcl > 0 and cdm is not None and cdm == 0:
+        out.append(_issue("warn", ("cooldown_mins", "max_consec_loss"),
+                          f"Thua liên tiếp {mcl:g} lệnh nhưng Thời gian tạm ngừng = 0: bot sẽ KHÔNG tạm nghỉ (tính năng như tắt)."))
+    # SL AI = max(ATR x hệ số, sàn) + Giá an toàn -> Giá an toàn >= SL tối đa thì mọi tín hiệu đều vượt trần
+    buf, msl = vals.get("sl_buffer"), vals.get("max_sl_price")
+    if buf is not None and msl is not None and msl > 0 and buf >= msl:
+        out.append(_issue("warn", ("sl_buffer", "max_sl_price"),
+                          f"Giá an toàn vào SL ({buf:g}) không nhỏ hơn SL tối đa ({msl:g}): SL của AI luôn vượt trần, "
+                          f"bot chỉ còn vào lệnh khi giá hồi về vùng canh, rất ít lệnh."))
+    rc, rbc = vals.get("rev_consensus"), vals.get("rev_be_consensus")
+    if _is_on(cfg, "auto_rev_close") and rc is not None and rbc is not None and 0 < rbc < rc:
+        out.append(_issue("warn", ("rev_be_consensus", "rev_consensus"),
+                          f"Đồng thuận đảo chiều lệnh ĐÃ BE ({rbc:g}%) thấp hơn lệnh CHƯA BE ({rc:g}%): lệnh đã an toàn lại bị "
+                          f"đóng dễ hơn; thường đặt cao hơn hoặc bằng."))
+    if "telegram_enabled" in cfg and _to_bool(cfg.get("telegram_enabled")):
+        miss = [n for k, n in (("telegram_bot_token", "Bot Token"), ("telegram_chat_id", "Chat ID"))
+                if k in cfg and not str(cfg.get(k) or "").strip()]
+        if miss:
+            out.append(_issue("warn", ("telegram_enabled", "telegram_bot_token", "telegram_chat_id"),
+                              f"Đã bật Telegram nhưng chưa nhập {' và '.join(miss)}: bot sẽ không gửi/nhận tin."))
+    if (str(cfg.get("engine") or "").startswith("Ưu tiên Hugging Face") and "hf_space" in cfg
+            and not str(cfg.get("hf_space") or "").strip()):
+        out.append(_issue("warn", ("engine", "hf_space"),
+                          "Chọn chạy AI trên Hugging Face nhưng chưa nhập tên Space: bot tự chạy AI trên máy này."))
+    return out
+
+
 def validate_param_values(cfg: dict) -> list:
     """Kiểm tra bộ thông số (giá trị dạng chuỗi/bool như ô nhập). Trả danh sách vấn đề
     {"level": "error"|"warn", "keys": (khóa,...), "msg": câu báo}:
@@ -207,11 +255,12 @@ def validate_param_values(cfg: dict) -> list:
         if err == "empty":
             issues.append(_issue("error", (key,), f"{name}: chưa nhập."))
             continue
+        shown = _shown_value(cfg.get(key))
         if err == "int":
-            issues.append(_issue("error", (key,), f"{name}: phải là số nguyên (VD 2)."))
+            issues.append(_issue("error", (key,), f"{name}: đang nhập '{shown}', phải là số nguyên (VD 2)."))
             continue
         if err is not None:
-            issues.append(_issue("error", (key,), f"{name}: phải là số (dùng dấu chấm, VD 1.5)."))
+            issues.append(_issue("error", (key,), f"{name}: đang nhập '{shown}', phải là số (dùng dấu chấm, VD 1.5)."))
             continue
         if key in ZERO_IS_OFF and x == 0:
             vals[key] = x
@@ -220,7 +269,7 @@ def validate_param_values(cfg: dict) -> list:
             txt = _bound_text(lo, lo_incl, hi)
             if key in ZERO_IS_OFF:
                 txt = "phải bằng 0 (tắt) hoặc " + txt[len("phải "):]
-            issues.append(_issue("error", (key,), f"{name}: {txt}."))
+            issues.append(_issue("error", (key,), f"{name}: đang nhập {shown}, {txt}."))
             continue
         vals[key] = x
 
@@ -247,6 +296,8 @@ def validate_param_values(cfg: dict) -> list:
             issues.append(_issue("warn", ("rr",),
                                  f"Tỷ lệ R:R {rr:g} < {FIXED_MIN_RR:g}: lúc khớp lệnh bot vẫn đòi lãi ≥ {FIXED_MIN_RR:g}R "
                                  f"(luật cố định) nên ít lệnh hơn và TP thực tế không nhỏ như đặt."))
+
+    issues.extend(_conflict_issues(cfg, vals))
 
     raw_bw = cfg.get("blocked_trading_windows")
     if raw_bw is not None and str(raw_bw).strip():

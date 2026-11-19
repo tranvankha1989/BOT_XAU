@@ -923,6 +923,7 @@ class DatePickerDialog:
 from trading_modules.trading_window import is_trading_window_blocked
 from trading_modules.risk import calc_effective_max_sl, calc_effective_max_sl_ai
 from trading_modules.param_rules import validate_param_values
+from trading_modules.pnl_calendar import PnlCalendarDialog, daily_pnl
 from trading_modules.kronos_engine import fast_predict_scenarios
 from trading_modules.symbol_profile import symbol_tolerances
 from trading_modules.tick_resample import resample_ticks_to_s1
@@ -3343,25 +3344,13 @@ class KronosDesktopApp:
         left_ctrl = tk.Frame(hist_top_bar, bg=PANEL_BG)
         left_ctrl.pack(side=tk.LEFT, fill=tk.Y)
 
-        tk.Label(left_ctrl, text="Từ ngày:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-        ent_start = tk.Entry(left_ctrl, textvariable=self.hist_start_var, width=11, bg="#131822", fg=TEXT_MAIN,
-                             insertbackground=TEXT_MAIN, font=("Consolas", 9, "bold"), relief=tk.FLAT)
-        ent_start.pack(side=tk.LEFT, padx=(0, 2))
-        tk.Button(
-            left_ctrl, text="📅", bg="#232d3f", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold"),
-            relief=tk.FLAT, padx=4, pady=1, cursor="hand2",
-            command=lambda: self._open_calendar_popup(self.hist_start_var)
-        ).pack(side=tk.LEFT, padx=(0, 6))
-
-        tk.Label(left_ctrl, text="Đến ngày:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-        ent_end = tk.Entry(left_ctrl, textvariable=self.hist_end_var, width=11, bg="#131822", fg=TEXT_MAIN,
-                           insertbackground=TEXT_MAIN, font=("Consolas", 9, "bold"), relief=tk.FLAT)
-        ent_end.pack(side=tk.LEFT, padx=(0, 2))
-        tk.Button(
-            left_ctrl, text="📅", bg="#232d3f", fg=GOLD_ACCENT, font=("Segoe UI", 8, "bold"),
-            relief=tk.FLAT, padx=4, pady=1, cursor="hand2",
-            command=lambda: self._open_calendar_popup(self.hist_end_var)
-        ).pack(side=tk.LEFT, padx=(0, 6))
+        # Khoảng ngày: 1 nút "Từ -> Đến", bấm mở Lịch Lãi/Lỗ (mỗi ngày ghi lãi xanh / lỗ đỏ, bấm 2 ngày để chọn khoảng)
+        self.hist_range_btn = tk.Button(
+            left_ctrl, text="", bg="#131822", fg=TEXT_MAIN, activebackground="#232d3f", activeforeground=GOLD_ACCENT,
+            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=10, pady=2, cursor="hand2",
+            highlightthickness=1, highlightbackground="#2b3648", command=self._open_pnl_calendar
+        )
+        self.hist_range_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         tk.Label(left_ctrl, text="Mã:", bg=PANEL_BG, fg=TEXT_MUTED, font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 2))
         sym_cb = ttk.Combobox(left_ctrl, textvariable=self.hist_symbol_var, values=["Tất cả", "XAUUSD", "BTCUSD"], width=8, state="readonly")
@@ -3375,7 +3364,7 @@ class KronosDesktopApp:
         cb_manual.pack(side=tk.LEFT, padx=(0, 8))
 
         tk.Button(
-            left_ctrl, text="🔍 XEM LỊCH SỬ", bg=CYAN_LIVE, fg="#000000",
+            left_ctrl, text="⟳ Làm mới", bg="#232d3f", fg=CYAN_LIVE, activebackground=CYAN_LIVE, activeforeground="#000000",
             font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=8, pady=2, cursor="hand2",
             command=self._refresh_history_tab
         ).pack(side=tk.LEFT, padx=(0, 6))
@@ -3397,38 +3386,43 @@ class KronosDesktopApp:
             command=self.export_history_to_excel
         ).pack(side=tk.RIGHT, padx=4)
 
-        tk.Button(
-            right_ctrl, text="30 Ngày", bg="#232d3f", fg=TEXT_MAIN,
-            font=("Segoe UI", 8), relief=tk.FLAT, padx=5, pady=2, cursor="hand2",
-            command=self._set_history_30days
-        ).pack(side=tk.RIGHT, padx=2)
+        quick_seg = tk.Frame(right_ctrl, bg="#2b3648", padx=1, pady=1)
+        quick_seg.pack(side=tk.RIGHT, padx=(0, 8))
+        self._hist_quick_btns = {}
+        for q_key, q_txt, q_fn in (
+            ("today", "Hôm nay", self._set_history_today),
+            ("yesterday", "Hôm qua", self._set_history_yesterday),
+            ("7d", "7 ngày", self._set_history_7days),
+            ("30d", "30 ngày", self._set_history_30days),
+            ("month", "Tháng này", self._set_history_this_month),
+        ):
+            q_btn = tk.Button(
+                quick_seg, text=q_txt, bg="#19202c", fg=TEXT_MUTED, activebackground=GOLD_ACCENT, activeforeground="#000000",
+                font=("Segoe UI", 8, "bold"), relief=tk.FLAT, bd=0, padx=9, pady=2, cursor="hand2", command=q_fn
+            )
+            q_btn.pack(side=tk.LEFT, padx=(1 if self._hist_quick_btns else 0, 0))
+            self._hist_quick_btns[q_key] = q_btn
+        for _v in (self.hist_start_var, self.hist_end_var):
+            _v.trace_add("write", lambda *_a: self._update_hist_range_btn())
+        self._update_hist_range_btn()
 
-        tk.Button(
-            right_ctrl, text="7 Ngày", bg="#232d3f", fg=TEXT_MAIN,
-            font=("Segoe UI", 8), relief=tk.FLAT, padx=5, pady=2, cursor="hand2",
-            command=self._set_history_7days
-        ).pack(side=tk.RIGHT, padx=2)
-
-        tk.Button(
-            right_ctrl, text="Hôm Qua", bg="#232d3f", fg=TEXT_MAIN,
-            font=("Segoe UI", 8), relief=tk.FLAT, padx=5, pady=2, cursor="hand2",
-            command=self._set_history_yesterday
-        ).pack(side=tk.RIGHT, padx=2)
-
-        tk.Button(
-            right_ctrl, text="Hôm Nay", bg="#235c46", fg="#ffffff",
-            font=("Segoe UI", 8, "bold"), relief=tk.FLAT, padx=6, pady=2, cursor="hand2",
-            command=self._set_history_today
-        ).pack(side=tk.RIGHT, padx=2)
-
-        # Thanh tổng kết số liệu
-        summary_bar = tk.Frame(hist_tab, bg="#131822", padx=8, pady=3)
+        # Thanh tổng kết số liệu: các ô chỉ số gọn (tiêu đề mờ + số đậm, lãi xanh / lỗ đỏ)
+        summary_bar = tk.Frame(hist_tab, bg="#131822", padx=6, pady=3)
         summary_bar.pack(fill=tk.X, padx=6, pady=(0, 3))
+        self.hist_kpi_lbls = {}
+        for k_key, k_title in (("total", "Lệnh"), ("win", "Thắng ≥1R"), ("be", "Hòa/BE+"), ("loss", "Thua"),
+                               ("wr", "Win rate"), ("pnl", "Lãi/Lỗ ròng"), ("pf", "PF")):
+            k_card = tk.Frame(summary_bar, bg="#19202c", padx=8, pady=1)
+            k_card.pack(side=tk.LEFT, padx=(0, 5))
+            tk.Label(k_card, text=k_title, bg="#19202c", fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 5))
+            k_val = tk.Label(k_card, text="---", bg="#19202c", fg=TEXT_MAIN, font=("Consolas", 9, "bold"))
+            k_val.pack(side=tk.LEFT)
+            self.hist_kpi_lbls[k_key] = k_val
         self.hist_summary_lbl = tk.Label(
             summary_bar, text="Đang tải lịch sử giao dịch...",
-            bg="#131822", fg=GOLD_ACCENT, font=("Consolas", 9, "bold"), anchor="w"
+            bg="#131822", fg=TEXT_MUTED, font=("Segoe UI", 8, "bold"), anchor="e"
         )
-        self.hist_summary_lbl.pack(side=tk.LEFT)
+        self.hist_summary_lbl.pack(side=tk.RIGHT)
 
         # Bảng Treeview lịch sử
         hist_container = tk.Frame(hist_tab, bg=PANEL_BG)
@@ -4169,7 +4163,7 @@ class KronosDesktopApp:
         Cùng dạng file cấu hình của app ({"profiles": {pk: {...}}}) nên dùng được với tools/live_replay.py --config."""
         try:
             cfg = self._get_bt_cfg(pk)
-            for k in self.BT_SECRET_KEYS:
+            for k in self.BT_SECRET_KEYS + self.MACHINE_LOCAL_KEYS:  # không token, không thông số riêng máy
                 cfg.pop(k, None)
             parent = self._bt_dialog_parent()
             file_path = filedialog.asksaveasfilename(
@@ -5962,17 +5956,47 @@ class KronosDesktopApp:
         self.hist_end_var.set(now_dt.strftime("%Y-%m-%d"))
         self._refresh_history_tab()
 
-    def _refresh_history_tab(self):
-        """Truy vấn MT5 và nạp danh sách lệnh đóng theo khung thời gian đã chọn vào bảng Lịch Sử."""
-        if not hasattr(self, "hist_tree") or not self.hist_tree.winfo_exists():
-            return
-        start_s = self.hist_start_var.get().strip()
-        end_s = self.hist_end_var.get().strip()
-        sym_choice = self.hist_symbol_var.get().strip()
+    def _set_history_this_month(self):
+        now_dt = datetime.now(tz=VN_TZ)
+        self.hist_start_var.set(now_dt.replace(day=1).strftime("%Y-%m-%d"))
+        self.hist_end_var.set(now_dt.strftime("%Y-%m-%d"))
+        self._refresh_history_tab()
 
+    def _hist_quick_ranges(self) -> dict:
+        """Khoảng ngày của các nút chọn nhanh (giống các hàm _set_history_*)."""
+        now_dt = datetime.now(tz=VN_TZ)
+        t = now_dt.strftime("%Y-%m-%d")
+        y = (now_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+        return {
+            "today": (t, t), "yesterday": (y, y),
+            "7d": ((now_dt - timedelta(days=7)).strftime("%Y-%m-%d"), t),
+            "30d": ((now_dt - timedelta(days=30)).strftime("%Y-%m-%d"), t),
+            "month": (now_dt.replace(day=1).strftime("%Y-%m-%d"), t),
+        }
+
+    def _update_hist_range_btn(self):
+        """Ghi khoảng ngày lên nút lịch và tô vàng nút chọn nhanh đang khớp (chỉ giao diện)."""
+        try:
+            s_iso, e_iso = self.hist_start_var.get().strip(), self.hist_end_var.get().strip()
+            try:
+                s_txt = datetime.strptime(s_iso, "%Y-%m-%d").strftime("%d/%m/%Y")
+                e_txt = datetime.strptime(e_iso, "%Y-%m-%d").strftime("%d/%m/%Y")
+                txt = f"📅  {s_txt}" if s_iso == e_iso else f"📅  {s_txt}  →  {e_txt}"
+            except ValueError:
+                txt = f"📅  {s_iso} → {e_iso}"
+            if hasattr(self, "hist_range_btn"):
+                self.hist_range_btn.config(text=txt + "  ▾")
+            active = next((k for k, rg in self._hist_quick_ranges().items() if rg == (s_iso, e_iso)), None)
+            for k, b in getattr(self, "_hist_quick_btns", {}).items():
+                b.config(bg=(GOLD_ACCENT if k == active else "#19202c"), fg=("#000000" if k == active else TEXT_MUTED))
+        except Exception:
+            pass
+
+    def _hist_filter_args(self):
+        """(symbol, profile_key, magic_scope) theo ô Mã và 'Gồm lệnh tay' của tab Lịch Sử."""
+        sym_choice = self.hist_symbol_var.get().strip()
         include_manual = getattr(self, "hist_include_manual_var", None)
         is_manual = include_manual.get() if include_manual is not None else False
-
         sym_filter = None
         pk_hist = None
         if is_manual:
@@ -5991,9 +6015,40 @@ class KronosDesktopApp:
                 pk_hist = "BTCUSD"
                 magic_scope = "PROFILE"
             else:
-                sym_filter = None
-                pk_hist = None
                 magic_scope = "BOT_ALL"
+        return sym_filter, pk_hist, magic_scope
+
+    def _hist_fetch_daily_pnl(self, start_iso: str, end_iso: str) -> dict:
+        """Lãi/lỗ theo ngày cho Lịch (cùng bộ lọc với bảng; không ghi bộ đệm dùng chung của luật giao dịch)."""
+        sym_filter, pk_hist, magic_scope = self._hist_filter_args()
+        deals = self._get_closed_deals_by_range(
+            symbol=sym_filter, start_date_str=start_iso, end_date_str=end_iso, use_cache=False,
+            profile_key=pk_hist, magic_scope=magic_scope, store_cache=False,
+        )
+        return daily_pnl(deals)
+
+    def _open_pnl_calendar(self):
+        """Mở Lịch Lãi/Lỗ: chọn khoảng ngày (bấm 2 ngày) rồi Áp dụng -> nạp lại bảng Lịch Sử."""
+        def _apply(s_iso, e_iso):
+            self.hist_start_var.set(s_iso)
+            self.hist_end_var.set(e_iso)
+            self._refresh_history_tab()
+        try:
+            PnlCalendarDialog(self.root, self.hist_start_var.get(), self.hist_end_var.get(),
+                              fetch_daily=self._hist_fetch_daily_pnl, on_apply=_apply,
+                              today=datetime.now(tz=VN_TZ).date())
+        except Exception as e:
+            self.log_error("PNL_CALENDAR", e, show_in_ui=False)
+
+    def _refresh_history_tab(self):
+        """Truy vấn MT5 và nạp danh sách lệnh đóng theo khung thời gian đã chọn vào bảng Lịch Sử."""
+        if not hasattr(self, "hist_tree") or not self.hist_tree.winfo_exists():
+            return
+        start_s = self.hist_start_var.get().strip()
+        end_s = self.hist_end_var.get().strip()
+        sym_choice = self.hist_symbol_var.get().strip()
+
+        sym_filter, pk_hist, magic_scope = self._hist_filter_args()
 
         deals = self._get_closed_deals_by_range(
             symbol=sym_filter,
@@ -6021,12 +6076,21 @@ class KronosDesktopApp:
         win_rate = (wins / valid_trades * 100.0) if valid_trades > 0 else 0.0
         wr_str = f"{win_rate:.1f}%" if valid_trades > 0 else "---"
 
-        sum_txt = (
-            f"Tổng: {total_deals} lệnh  |  Thắng (≥1R): {wins}  |  Hòa/BE+: {bes}  |  Thua: {losses}  |  "
-            f"Win Rate: {wr_str}  |  Tổng Lãi/Lỗ: {net_sum:+.2f}$  |  PF: {pf:.2f}"
-        )
-        pnl_col = GREEN_UP if net_sum >= 0 else RED_DOWN
-        self.hist_summary_lbl.config(text=sum_txt, fg=pnl_col if total_deals > 0 else GOLD_ACCENT)
+        kpi = getattr(self, "hist_kpi_lbls", {})
+        if kpi:
+            pnl_col = GREEN_UP if net_sum > 0 else (RED_DOWN if net_sum < 0 else TEXT_MAIN)
+            for k_key, k_txt, k_col in (
+                ("total", str(total_deals), TEXT_MAIN), ("win", str(wins), GREEN_UP), ("be", str(bes), GOLD_ACCENT),
+                ("loss", str(losses), RED_DOWN), ("wr", wr_str, TEXT_MAIN), ("pnl", f"{net_sum:+,.2f} $", pnl_col),
+                ("pf", (f"{pf:.2f}" if total_deals else "---"), TEXT_MAIN),
+            ):
+                if k_key in kpi:
+                    kpi[k_key].config(text=k_txt, fg=k_col if total_deals else TEXT_MUTED)
+            self.hist_summary_lbl.config(text=("" if total_deals else "Không có lệnh đóng trong khoảng này"), fg=TEXT_MUTED)
+        else:
+            self.hist_summary_lbl.config(
+                text=f"Tổng: {total_deals} lệnh | Win Rate: {wr_str} | Tổng Lãi/Lỗ: {net_sum:+.2f}$ | PF: {pf:.2f}",
+                fg=(GREEN_UP if net_sum >= 0 else RED_DOWN) if total_deals > 0 else GOLD_ACCENT)
 
         for d in deals:
             cat = d.get("category", "BE+")
@@ -6365,6 +6429,43 @@ class KronosDesktopApp:
             self.log(f"[CÀI ĐẶT] ⚠️ Không thể lưu cài đặt ({now_str}).")
             self.show_toast("Không thể lưu file cài đặt!", is_error=True, duration_ms=3000)
 
+    # Thông số riêng từng máy: KHÔNG chép khi Xuất / Nhập file cấu hình (người dùng yêu cầu 19/11, tránh đè dữ liệu máy khác):
+    # Magic, đường dẫn MT5, số luồng AI (Mục 1) và toàn bộ Mục 5 Telegram (mỗi máy giữ bot / nhóm Telegram riêng)
+    MACHINE_LOCAL_KEYS = ("magic_number", "mt5_path", "ai_threads",
+                          "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close")
+    # Trạng thái riêng từng máy (tab đang mở, chiều cao bảng dưới, bot đang chạy tự động để bật lại sau cập nhật): cũng không chép
+    MACHINE_LOCAL_STATE_KEYS = ("last_active_tab", "bottom_panel_height", "auto_running_profiles")
+
+    @classmethod
+    def _strip_machine_local(cls, data: dict) -> dict:
+        """Bản sao cấu hình đã bỏ thông số / trạng thái riêng từng máy (ở cấp ngoài và trong từng profiles)."""
+        drop = set(cls.MACHINE_LOCAL_KEYS) | set(cls.MACHINE_LOCAL_STATE_KEYS)
+        out = {k: v for k, v in data.items() if k not in drop}
+        profs = data.get("profiles")
+        if isinstance(profs, dict):
+            out["profiles"] = {pk: ({k: v for k, v in p.items() if k not in cls.MACHINE_LOCAL_KEYS} if isinstance(p, dict) else p)
+                               for pk, p in profs.items()}
+        return out
+
+    @classmethod
+    def _merge_machine_local(cls, imported: dict, local: dict) -> dict:
+        """Cấu hình nhập từ file, nhưng thông số / trạng thái riêng máy lấy theo máy này (local = cài đặt đang lưu của máy này).
+        Máy này chưa có giá trị thì bỏ khóa (nạp sẽ dùng mặc định), không bao giờ lấy giá trị của máy khác."""
+        out = cls._strip_machine_local(imported)
+        local = local if isinstance(local, dict) else {}
+        for k in cls.MACHINE_LOCAL_KEYS + cls.MACHINE_LOCAL_STATE_KEYS:
+            if k in local:
+                out[k] = local[k]
+        lprofs = local.get("profiles") if isinstance(local.get("profiles"), dict) else {}
+        oprofs = out.get("profiles") if isinstance(out.get("profiles"), dict) else {}
+        for pk, p in oprofs.items():
+            lp = lprofs.get(pk)
+            if isinstance(p, dict) and isinstance(lp, dict):
+                for k in cls.MACHINE_LOCAL_KEYS:
+                    if k in lp:
+                        p[k] = lp[k]
+        return out
+
     def export_settings_file(self):
         """Xuất toàn bộ cấu hình 2 Tab ra file .json để sao lưu hoặc đồng bộ sang máy khác/VPS."""
         try:
@@ -6387,6 +6488,7 @@ class KronosDesktopApp:
                     "last_active_tab": self.active_profile_key,
                     "profiles": dict(self.profile_settings)
                 }
+            data = self._strip_machine_local(data)  # không xuất Magic / đường dẫn MT5 / số luồng AI / trạng thái riêng máy
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -6412,6 +6514,17 @@ class KronosDesktopApp:
 
             if not isinstance(imported_data, dict):
                 raise ValueError("Định dạng file không hợp lệ (không phải đối tượng JSON).")
+
+            # Giữ Magic / đường dẫn MT5 / số luồng AI / trạng thái riêng của MÁY NÀY (file từ máy khác không được đè)
+            self.save_user_settings(show_feedback=False)
+            local_data = {}
+            if os.path.exists(SETTINGS_FILE):
+                try:
+                    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        local_data = json.load(f)
+                except Exception:
+                    local_data = {}
+            imported_data = self._merge_machine_local(imported_data, local_data)
 
             os.makedirs(SETTINGS_DIR, exist_ok=True)
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -8230,24 +8343,33 @@ class KronosDesktopApp:
             pending.discard(slot)
 
     def _paint_param_issues(self, issues, widget_of: dict):
-        """Tô ô nhập: lỗi = nền đỏ, cần lưu ý = nền cam, hợp lệ = màu thường. widget_of: khóa -> ô nhập (tk.Entry)."""
+        """Tô ô nhập: lỗi = nền đỏ, cần lưu ý = nền cam, hợp lệ = màu thường. widget_of: khóa -> ô nhập (tk.Entry).
+        Kèm dòng báo ngay DƯỚI ô (giá trị đang nhập + mức hợp lệ) để người dùng thấy ngay chỗ sai."""
         rank = {"error": 2, "warn": 1}
         level_of = {}
+        items_of = {}
         for it in issues or []:
             for k in it.get("keys", ()):
                 if rank.get(it.get("level"), 0) > rank.get(level_of.get(k), 0):
                     level_of[k] = it.get("level")
+                items_of.setdefault(k, []).append(it)
         best = {}  # nhiều khóa dùng chung 1 ô (fast_sl_cooldown_mins) -> lấy mức nặng nhất
         for k, w in (widget_of or {}).items():
-            if not isinstance(w, tk.Entry):
+            if not isinstance(w, tk.Widget):
                 continue
             lv = level_of.get(k)
             cur = best.get(id(w))
-            if cur is None or rank.get(lv, 0) > rank.get(cur[1], 0):
-                best[id(w)] = (w, lv)
-        for w, lv in best.values():
+            if cur is None:
+                best[id(w)] = [w, lv, list(items_of.get(k, []))]
+                continue
+            if rank.get(lv, 0) > rank.get(cur[1], 0):
+                cur[1] = lv
+            cur[2].extend(it for it in items_of.get(k, []) if it not in cur[2])
+        for w, lv, its in best.values():
             try:
-                if lv == "error":
+                if not isinstance(w, tk.Entry):
+                    pass  # ô chọn / ô tích: không tô nền, chỉ hiện dòng báo dưới ô
+                elif lv == "error":
                     w.config(bg=self.PARAM_ERR_BG, fg="#ffffff")
                 elif lv == "warn":
                     w.config(bg=self.PARAM_WARN_BG, fg="#ffffff")
@@ -8255,6 +8377,32 @@ class KronosDesktopApp:
                     w.config(bg=self.PARAM_OK_BG, fg=TEXT_MAIN)
             except Exception:
                 pass
+            self._show_param_field_hint(w, lv, its)
+
+    def _show_param_field_hint(self, w, level, items):
+        """Dòng báo ngay dưới ô nhập sai / cần lưu ý (chỉ giao diện); ô hợp lệ thì ẩn. Không bao giờ làm hỏng giao diện."""
+        try:
+            hints = self.__dict__.setdefault("_param_hint_lbls", {})
+            lbl = hints.get(str(w))
+            if level not in ("error", "warn"):
+                if lbl is not None and lbl.winfo_exists() and lbl.winfo_manager():
+                    lbl.pack_forget()
+                return
+            row = w.master
+            if row is None or row.winfo_manager() != "pack":
+                return  # ô không nằm trong dòng xếp bằng pack: chỉ tô màu + báo dưới nút Lưu như cũ
+            errs = [it for it in items if it.get("level") == "error"]
+            shown = (errs or list(items))[:2]
+            text = "\n".join(("⛔ " if it.get("level") == "error" else "⚠️ ") + str(it.get("msg", "")) for it in shown)
+            if lbl is None or not lbl.winfo_exists():
+                lbl = tk.Label(row.master, text="", bg=row.cget("bg"), font=("Segoe UI", 7),
+                               justify=tk.LEFT, anchor="w", wraplength=280)
+                hints[str(w)] = lbl
+            lbl.config(text=text, fg=("#ff6b6b" if errs else "#fbbf24"))
+            if not lbl.winfo_manager():
+                lbl.pack(fill=tk.X, after=row, padx=row.pack_info().get("padx", 0), pady=(0, 2))
+        except Exception:
+            pass
 
     def _show_param_issue_text(self, lbl, issues, max_lines: int = 4):
         """Ghi lý do lên nhãn lbl (lỗi trước, lưu ý sau); không có vấn đề thì ẩn nhãn."""

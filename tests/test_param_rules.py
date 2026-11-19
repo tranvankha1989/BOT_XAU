@@ -86,6 +86,39 @@ class TestRules(unittest.TestCase):
         self.assertEqual(errs({"rev_be_consensus": "0", "auto_rev_close": True}), [])
         self.assertIn("bằng 0 (tắt)", errs({"rev_be_consensus": "30", "auto_rev_close": True})[0]["msg"])
 
+    def test_message_shows_entered_value_and_range(self):
+        m = errs({"rev_consensus": "30", "auto_rev_close": True})[0]["msg"]
+        self.assertIn("đang nhập 30", m)
+        self.assertIn("phải từ 50 đến 100", m)
+        self.assertIn("đang nhập 30", errs({"rev_be_consensus": "30", "auto_rev_close": True})[0]["msg"])
+        self.assertIn("đang nhập 'abc'", errs({"min_move": "abc"})[0]["msg"])
+        self.assertIn("đang nhập '2.5'", errs({"max_pos": "2.5"})[0]["msg"])
+        self.assertIn("đang nhập 0", errs({"lot": "0"})[0]["msg"])
+        long_m = errs({"min_move": "x" * 50})[0]["msg"]
+        self.assertIn("x" * 20 + "…", long_m)
+        self.assertNotIn("x" * 21, long_m)
+
+    def test_text_and_conflict_rules(self):
+        self.assertIn("Symbol", errs({"symbol": "  "})[0]["msg"])
+        self.assertEqual(errs({"symbol": "XAUUSDm"}), [])
+        w = warns({"tf": "M15", "analysis_tf": "M5"})
+        self.assertEqual(w[0]["keys"], ("tf", "analysis_tf"))
+        self.assertEqual(warns({"tf": "M1", "analysis_tf": "M5"}), [])
+        # chuỗi thua > 0 nhưng thời gian nghỉ = 0 -> bot không nghỉ
+        self.assertIn("KHÔNG tạm nghỉ", warns({"max_consec_loss": "3", "cooldown_mins": "0"})[0]["msg"])
+        self.assertEqual(warns({"max_consec_loss": "0", "cooldown_mins": "0"}), [])
+        self.assertIn("luôn vượt trần", warns({"sl_buffer": "4", "max_sl_price": "4"})[0]["msg"])
+        self.assertEqual(warns({"sl_buffer": "4", "max_sl_price": "0"}), [])  # 0 = theo AI, không có trần
+        self.assertTrue(warns({"auto_rev_close": True, "rev_consensus": "80", "rev_be_consensus": "60"}))
+        self.assertEqual(warns({"auto_rev_close": True, "rev_consensus": "80", "rev_be_consensus": "0"}), [])
+        self.assertEqual(warns({"auto_rev_close": False, "rev_consensus": "80", "rev_be_consensus": "60"}), [])
+        tw = warns({"telegram_enabled": True, "telegram_bot_token": "", "telegram_chat_id": "123"})
+        self.assertIn("Bot Token", tw[0]["msg"])
+        self.assertNotIn("123", tw[0]["msg"])  # không ghi giá trị Telegram vào câu báo
+        self.assertEqual(warns({"telegram_enabled": False, "telegram_bot_token": ""}), [])
+        self.assertTrue(warns({"engine": "Ưu tiên Hugging Face Space", "hf_space": ""}))
+        self.assertEqual(warns({"engine": "Chạy trực tiếp máy Local", "hf_space": ""}), [])
+
     def test_children_skipped_when_parent_off(self):
         self.assertEqual(errs({"auto_rev_close": False, "rev_consensus": "abc", "rev_be_consensus": "30"}), [])
         self.assertEqual(errs({"basket_tp_usd": "0", "basket_cooldown_mins": "-5"}), [])
@@ -175,6 +208,40 @@ class TestUi(unittest.TestCase):
         sw.assert_not_called()
         app.save_user_settings.assert_called_once()
         app.apply_live_settings_and_rescan.assert_called_once()
+
+    def test_inline_hint_under_wrong_field(self):
+        """Ô sai: hiện dòng báo NGAY DƯỚI ô (giá trị đang nhập + mức hợp lệ); sửa đúng thì ẩn."""
+        parent = tk.Frame(self.root)
+        parent.pack()
+        v = tk.StringVar(master=self.root, value="30")
+        on = tk.BooleanVar(master=self.root, value=True)
+        row = tk.Frame(parent)
+        row.pack(fill=tk.X, padx=(18, 0))
+        ent = tk.Entry(row, textvariable=v)
+        ent.pack(side=tk.RIGHT)
+        below = tk.Frame(parent)
+        below.pack(fill=tk.X)
+        app = object.__new__(b.KronosDesktopApp)
+        app.__dict__.update(root=self.root, _param_rows={str(v): (row, ent)},
+                            _get_settings_vars_map=lambda: {"rev_consensus": v, "auto_rev_close": on},
+                            param_issue_lbl=tk.Label(tk.Frame(self.root)))
+        self.assertEqual(len(app._validate_menu_settings()), 1)
+        hint = app._param_hint_lbls[str(ent)]
+        self.assertEqual(hint.winfo_manager(), "pack")
+        self.assertIn("đang nhập 30", hint.cget("text"))
+        self.assertIn("50 đến 100", hint.cget("text"))
+        slaves = parent.pack_slaves()
+        self.assertEqual(slaves.index(hint), slaves.index(row) + 1)  # ngay dưới dòng của ô sai
+        v.set("75")
+        self.assertEqual(app._validate_menu_settings(), [])
+        self.assertEqual(hint.winfo_manager(), "")
+        v.set("40")
+        app._validate_menu_settings()
+        self.assertEqual(app._param_hint_lbls[str(ent)], hint)  # dùng lại nhãn, không tạo thêm
+        self.assertIn("đang nhập 40", hint.cget("text"))
+        on.set(False)  # tắt Bảo vệ đảo chiều -> ô con không xét -> ẩn dòng báo
+        app._validate_menu_settings()
+        self.assertEqual(hint.winfo_manager(), "")
 
     def test_bt_form_paint(self):
         app = object.__new__(b.KronosDesktopApp)

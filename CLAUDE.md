@@ -43,6 +43,8 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
    cha tắt (bỏ tích hoặc = 0) thì con mờ và khóa. Cập nhật bảng cây bên dưới.
 - Ô số: thêm luật kiểm tra vào `NUMERIC_RULES` + `PARAM_NAMES` (thông số con: cả `PARENT_OF`) trong `trading_modules/param_rules.py`
   (ô sai tô đỏ, cần lưu ý tô cam; nút Lưu và "Áp Dụng Vào Bot Live" bị chặn khi còn ô đỏ; chỉ giao diện, bot vẫn đọc ô như cũ).
+- Thông số riêng từng máy (KHÔNG chép khi Xuất / Nhập file cấu hình, người dùng yêu cầu 19/11): thêm vào `MACHINE_LOCAL_KEYS`
+  (hiện: Magic, đường dẫn MT5, số luồng AI, toàn bộ Mục 5 Telegram); trạng thái riêng máy ở `MACHINE_LOCAL_STATE_KEYS`.
 - Luật mới cần replay được: `tools/live_replay.py --set <khóa>=<giá trị>` (chạy chính code live, không cần sửa tool).
 
 **Cây thông số hiện tại** (cha → con):
@@ -75,7 +77,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **369 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **375 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
