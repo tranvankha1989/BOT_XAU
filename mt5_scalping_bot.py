@@ -12216,6 +12216,12 @@ class KronosDesktopApp:
                         cost_barrier = expected_move_k * (spread_usd + slippage_est)
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BIÊN ĐỘ BÙ PHÍ THẤP) — AI dự báo {expected_move:.2f}$ < ngưỡng an toàn ({min_effective_move:.2f}$ = {expected_move_k:g}x chi phí). Tránh rủi ro phí sàn!"
                         self.log(f"🛡️ [{pk}] Biên độ dự báo AI ({expected_move:.2f}$) không đủ bù chi phí giao dịch (Cần ≥ {min_effective_move:.2f}$ = max(min_move={min_move:.2f}$, k={expected_move_k:g}*(spread={spread_usd:.2f}$+slip={slippage_est:.2f}$))).")
+                    # Đồng thuận ĐẠT nhưng AI dự báo giá đi chưa tới "Biên độ dự báo tối thiểu" (min_move): ghi rõ lý do
+                    # (trước đây chỉ hiện dòng đồng thuận chung, người dùng 19/11 thấy "Giảm 100%" mà không hiểu vì sao đứng ngoài). Chỉ đổi chữ.
+                    elif not bool(cfg.get("structure_direction", False)) and bull_pct >= min_consensus and expected_move < min_move:
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BIÊN ĐỘ NHỎ) — Đồng thuận Tăng {bull_pct:.0f}% (đạt ≥ {min_consensus:.0f}%) nhưng AI chỉ dự báo {expected_move:+.2f}$ < Biên độ tối thiểu {min_move:.2f}$ | Tin cậy: {confidence_pct:.0f}%"
+                    elif not bool(cfg.get("structure_direction", False)) and bear_pct >= min_consensus and (-expected_move) < min_move:
+                        sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI (BIÊN ĐỘ NHỎ) — Đồng thuận Giảm {bear_pct:.0f}% (đạt ≥ {min_consensus:.0f}%) nhưng AI chỉ dự báo {expected_move:+.2f}$ < Biên độ tối thiểu {min_move:.2f}$ | Tin cậy: {confidence_pct:.0f}%"
                     elif is_bear_bias:
                         sig_title = f"⚪ [{pk} - {symbol}] ĐỨNG NGOÀI ({tf_label}) — Đồng thuận: Tăng {bull_pct:.0f}% | Giảm {bear_pct:.0f}% (cần ≥ {min_consensus:.0f}%) | Phân tán: {dispersion_r:.2f}x ATR | Tin cậy: {confidence_pct:.0f}%"
                     else:
