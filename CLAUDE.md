@@ -73,7 +73,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
 - Sau mỗi thay đổi: `python -m py_compile mt5_scalping_bot.py` rồi chạy toàn bộ test.
 
 ## Cách chạy
-- Test: `python -m unittest discover -s tests` (hiện **323 test**, toàn bộ mock).
+- Test: `python -m unittest discover -s tests` (hiện **328 test**, toàn bộ mock).
 - Backtest (chỉ đọc dữ liệu MT5, mọi lệnh gửi bị chặn): `python tools/run_backtest.py --profile XAUUSD --symbol XAUUSDm --start 2026-11-03 --end 2026-11-07 --threads 6`
   (cờ: `--precision S1`, `--no-ai`, `--seed`, `--trend-filter on|off`, `--structure-conflict-mode neutral|analysis|scalp`; `--threads` tối đa = số lõi vật lý).
   Mặc định chế độ nến. Đừng tối ưu tham số theo số backtest.
@@ -110,6 +110,7 @@ thêm nơi đóng lệnh mới thì truyền `reason` cho `_close_single_pos` v�
     `live_chart_frame` hoặc `bt_ws_frame` (`_bt_set_workspace_visible`, gọi trong `_on_tab_changed`), trình phát nhúng `parent=bt_ws_body, live=True`;
     bảng lệnh chạy theo thời điểm đang phát khi còn đang tính (`_render_backtest_results(..., final=False)`), tính xong thì đủ lệnh.
     Đổi chữ ký `_update_ui_results` hoặc cách gọi nó ở live: sửa `simulate` (bắt sự kiện "ai") trong cùng việc.
+    Tốc độ (19/11): backtest TẮT `debug_trace` (trace ghi nối 1 file/ngày dùng chung, file phình làm chậm 5 lần; muốn có: `--set debug_trace=True`), `install_fetch_memo` dùng lại bảng nến đã đóng (trả bản sao). KHÔNG bỏ qua giờ nghỉ phiên khi có lệnh mở (live thử sửa lệnh mỗi 15s, để lại trạng thái). Sàn giả từ chối mọi lệnh gửi khi không có tick > 60s (10018 Market closed) như MT5 thật.
   - Test có app thật + thanh Backtest phải patch `SETTINGS_DIR` sang thư mục tạm (không ghi APPDATA thật).
 - **QUY TẮC ĐỘ TIN CẬY BACKTEST (bắt buộc, người dùng yêu cầu 16/11/2026):**
   1. Chạy `--precision S1` khi kết quả dùng để quyết định. Chế độ nến chỉ để kiểm tra nhanh, phải ghi rõ "chế độ nến, độ tin cậy thấp".
