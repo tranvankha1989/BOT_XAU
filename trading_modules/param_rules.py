@@ -224,10 +224,13 @@ def _conflict_issues(cfg: dict, vals: dict) -> list:
                           f"Đồng thuận đảo chiều lệnh ĐÃ BE ({rbc:g}%) thấp hơn lệnh CHƯA BE ({rc:g}%): lệnh đã an toàn lại bị "
                           f"đóng dễ hơn; thường đặt cao hơn hoặc bằng."))
     if "telegram_enabled" in cfg and _to_bool(cfg.get("telegram_enabled")):
-        miss = [n for k, n in (("telegram_bot_token", "Bot Token"), ("telegram_chat_id", "Chat ID"))
-                if k in cfg and not str(cfg.get(k) or "").strip()]
+        miss = [n for k, n in (("telegram_bot_token", "Bot Token"),) if k in cfg and not str(cfg.get(k) or "").strip()]
+        # ID nhóm chat được để trống: khi đó bot gửi riêng cho 'ID người điều khiển' (19/11/2026); thiếu cả hai mới báo
+        if ("telegram_chat_id" in cfg and not str(cfg.get("telegram_chat_id") or "").strip()
+                and not str(cfg.get("telegram_admin_ids") or "").strip()):
+            miss.append("ID nhóm chat hoặc ID người điều khiển")
         if miss:
-            out.append(_issue("warn", ("telegram_enabled", "telegram_bot_token", "telegram_chat_id"),
+            out.append(_issue("warn", ("telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids"),
                               f"Đã bật Telegram nhưng chưa nhập {' và '.join(miss)}: bot sẽ không gửi/nhận tin."))
     if (str(cfg.get("engine") or "").startswith("Ưu tiên Hugging Face") and "hf_space" in cfg
             and not str(cfg.get("hf_space") or "").strip()):
