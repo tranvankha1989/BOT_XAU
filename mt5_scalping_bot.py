@@ -8291,7 +8291,7 @@ class KronosDesktopApp:
                 items_of.setdefault(k, []).append(it)
         best = {}  # nhiều khóa dùng chung 1 ô (fast_sl_cooldown_mins) -> lấy mức nặng nhất
         for k, w in (widget_of or {}).items():
-            if not isinstance(w, tk.Entry):
+            if not isinstance(w, tk.Widget):
                 continue
             lv = level_of.get(k)
             cur = best.get(id(w))
@@ -8303,7 +8303,9 @@ class KronosDesktopApp:
             cur[2].extend(it for it in items_of.get(k, []) if it not in cur[2])
         for w, lv, its in best.values():
             try:
-                if lv == "error":
+                if not isinstance(w, tk.Entry):
+                    pass  # ô chọn / ô tích: không tô nền, chỉ hiện dòng báo dưới ô
+                elif lv == "error":
                     w.config(bg=self.PARAM_ERR_BG, fg="#ffffff")
                 elif lv == "warn":
                     w.config(bg=self.PARAM_WARN_BG, fg="#ffffff")

@@ -98,6 +98,27 @@ class TestRules(unittest.TestCase):
         self.assertIn("x" * 20 + "…", long_m)
         self.assertNotIn("x" * 21, long_m)
 
+    def test_text_and_conflict_rules(self):
+        self.assertIn("Symbol", errs({"symbol": "  "})[0]["msg"])
+        self.assertEqual(errs({"symbol": "XAUUSDm"}), [])
+        w = warns({"tf": "M15", "analysis_tf": "M5"})
+        self.assertEqual(w[0]["keys"], ("tf", "analysis_tf"))
+        self.assertEqual(warns({"tf": "M1", "analysis_tf": "M5"}), [])
+        # chuỗi thua > 0 nhưng thời gian nghỉ = 0 -> bot không nghỉ
+        self.assertIn("KHÔNG tạm nghỉ", warns({"max_consec_loss": "3", "cooldown_mins": "0"})[0]["msg"])
+        self.assertEqual(warns({"max_consec_loss": "0", "cooldown_mins": "0"}), [])
+        self.assertIn("luôn vượt trần", warns({"sl_buffer": "4", "max_sl_price": "4"})[0]["msg"])
+        self.assertEqual(warns({"sl_buffer": "4", "max_sl_price": "0"}), [])  # 0 = theo AI, không có trần
+        self.assertTrue(warns({"auto_rev_close": True, "rev_consensus": "80", "rev_be_consensus": "60"}))
+        self.assertEqual(warns({"auto_rev_close": True, "rev_consensus": "80", "rev_be_consensus": "0"}), [])
+        self.assertEqual(warns({"auto_rev_close": False, "rev_consensus": "80", "rev_be_consensus": "60"}), [])
+        tw = warns({"telegram_enabled": True, "telegram_bot_token": "", "telegram_chat_id": "123"})
+        self.assertIn("Bot Token", tw[0]["msg"])
+        self.assertNotIn("123", tw[0]["msg"])  # không ghi giá trị Telegram vào câu báo
+        self.assertEqual(warns({"telegram_enabled": False, "telegram_bot_token": ""}), [])
+        self.assertTrue(warns({"engine": "Ưu tiên Hugging Face Space", "hf_space": ""}))
+        self.assertEqual(warns({"engine": "Chạy trực tiếp máy Local", "hf_space": ""}), [])
+
     def test_children_skipped_when_parent_off(self):
         self.assertEqual(errs({"auto_rev_close": False, "rev_consensus": "abc", "rev_be_consensus": "30"}), [])
         self.assertEqual(errs({"basket_tp_usd": "0", "basket_cooldown_mins": "-5"}), [])
