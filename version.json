@@ -1,6 +1,6 @@
 {
-  "version": "1.3.31",
+  "version": "1.3.32",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-19",
-  "description": "Phiên bản v1.3.31:\n- Telegram (Mục 5): ô 'Chat ID' đổi tên thành 'ID nhóm chat (có thể trống)'. Điền ID nhóm thì bot báo vào nhóm; để TRỐNG thì bot gửi riêng cho 'ID người điều khiển'. Ai đang dán ID cá nhân vào ô này vẫn chạy như cũ.\n- Kiểm tra cấu hình: chỉ nhắc khi bật Telegram mà trống CẢ 'ID nhóm chat' lẫn 'ID người điều khiển'.\n- Không đổi luật giao dịch."
+  "description": "Phiên bản v1.3.32:\n- Menu: thêm ổ khóa ở tiêu đề. Mặc định KHÓA: các ô thông số, nút Khôi phục mặc định, Lưu, Xuất/Nhập cấu hình, Kết nối MT5 và Chart Real-Time bị vô hiệu hóa (chữ vẫn đọc được). Bấm ổ khóa để mở.\n- Thêm nút 'Lưu cấu hình mặc định': lấy thông số hiện tại làm mặc định cho các nút 'Khôi phục mặc định' (không gồm Magic, đường dẫn MT5, số luồng AI, token, Telegram).\n- Không đổi luật giao dịch."
 }
