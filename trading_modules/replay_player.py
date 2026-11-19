@@ -669,6 +669,7 @@ class ReplayPlayer:
             cv.create_rectangle(fx0, y0, fx1, y1, fill="#5c6bc0", outline="", stipple="gray25", tags="dyn")
             segs = self.sltp.get(int(ftr["ticket"]), [])
             t_end = ftr["_cs"] if math.isfinite(ftr["_cs"]) else self.t
+            prev_v = {"SL": None, "TP": None}
             for k_s, (ms_s, sl_v, tp_v) in enumerate(segs):
                 s0 = ms_s / 1000.0
                 s1 = segs[k_s + 1][0] / 1000.0 if k_s + 1 < len(segs) else t_end
@@ -678,7 +679,10 @@ class ReplayPlayer:
                 for v, col, lbl in ((sl_v, self.DOWN, "SL"), (tp_v, self.UP, "TP")):
                     if v and v > 0:
                         cv.create_line(xa, Y(v), xb, Y(v), fill=col, width=2, dash=(6, 3), tags="dyn")
-                        cv.create_text(xa + 2, Y(v) - 2, text=f"{lbl} {v:.2f}", anchor="sw", fill=col, font=("Consolas", 8, "bold"), tags="dyn")
+                        if prev_v[lbl] is None or abs(prev_v[lbl] - v) > 1e-9:  # chỉ ghi nhãn khi SL/TP đổi (không lặp)
+                            cv.create_text(xa + 2, Y(v) - 2, text=f"{lbl} {v:.2f}", anchor="sw", fill=col,
+                                           font=("Consolas", 8, "bold"), tags="dyn")
+                        prev_v[lbl] = v
 
         cv.tag_lower("dyn")  # lưới + vùng nằm dưới nến; lệnh/giá vẽ sau nên nằm trên
 
@@ -783,19 +787,6 @@ class ReplayPlayer:
                 cv.create_text(lx, yo - 9, text=f"{t['type']} {float(t['volume']):.2f} @ {float(t['price_open']):.2f} | {fp:+.2f}$",
                                anchor="w", fill=self.UP if fp >= 0 else self.DOWN, font=("Consolas", 8, "bold"), tags="dyn")
 
-        if ftr is not None:
-            closed_f = math.isfinite(ftr["_cs"])
-            pnl_f = float(ftr["profit"]) if closed_f else floating_pnl(ftr, fc, self.contract)
-            txt = (f"🔎 Lệnh #{ftr['ticket']} {ftr['type']} {float(ftr['volume']):.2f} | Vào {vn_str(ftr['_os'], '%H:%M:%S')} @ {float(ftr['price_open']):.2f}"
-                   + (f" → Ra {vn_str(ftr['_cs'], '%H:%M:%S')} @ {float(ftr['price_close']):.2f}" if closed_f else " | đang mở")
-                   + f" | {pnl_f:+.2f}$" + (f" | {ftr.get('reason_label') or ftr.get('reason', '')}" if closed_f else ""))
-            fcol = self.UP if pnl_f >= 0 else self.DOWN
-            tid = cv.create_text(x0 + 8, y0 + 4, text=txt, anchor="nw", fill=fcol, font=("Consolas", 9, "bold"), tags="dyn")
-            bb = cv.bbox(tid)
-            if bb:
-                cv.create_rectangle(bb[0] - 4, bb[1] - 2, bb[2] + 4, bb[3] + 2, fill="#0e1118", outline=fcol, tags="dyn")
-                cv.tag_raise(tid)
-
         # giá hiện tại
         yp = Y(fc)
         cv.create_line(x0, yp, x1, yp, fill=self.PRICE, dash=(2, 2), tags="dyn")
@@ -809,7 +800,14 @@ class ReplayPlayer:
         info = (f"⏱ {vn_str(self.t)}  |  Giá {fc:.2f}  |  Đang mở: {len(open_tr)} lệnh ({flt:+.2f}$)  |  "
                 f"Đã đóng: {n_closed} lệnh, {realized:+.2f}$  |  {self._speed_label()}  |  {self.tf_name}")
         if ftr is not None:
-            info += "  |  🔎 đang xem 1 lệnh (▶ Phát tiếp để chạy tiếp)"
+            # Đang tô lệnh: dòng thông tin = chi tiết lệnh (không vẽ hộp chữ đè lên biểu đồ)
+            closed_f = math.isfinite(ftr["_cs"])
+            pnl_f = float(ftr["profit"]) if closed_f else floating_pnl(ftr, fc, self.contract)
+            info = (f"🔎 Lệnh #{ftr['ticket']} {ftr['type']} {float(ftr['volume']):.2f} | Vào {vn_str(ftr['_os'], '%d/%m %H:%M:%S')} @ "
+                    f"{float(ftr['price_open']):.2f}"
+                    + (f" → Ra {vn_str(ftr['_cs'], '%H:%M:%S')} @ {float(ftr['price_close']):.2f}" if closed_f else " | đang mở")
+                    + f" | {pnl_f:+.2f}$" + (f" | {ftr.get('reason_label') or ftr.get('reason', '')}" if closed_f else "")
+                    + "   (▶ Phát tiếp để chạy tiếp)")
         if self.live and not self.finished and self.frontier is not None:
             info += f"  |  🧠 đã tính tới {vn_str(self.frontier, '%d/%m %H:%M:%S')}"
             if self.waiting and self.playing:

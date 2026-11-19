@@ -175,7 +175,8 @@ class TestPlayerLive(unittest.TestCase):
         self.assertAlmostEqual(p.t, T0 + 3000)  # không đổi thời điểm đang phát (bảng lệnh giữ nguyên)
         p.render()
         texts = [p.canvas.itemcget(i, "text") for i in p.canvas.find_withtag("dyn") if p.canvas.type(i) == "text"]
-        self.assertTrue(any("Lệnh #7 SELL" in x and "TP đã dời về hòa" in x for x in texts))
+        info = p.info_lbl.cget("text")
+        self.assertTrue("Lệnh #7 SELL" in info and "TP đã dời về hòa" in info)  # chi tiết lệnh ở dòng thông tin
         self.assertTrue(any(x.startswith("TP 4100.15") for x in texts))  # SL/TP theo từng lần dời
         self.assertTrue(any(x.startswith("TP 4096.00") for x in texts))
         p.toggle_play()  # phát tiếp -> bỏ tô
