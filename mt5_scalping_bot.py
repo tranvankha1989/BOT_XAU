@@ -9552,7 +9552,11 @@ class KronosDesktopApp:
                 elif ("[tp" in cmt) or (r_ratio >= 1.0) or (net_pnl >= one_r):
                     category = "WIN"
                     if "[tp" in cmt:
-                        status = f"ĐÃ CHỐT TP ({close_t})"
+                        # TP đã bị bot dời (Quy tắc 3: AI đảo chiều -> kéo TP về Entry+): giá đóng lệch xa TP gốc
+                        if tp_price > 0 and open_p > 0 and abs(close_p - tp_price) > 0.15 * abs(tp_price - open_p):
+                            status = f"THOÁT VỀ ENTRY+ - TP ĐÃ DỜI ({close_t})"
+                        else:
+                            status = f"ĐÃ CHỐT TP ({close_t})"
                     else:
                         status = f"ĐÃ CHỐT LÃI ({close_t})"
                 else:
