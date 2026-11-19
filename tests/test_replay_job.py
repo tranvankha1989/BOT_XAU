@@ -88,6 +88,26 @@ class TestRunJob(Base):
         self.assertIn("progress", types_)
         self.assertEqual(types_[-1], "done")
 
+    def test_cp1252_stdout_no_unicode_error(self):
+        # Bản .exe: stdout tiến trình con là cp1252 -> print chữ Việt từng làm hỏng lượt backtest (UnicodeEncodeError 'Đ')
+        import io
+        path, out = self.write_job()
+        buf = io.BytesIO()
+        fake_stdout = io.TextIOWrapper(buf, encoding="cp1252")
+
+        def fake_sim(bot_mod, pk, cfg, symbol, start_utc, end_utc, **kw):
+            print("[*] Đang đọc tick + nến từ MT5")
+            return fake_sim_result()
+
+        with mock.patch.object(lr, "simulate", side_effect=fake_sim), mock.patch.object(sys, "stdout", fake_stdout):
+            self.assertEqual(lr.run_replay_job(path), 0)
+            fake_stdout.flush()
+        self.assertIn("Đang đọc".encode("utf-8"), buf.getvalue())
+
+    def test_child_env_utf8(self):
+        _cmd, env = b.KronosDesktopApp._bt_build_replay_command("C:/x/job.json")
+        self.assertEqual(env["PYTHONIOENCODING"], "utf-8")
+
     def test_cancel(self):
         path, out = self.write_job()
 

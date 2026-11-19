@@ -4242,6 +4242,8 @@ class KronosDesktopApp:
         KRONOS_REPLAY_JOB -> code bot thấy biến này thì chạy backtest rồi thoát (không mở giao diện). Từ mã nguồn: tools/live_replay.py --job."""
         env = dict(os.environ)
         env.pop("KRONOS_REPLAY_JOB", None)
+        env["PYTHONIOENCODING"] = "utf-8"  # tiến trình con in chữ Việt: tránh UnicodeEncodeError cp1252
+        env["PYTHONUTF8"] = "1"
         main_mod = sys.modules.get("__main__")
         if getattr(sys, "frozen", False):
             env["KRONOS_REPLAY_JOB"] = job_path
@@ -13056,6 +13058,11 @@ def _run_packed_replay_job_from_env():
     job = os.environ.pop("KRONOS_REPLAY_JOB", "")
     if not job:
         return
+    for _s in (sys.stdout, sys.stderr):  # stdout/stderr con là cp1252 -> chữ Việt lỗi; ép UTF-8
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     code = 1
     try:
         raw = getattr(sys.modules.get("__main__"), "_CONTAINER_RAW_DICT", None)
