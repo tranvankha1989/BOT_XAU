@@ -4459,12 +4459,23 @@ class KronosDesktopApp:
         is_btc = "BTC" in str(res.get("symbol", "")).upper()
         contract = 1.0 if is_btc else 100.0
         trades, eq_curve = self._bt_rows_from_closed(res.get("closed", []), capital, contract)
-        self._bt_table_n = len(trades)
-        self._bt_trades_cache = trades
-        self._bt_equity_points = eq_curve
         self._bt_last_result = res
         self._bt_last_run_dir = run_dir
-        self._render_backtest_results(trades, eq_curve, capital)
+        p = getattr(self, "_bt_player", None)
+        follow = p is not None and not getattr(p, "_closed", True) and getattr(self, "_bt_player_run", None) == run_dir
+        if follow:
+            # Bảng lệnh + thẻ KPI chạy theo thời điểm đang phát trên màn hình Backtest (_bt_view_loop);
+            # báo cáo tổng kết (log + CSV) vẫn ghi 1 lần cho cả lượt
+            self._bt_table_n = -1
+            try:
+                self._emit_backtest_summary(trades, capital)
+            except Exception as e:
+                self.log_error("BACKTEST_SUMMARY", e, show_in_ui=False)
+        else:
+            self._bt_table_n = len(trades)
+            self._bt_trades_cache = trades
+            self._bt_equity_points = eq_curve
+            self._render_backtest_results(trades, eq_curve, capital)
         try:
             self.bt_tree.bind("<Double-1>", self._on_bt_tree_double_click)
         except Exception:
@@ -4474,7 +4485,9 @@ class KronosDesktopApp:
         err_tag = f" | ⚠️ {n_err} lỗi trong code bot (xem log.txt)" if n_err else ""
         self._update_bt_status(
             f"✅ Xong (code live): {sm.get('n', len(trades))} lệnh | lãi ròng {float(sm.get('net', 0.0)):+.2f}$ | "
-            f"{res.get('n_analyses', 0)} lần AI | {float(res.get('minutes', 0.0)):.1f} phút{err_tag} — bấm đúp 1 lệnh để tua biểu đồ tới lệnh đó", 100)
+            f"{res.get('n_analyses', 0)} lần AI | {float(res.get('minutes', 0.0)):.1f} phút{err_tag} — "
+            + ("bảng lệnh chạy theo thời gian trên biểu đồ (⏭ Cuối để xem hết), " if follow else "")
+            + "bấm đúp 1 lệnh để tua biểu đồ tới lệnh đó", 100)
         self.log(f"[BACKTEST] Xong backtest CODE LIVE: {sm.get('n', 0)} lệnh, lãi ròng {float(sm.get('net', 0.0)):+.2f}$, "
                  f"PF {sm.get('pf', 0)}, sụt vốn {sm.get('max_dd', 0)}$, lỗi code bot {n_err}. Log: {os.path.join(run_dir, 'log.txt')}")
 
@@ -4651,9 +4664,10 @@ class KronosDesktopApp:
         self.root.after(400, self._bt_view_loop)
 
     def _bt_sync_table_to_cursor(self):
-        """Đang tính: bảng lệnh chỉ gồm lệnh đã đóng TỚI thời điểm đang phát (như thật). Tính xong: đủ mọi lệnh."""
+        """Bảng lệnh + thẻ KPI chỉ gồm lệnh đã đóng TỚI thời điểm đang phát trên màn hình Backtest (như thật),
+        cả khi đang tính, đã tính xong hay xem lại. Muốn xem hết: nút ⏭ Cuối."""
         p = self._bt_player
-        n = p.n_closed_at_cursor() if (p.live and not p.finished) else len(p._closed_sorted)
+        n = p.n_closed_at_cursor()
         if n == getattr(self, "_bt_table_n", -1):
             return
         self._bt_table_n = n
@@ -4712,7 +4726,7 @@ class KronosDesktopApp:
             p = self._bt_make_ws_player(run_dir, float(res["start_utc"]), float(res["end_utc"]), contract,
                                         str(res.get("tf") or "M1").strip(), live=False, closed=res.get("closed", []),
                                         sltp=res.get("sltp", []))
-            self._bt_table_n = len(res.get("closed", []))  # bảng đã đủ lệnh: không vẽ lại (giữ dòng đang chọn)
+            self._bt_table_n = -1  # bảng lệnh chạy theo thời điểm đang phát
             evs, _pos = self._bt_read_jsonl(os.path.join(run_dir, "events.jsonl"), 0)
             p.add_events([e for e in evs if e.get("type") in ("ai", "zone", "log")])
             if ticket is not None:

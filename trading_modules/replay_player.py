@@ -203,6 +203,7 @@ class ReplayPlayer:
         self.play_btn.pack(side=tk.LEFT, padx=2)
         tk.Button(ctl, text="1 nến ▶", command=self.step_forward, **bstyle).pack(side=tk.LEFT, padx=2)
         tk.Button(ctl, text="Lệnh kế ⏭", command=self.next_trade, **bstyle).pack(side=tk.LEFT, padx=2)
+        tk.Button(ctl, text="⏭ Cuối", command=self.go_end, **bstyle).pack(side=tk.LEFT, padx=2)
         tk.Label(ctl, text="Tốc độ:", bg=self.PANEL, fg=self.TEXT, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(10, 2))
         self.speed_var = tk.StringVar(value=self._speed_label())
         sp = ttk.Combobox(ctl, textvariable=self.speed_var, values=[f"{s}x" for s in SPEEDS] + [SPEED_MAX_LABEL],
@@ -400,6 +401,10 @@ class ReplayPlayer:
 
     def go_start(self):
         self.seek(self.start_utc)
+
+    def go_end(self):
+        """Tới cuối phần đã tính (tính xong: cuối kỳ) -> bảng lệnh hiện hết."""
+        self.seek(self._limit())
 
     def _cur_bar(self):
         idx = int(np.searchsorted(self.sec, self.t, side="right")) - 1

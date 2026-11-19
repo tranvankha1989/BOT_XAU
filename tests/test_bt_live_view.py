@@ -250,6 +250,25 @@ class TestAppWorkspace(unittest.TestCase):
         self.assertEqual(rendered[-1], (1, False))
         self.assertEqual(app._bt_trades_cache[0]["reason"], "Chốt lãi (TP)")
         self.assertEqual(app._bt_trades_cache[0]["type"], "SELL")
+        # Tính xong: bảng lệnh VẪN chạy theo thời điểm đang phát (không nhảy ra đủ lệnh khi biểu đồ chưa phát tới)
+        p.finish()
+        p.seek(T0 + 150)
+        app._bt_sync_table_to_cursor()
+        self.assertEqual(rendered[-1], (0, False))
+        app._emit_backtest_summary = mock.Mock()
+        app._update_bt_status = mock.Mock()
+        app.log = lambda *a, **k: None
+        app.bt_tree = types.SimpleNamespace(bind=lambda *a, **k: None)
+        res = {"capital": 1000.0, "symbol": "XAUUSDm", "summary": {"n": 1, "net": 2.0}, "n_analyses": 3, "minutes": 1.0, "n_errors": 0,
+               "closed": [dict(p._closed_sorted[0], reason_label="Chốt lãi (TP)")]}
+        n_render = len(rendered)
+        app._bt_show_live_result(res, run_dir)
+        self.assertEqual(len(rendered), n_render)  # không đổ đủ lệnh vào bảng
+        app._emit_backtest_summary.assert_called_once()  # báo cáo tổng kết vẫn ghi 1 lần
+        self.assertIn("chạy theo thời gian", app._update_bt_status.call_args[0][0])
+        p.go_end()
+        app._bt_sync_table_to_cursor()
+        self.assertEqual(rendered[-1], (1, False))  # ⏭ Cuối -> bảng hiện hết
         app._bt_close_ws_player()
         self.assertIsNone(app._bt_player)
 
