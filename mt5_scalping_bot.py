@@ -922,6 +922,7 @@ class DatePickerDialog:
 
 from trading_modules.trading_window import is_trading_window_blocked
 from trading_modules.risk import calc_effective_max_sl, calc_effective_max_sl_ai
+from trading_modules.param_rules import validate_param_values
 from trading_modules.kronos_engine import fast_predict_scenarios
 from trading_modules.symbol_profile import symbol_tolerances
 from trading_modules.tick_resample import resample_ticks_to_s1
@@ -2777,6 +2778,13 @@ class KronosDesktopApp:
         )
         self.save_status_lbl.pack(fill=tk.X, pady=(2, 0))
 
+        # Kiểm tra thông số nhập (chỉ giao diện, không đổi luật giao dịch): ô sai tô đỏ, ô cần lưu ý tô cam, lý do hiện ngay dưới đây
+        self.param_issue_lbl = tk.Label(
+            save_card, text="", bg="#121722", fg="#ff6b6b", font=("Segoe UI", 7, "bold"),
+            justify=tk.LEFT, anchor="w", wraplength=300
+        )
+        self._install_param_validation()
+
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM Ở GIỮA MENU TRÁI (CO GIÃN TỰ NHIÊN)
         info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
         info_card.pack(fill=tk.BOTH, expand=True, pady=(4, 4))
@@ -3862,6 +3870,23 @@ class KronosDesktopApp:
         target_pk = "BTCUSD" if is_btc else "XAUUSD"
         test_lot = self.bt_lot_var.get().strip()
 
+        # Thông số Backtest sai / mâu thuẫn (ô tô đỏ): không chép sang bot live, yêu cầu nhập lại
+        try:
+            bt_cfg_chk = self._get_bt_cfg(target_pk)
+            bt_keys = set(self.bt_settings.get(target_pk, {})) | {"lot"}
+            bt_errs = [it["msg"] for it in validate_param_values(bt_cfg_chk)
+                       if it["level"] == "error" and bt_keys & set(it["keys"])]
+        except Exception:
+            bt_errs = []
+        if bt_errs:
+            messagebox.showwarning(
+                "Thông số Backtest chưa hợp lệ",
+                "Chưa áp dụng vào Bot Live. Vui lòng nhập lại các ô tô đỏ trong bảng Thông số Backtest:\n\n"
+                + "\n".join(f"• {m}" for m in bt_errs[:8]),
+                parent=self.root,
+            )
+            return
+
         changes = self._bt_collect_changes(target_pk)
         if not changes:
             self.show_toast(f"Cấu hình Backtest giống hệt Bot Live [{target_pk}], không có gì để áp dụng.", is_error=False, duration_ms=2500)
@@ -4092,6 +4117,11 @@ class KronosDesktopApp:
                   relief=tk.FLAT, padx=7, cursor="hand2", command=lambda: self._bt_import_settings_file(pk)).pack(side=tk.LEFT, padx=2)
         tk.Label(btns2, text="giữ lại / nạp lại bộ thông số Backtest", bg=PANEL_BG, fg=TEXT_MUTED,
                  font=("Segoe UI", 7, "italic")).pack(side=tk.LEFT, padx=6)
+        # Lý do ô sai (tô đỏ) / cần lưu ý (tô cam) của bảng Backtest; không có vấn đề thì ẩn
+        issue_box = tk.Frame(win, bg=PANEL_BG)
+        issue_box.pack(fill=tk.X, padx=10)
+        self._bt_issue_lbl = tk.Label(issue_box, text="", bg=PANEL_BG, fg="#ff6b6b", font=("Segoe UI", 8, "bold"),
+                                      justify=tk.LEFT, anchor="w", wraplength=500)
 
         outer = tk.Frame(win, bg=PANEL_BG)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -4107,6 +4137,7 @@ class KronosDesktopApp:
         win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
 
         self._bt_form_vars = {}
+        self._bt_form_widgets = {}
         for sec_num in (1, 2, 3, 4):
             title, keys = self.SETTINGS_SECTION_MAP[sec_num]
             shown = [k for k in keys if k in smap and k not in self.BT_EXCLUDED_KEYS and k not in self.BT_HIDDEN_KEYS]
@@ -4119,6 +4150,7 @@ class KronosDesktopApp:
                     self._bt_add_form_row(body, pk, key, smap.get(key), cfg.get(key))
                 except Exception as e:
                     self._write_file_log(f"[BACKTEST] Không dựng được ô {key}: {e}", is_error=True)
+        self._schedule_param_validation("bt", lambda: self._validate_bt_form(pk))
 
     BT_EXPORT_KIND = "kronos_backtest_settings"
 
@@ -4210,6 +4242,7 @@ class KronosDesktopApp:
             self._save_bt_settings()
             if key in ("analysis_tf", "tf"):
                 self._update_bt_tf_display()
+            self._schedule_param_validation("bt", lambda: self._validate_bt_form(pk))
 
         if spec["type"] == "bool":
             var = tk.BooleanVar(value=self._bt_to_bool(value))
@@ -4241,8 +4274,10 @@ class KronosDesktopApp:
                 cb.bind("<<ComboboxSelected>>", lambda e: _store(to_store()))
             else:
                 var = tk.StringVar(value="" if value is None else str(value))
-                tk.Entry(row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief=tk.FLAT,
-                         font=("Consolas", 8), width=12, justify="center").pack(side=tk.RIGHT)
+                ent = tk.Entry(row, textvariable=var, bg="#10141d", fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief=tk.FLAT,
+                               font=("Consolas", 8), width=12, justify="center")
+                ent.pack(side=tk.RIGHT)
+                self.__dict__.setdefault("_bt_form_widgets", {})[key] = ent
                 var.trace_add("write", lambda *_a: _store(var.get().strip()))
         self._bt_form_vars[key] = var
 
@@ -6302,6 +6337,25 @@ class KronosDesktopApp:
 
     def manual_save_user_settings(self):
         """Người dùng nhấn nút Lưu cài đặt: Ghi ra file, áp dụng ngay vào luồng Live + gọi lại Backend AI mà không cần restart app."""
+        # Có ô nhập sai / mâu thuẫn (tô đỏ): không lưu & áp dụng, yêu cầu nhập lại (chỉ giao diện)
+        try:
+            errs = self._validate_menu_settings()
+        except Exception:
+            errs = []
+        if errs:
+            if hasattr(self, "save_status_lbl"):
+                self.save_status_lbl.config(text=f"⛔ Chưa lưu: {len(errs)} ô nhập sai (tô đỏ)", fg="#ef4444")
+            self.log(f"[CÀI ĐẶT] ⛔ Chưa lưu: {len(errs)} thông số chưa hợp lệ -> " + " | ".join(errs[:5]))
+            try:
+                messagebox.showwarning(
+                    "Thông số chưa hợp lệ",
+                    "Chưa lưu cài đặt. Vui lòng nhập lại các ô tô đỏ:\n\n" + "\n".join(f"• {m}" for m in errs[:8])
+                    + (f"\n• ... và {len(errs) - 8} lỗi khác" if len(errs) > 8 else ""),
+                    parent=self.root,
+                )
+            except Exception:
+                pass
+            return
         saved_ok = self.save_user_settings(show_feedback=True)
         now_str = datetime.now().strftime("%H:%M:%S")
         if saved_ok:
@@ -8139,6 +8193,112 @@ class KronosDesktopApp:
         c.bind("<Button-1>", lambda e: self._hide_hover_note())
         c.pack(side=tk.LEFT, padx=(4, 0))
         return c
+
+    # ── KIỂM TRA THÔNG SỐ NHẬP (chỉ giao diện: tô màu ô, chặn nút Lưu / Áp dụng; luật ở trading_modules/param_rules.py) ──
+    PARAM_ERR_BG = "#7f1d1d"   # ô sai: nền đỏ
+    PARAM_WARN_BG = "#78350f"  # ô cần lưu ý: nền cam
+    PARAM_OK_BG = "#10141d"    # màu thường của ô nhập
+
+    def _install_param_validation(self):
+        """Mọi ô của Menu: gõ / tích / chọn là kiểm tra lại (gộp vào 1 lượt rảnh của Tk, không chạy theo từng phím)."""
+        try:
+            smap = self._get_settings_vars_map()
+        except Exception:
+            return  # không bao giờ làm hỏng việc dựng giao diện
+        for var in smap.values():
+            try:
+                var.trace_add("write", lambda *_a: self._schedule_param_validation())
+            except Exception:
+                pass
+        self._schedule_param_validation()
+
+    def _schedule_param_validation(self, slot: str = "menu", fn=None):
+        pending = self.__dict__.setdefault("_param_val_pending", set())
+        if slot in pending:
+            return
+        pending.add(slot)
+
+        def _run():
+            pending.discard(slot)
+            try:
+                (fn or self._validate_menu_settings)()
+            except Exception:
+                pass
+        try:
+            self.root.after_idle(_run)
+        except Exception:
+            pending.discard(slot)
+
+    def _paint_param_issues(self, issues, widget_of: dict):
+        """Tô ô nhập: lỗi = nền đỏ, cần lưu ý = nền cam, hợp lệ = màu thường. widget_of: khóa -> ô nhập (tk.Entry)."""
+        rank = {"error": 2, "warn": 1}
+        level_of = {}
+        for it in issues or []:
+            for k in it.get("keys", ()):
+                if rank.get(it.get("level"), 0) > rank.get(level_of.get(k), 0):
+                    level_of[k] = it.get("level")
+        best = {}  # nhiều khóa dùng chung 1 ô (fast_sl_cooldown_mins) -> lấy mức nặng nhất
+        for k, w in (widget_of or {}).items():
+            if not isinstance(w, tk.Entry):
+                continue
+            lv = level_of.get(k)
+            cur = best.get(id(w))
+            if cur is None or rank.get(lv, 0) > rank.get(cur[1], 0):
+                best[id(w)] = (w, lv)
+        for w, lv in best.values():
+            try:
+                if lv == "error":
+                    w.config(bg=self.PARAM_ERR_BG, fg="#ffffff")
+                elif lv == "warn":
+                    w.config(bg=self.PARAM_WARN_BG, fg="#ffffff")
+                else:
+                    w.config(bg=self.PARAM_OK_BG, fg=TEXT_MAIN)
+            except Exception:
+                pass
+
+    def _show_param_issue_text(self, lbl, issues, max_lines: int = 4):
+        """Ghi lý do lên nhãn lbl (lỗi trước, lưu ý sau); không có vấn đề thì ẩn nhãn."""
+        if lbl is None:
+            return
+        try:
+            errs = [it for it in (issues or []) if it.get("level") == "error"]
+            ordered = errs + [it for it in (issues or []) if it.get("level") != "error"]
+            if not ordered:
+                if lbl.winfo_manager():
+                    lbl.pack_forget()
+                return
+            lines = [("⛔ " if it.get("level") == "error" else "⚠️ ") + str(it.get("msg", "")) for it in ordered[:max_lines]]
+            if len(ordered) > max_lines:
+                lines.append(f"... và {len(ordered) - max_lines} mục khác")
+            lbl.config(text="\n".join(lines), fg=("#ff6b6b" if errs else "#fbbf24"))
+            if not lbl.winfo_manager():
+                lbl.pack(fill=tk.X, pady=(3, 0))
+        except Exception:
+            pass
+
+    def _validate_menu_settings(self) -> list:
+        """Kiểm tra thông số đang nhập trên Menu: tô màu ô, ghi lý do dưới nút Lưu. Trả danh sách câu báo LỖI (chặn nút Lưu)."""
+        smap = self._get_settings_vars_map()
+        cfg = {}
+        for k, v in smap.items():
+            try:
+                cfg[k] = v.get()
+            except Exception:
+                cfg[k] = ""
+        issues = validate_param_values(cfg)
+        if threading.current_thread() is threading.main_thread():
+            rows = self.__dict__.get("_param_rows", {})
+            self._paint_param_issues(issues, {k: rows[str(v)][1] for k, v in smap.items() if str(v) in rows})
+            self._show_param_issue_text(getattr(self, "param_issue_lbl", None), issues)
+        return [it["msg"] for it in issues if it["level"] == "error"]
+
+    def _validate_bt_form(self, pk: str) -> list:
+        """Kiểm tra cấu hình Backtest đang sửa: tô màu ô trong bảng Thông số Backtest. Trả danh sách câu báo LỖI."""
+        shown = set(self.__dict__.get("_bt_form_vars", {}))
+        issues = [it for it in validate_param_values(self._get_bt_cfg(pk)) if shown & set(it.get("keys", ()))]
+        self._paint_param_issues(issues, dict(self.__dict__.get("_bt_form_widgets", {})))
+        self._show_param_issue_text(getattr(self, "_bt_issue_lbl", None), issues, max_lines=5)
+        return [it["msg"] for it in issues if it["level"] == "error"]
 
     def _bind_param_children(self, parent_var, child_vars, numeric: bool = False):
         """Cây thông số (chỉ giao diện): thông số con thụt vào trong; khi thông số cha tắt
