@@ -328,6 +328,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khi tổng lãi/lỗ ĐÃ CHỐT trong ngày đang âm, bot đóng 1 lệnh đang lãi (chưa dời BE) có lãi >= phần lỗ cần gỡ, để gỡ vốn trước khi giá quay lại hòa vốn. Mỗi lần đóng cách nhau tối thiểu 20 giây.",
         "how_to_set": "- TẮT (Mặc định).\n- BẬT: ưu tiên gỡ vốn trong ngày; đổi lại có thể cắt sớm lệnh lẽ ra chạy tới TP. Mới kiểm thử phát lại 2 ngày, chưa đủ bằng chứng."
     },
+    "stack_half_be": {
+        "title": "Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+",
+        "what_is_it": "Khi số lệnh CÙNG CHIỀU chưa dời BE tăng lên n >= 2, bot chọn n/2 lệnh (làm tròn xuống) có giá vào XẤU NHẤT (BUY: giá cao nhất, SELL: giá thấp nhất) và cho các lệnh đó thoát ở hòa vốn: dời TP về Entry + 'Giá BE+', giá hồi về là đóng. Các lệnh giá đẹp giữ nguyên SL/TP để chạy tiếp.\n- 2 lệnh: thoát 1 lệnh xấu, giữ 1.\n- 3 lệnh: thoát lệnh xấu nhất, giữ 2.\n- 4 lệnh: thoát 2, giữ 2 (6 lệnh: thoát 3, giữ 3).\nChỉ chọn lại khi số lệnh TĂNG; lệnh xấu đóng xong không kéo theo lệnh khác.",
+        "how_to_set": "- TẮT (Mặc định).\n- BẬT: khi dùng nhồi lệnh (Số lệnh tối đa >= 2), nhất là chế độ 'Nhồi giá tốt hơn (DCA)'. Đổi lại: khi giá chạy thẳng tới TP, các lệnh bị chọn chỉ lãi khoảng BE+ thay vì đủ TP. Chưa kiểm chứng bằng phát lại nhiều ngày."
+    },
     "structure_direction": {
         "title": "Hướng vào lệnh theo cấu trúc đỉnh/đáy (Thử nghiệm)",
         "what_is_it": "Khi bật, hướng vào lệnh do cấu trúc đỉnh/đáy xoay M5 quyết định: sóng giảm thì BÁN khi giá hồi về kháng cự và bị từ chối, chỉ MUA khi giá phá đỉnh hồi (đổi cấu trúc); sóng tăng làm ngược lại; đi ngang thì không vào. AI Kronos vẫn phải xác nhận biên độ dự báo.",
@@ -543,6 +548,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "stack_half_be": False,
         "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
@@ -610,6 +616,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "stack_half_be": False,
         "structure_direction": False,
         "structure_conflict_mode": "neutral",
         "blocked_trading_windows": "",
@@ -2584,6 +2591,8 @@ class KronosDesktopApp:
         ).pack(fill=tk.X)
         self.basket_tp_usd_var = self._add_labeled_entry(sec3.content, "Chốt lời chùm lệnh ($, 0=Tắt):", "0", help_key="basket_tp_usd")
         self.basket_cooldown_mins_var = self._add_labeled_entry(sec3.content, "   Nghỉ sau chốt chùm (phút, 0=Tắt):", "15", help_key="basket_cooldown_mins")
+        self.stack_half_be_var = tk.BooleanVar(value=False)
+        self._add_checkbutton(sec3.content, "Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+", self.stack_half_be_var, help_key="stack_half_be")
         self.max_hold_mins_var = self._add_labeled_entry(sec3.content, "Giữ lệnh tối đa (phút, 0=Tắt):", "15", help_key="max_hold_mins")
         self.max_hold_action_var = self._add_labeled_combo(
             sec3.content, "   Xử lý khi vượt thời gian:",
@@ -6230,6 +6239,7 @@ class KronosDesktopApp:
             "use_confidence_gate": self.use_confidence_gate_var,
             "debug_trace": self.debug_trace_var,
             "recovery_close": self.recovery_close_var,
+            "stack_half_be": self.stack_half_be_var,
             "structure_direction": self.structure_direction_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
             "auto_be": self.auto_be_var,
@@ -6760,7 +6770,7 @@ class KronosDesktopApp:
     SETTINGS_SECTION_MAP = {
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
         2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
-        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close"]),
+        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
         4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close"]),
     }
@@ -10666,6 +10676,47 @@ class KronosDesktopApp:
         except Exception as e:
             self._write_file_log(f"[{pk}] Lỗi gỡ vốn (recovery_close): {e}", is_error=True)
 
+    def _stack_half_be_step(self, pk: str, symbol: str, positions: list, cfg: dict):
+        """Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+ (khóa stack_half_be, mặc định TẮT, người dùng chọn 19/11/2026).
+        Mỗi chiều: khi số lệnh cùng chiều CHƯA dời BE tăng lên n >= 2 -> chọn n//2 lệnh giá vào XẤU NHẤT (BUY: cao nhất,
+        SELL: thấp nhất) đưa vào cơ chế 'chờ về Entry+ thoát' sẵn có (pending_be_exit_tickets: vòng quản lý dời TP về
+        Entry+be_plus và đóng khi giá hồi về). Lệnh còn lại giữ nguyên. Chỉ chọn lại khi số lệnh TĂNG (lệnh xấu đóng xong
+        không kéo theo lệnh khác). Lỗi trong hàm không ảnh hưởng luồng chính."""
+        try:
+            ctx = self.profile_ctx[pk]
+            prev = ctx.setdefault("_stack_half_prev_n", {})
+            eps_eq = self._get_symbol_tolerances(symbol).get("eps_equal", 0.05)
+            try:
+                be_plus = max(float(cfg.get("be_plus_price", 5.0 if pk == "BTCUSD" else 0.2)), 0.0)
+            except (TypeError, ValueError):
+                be_plus = 5.0 if pk == "BTCUSD" else 0.2
+            pend = self.pending_be_exit_tickets
+            for is_buy in (True, False):
+                key = "BUY" if is_buy else "SELL"
+                side = [p for p in (positions or []) if (p.type == mt5.POSITION_TYPE_BUY) == is_buy
+                        and not self._is_pos_at_be(p, eps_eq)]
+                n = len(side)
+                prev_n = int(prev.get(key, 0) or 0)
+                prev[key] = n
+                if n < 2 or n <= prev_n:
+                    continue
+
+                def _marked(p):
+                    be_t = (p.price_open + be_plus) if is_buy else (p.price_open - be_plus)
+                    return p.ticket in pend or (p.tp > 0 and (abs(p.tp - be_t) < eps_eq or abs(p.tp - p.price_open) < eps_eq))
+
+                need = n // 2 - sum(1 for p in side if _marked(p))
+                if need <= 0:
+                    continue
+                cands = sorted((p for p in side if not _marked(p)), key=lambda p: p.price_open, reverse=is_buy)
+                keep_txt = ", ".join(f"{p.price_open:.2f}" for p in cands[need:])
+                for p in cands[:need]:
+                    pend.add(p.ticket)
+                    self.log(f"✂️ [{pk} - Nhồi lệnh {n} lệnh {key}] Lệnh #{p.ticket} giá xấu ({p.price_open:.2f}) -> chờ về "
+                             f"Entry+{be_plus:g} thoát; giữ các lệnh giá đẹp hơn{(': ' + keep_txt) if keep_txt else ''}")
+        except Exception as e:
+            self._write_file_log(f"[{pk}] Lỗi nhồi lệnh thoát nửa ở BE+ (stack_half_be): {e}", is_error=True)
+
     def _update_open_positions_and_manage(self, symbol: str, profile_key: str = None):
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
@@ -10680,6 +10731,8 @@ class KronosDesktopApp:
         positions = self._get_bot_positions(symbol, profile_key=pk)
         if positions and bool(cfg.get("recovery_close", False)):
             self._recovery_close_step(pk, symbol, positions, cfg)
+        if self._cfg_flag(cfg, "stack_half_be"):
+            self._stack_half_be_step(pk, symbol, positions, cfg)
 
         selected_tickets = [tree_widget.item(item, "values")[0] for item in tree_widget.selection()]
         target_rows = []
