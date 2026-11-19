@@ -67,6 +67,26 @@ class TestFakeBroker(unittest.TestCase):
         self.assertEqual(b.closed[0]["reason"], "TP")
         self.assertAlmostEqual(b.closed[0]["price_close"], 87.0)  # ask = 85 + 2 là tick đầu <= 88
 
+    def test_san_nghi_phien_tu_choi_moi_lenh_gui(self):
+        # MT5 thật: sàn nghỉ phiên (vàng ~1 giờ/ngày, không có tick) -> từ chối mở/đóng/sửa SL-TP (10018 Market closed).
+        # Trước đây sàn giả vẫn cho sửa SL/TP trong giờ nghỉ -> backtest khác live.
+        b, clk = make_broker([100.0] * 10)
+        clk.now = T0 + 1
+        r = b.order_send({"action": b.TRADE_ACTION_DEAL, "type": b.ORDER_TYPE_BUY, "volume": 0.01, "sl": 90.0, "tp": 120.0, "magic": 1})
+        self.assertEqual(r.retcode, b.TRADE_RETCODE_DONE)
+        clk.now = T0 + 9 + 30  # tick cuối cách 30s: sàn vẫn mở
+        ok = b.order_send({"action": b.TRADE_ACTION_SLTP, "position": r.order, "sl": 95.0, "tp": 120.0})
+        self.assertEqual(ok.retcode, b.TRADE_RETCODE_DONE)
+        clk.now = T0 + 9 + 3600  # 1 giờ không có tick: nghỉ phiên
+        for req in ({"action": b.TRADE_ACTION_SLTP, "position": r.order, "sl": 99.0, "tp": 120.0},
+                    {"action": b.TRADE_ACTION_DEAL, "position": r.order, "volume": 0.01, "type": b.ORDER_TYPE_SELL},
+                    {"action": b.TRADE_ACTION_DEAL, "type": b.ORDER_TYPE_SELL, "volume": 0.01, "sl": 110.0, "tp": 80.0, "magic": 1}):
+            res = b.order_send(req)
+            self.assertEqual(res.retcode, 10018)
+            self.assertIn("market closed", res.comment.lower())  # bot live nhận diện nghỉ phiên qua chữ này
+        self.assertEqual(b.positions[0].sl, 95.0)  # SL/TP không bị sửa trong giờ nghỉ
+        self.assertEqual(len(b.positions), 1)
+
     def test_sua_sltp_sai_phia_bi_tu_choi(self):
         b, clk = make_broker([100.0] * 10)
         clk.now = T0 + 1

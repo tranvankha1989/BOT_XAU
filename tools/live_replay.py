@@ -157,6 +157,8 @@ class FakeBroker:
     COPY_TICKS_ALL = -1
     TRADE_RETCODE_DONE, TRADE_RETCODE_INVALID_STOPS, TRADE_RETCODE_INVALID_FILL = 10009, 10016, 10030
     TRADE_RETCODE_INVALID_VOLUME, TRADE_RETCODE_POSITION_CLOSED = 10014, 10036
+    TRADE_RETCODE_MARKET_CLOSED = 10018
+    MARKET_CLOSED_GAP_SEC = 60.0  # không có tick mới quá 60s = sàn nghỉ phiên (vàng: nghỉ ~1 giờ mỗi ngày)
     SYMBOL_FILLING_FOK, SYMBOL_FILLING_IOC = 1, 2
 
     def __init__(self, symbol: str, sym_info: dict, ticks_ms, bids, asks, rates_by_tf: dict, clock: SimClock,
@@ -292,8 +294,10 @@ class FakeBroker:
 
     def order_send(self, req):
         c = self._cur()
-        if c is None:
-            return self._result(10018, "Market closed")
+        # MT5 thật từ chối MỌI lệnh gửi (mở/đóng/sửa SL-TP) khi sàn nghỉ phiên: trước đây sàn giả vẫn cho sửa -> khác live
+        if c is None or self.clock.now - c[3] / 1000.0 > self.MARKET_CLOSED_GAP_SEC:
+            self.rejects.append((self.clock.now, "MARKET_CLOSED", req.get("position"), req.get("sl"), req.get("tp"), None, None))
+            return self._result(self.TRADE_RETCODE_MARKET_CLOSED, "Market closed")
         _, bid, ask, ms = c
         act = req.get("action")
         if act == self.TRADE_ACTION_SLTP:
