@@ -4169,7 +4169,7 @@ class KronosDesktopApp:
         Cùng dạng file cấu hình của app ({"profiles": {pk: {...}}}) nên dùng được với tools/live_replay.py --config."""
         try:
             cfg = self._get_bt_cfg(pk)
-            for k in self.BT_SECRET_KEYS:
+            for k in self.BT_SECRET_KEYS + self.MACHINE_LOCAL_KEYS:  # không token, không thông số riêng máy
                 cfg.pop(k, None)
             parent = self._bt_dialog_parent()
             file_path = filedialog.asksaveasfilename(
@@ -6365,6 +6365,43 @@ class KronosDesktopApp:
             self.log(f"[CÀI ĐẶT] ⚠️ Không thể lưu cài đặt ({now_str}).")
             self.show_toast("Không thể lưu file cài đặt!", is_error=True, duration_ms=3000)
 
+    # Thông số riêng từng máy: KHÔNG chép khi Xuất / Nhập file cấu hình (người dùng yêu cầu 19/11, tránh đè dữ liệu máy khác):
+    # Magic, đường dẫn MT5, số luồng AI (Mục 1) và toàn bộ Mục 5 Telegram (mỗi máy giữ bot / nhóm Telegram riêng)
+    MACHINE_LOCAL_KEYS = ("magic_number", "mt5_path", "ai_threads",
+                          "telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_notify_open", "telegram_notify_close")
+    # Trạng thái riêng từng máy (tab đang mở, chiều cao bảng dưới, bot đang chạy tự động để bật lại sau cập nhật): cũng không chép
+    MACHINE_LOCAL_STATE_KEYS = ("last_active_tab", "bottom_panel_height", "auto_running_profiles")
+
+    @classmethod
+    def _strip_machine_local(cls, data: dict) -> dict:
+        """Bản sao cấu hình đã bỏ thông số / trạng thái riêng từng máy (ở cấp ngoài và trong từng profiles)."""
+        drop = set(cls.MACHINE_LOCAL_KEYS) | set(cls.MACHINE_LOCAL_STATE_KEYS)
+        out = {k: v for k, v in data.items() if k not in drop}
+        profs = data.get("profiles")
+        if isinstance(profs, dict):
+            out["profiles"] = {pk: ({k: v for k, v in p.items() if k not in cls.MACHINE_LOCAL_KEYS} if isinstance(p, dict) else p)
+                               for pk, p in profs.items()}
+        return out
+
+    @classmethod
+    def _merge_machine_local(cls, imported: dict, local: dict) -> dict:
+        """Cấu hình nhập từ file, nhưng thông số / trạng thái riêng máy lấy theo máy này (local = cài đặt đang lưu của máy này).
+        Máy này chưa có giá trị thì bỏ khóa (nạp sẽ dùng mặc định), không bao giờ lấy giá trị của máy khác."""
+        out = cls._strip_machine_local(imported)
+        local = local if isinstance(local, dict) else {}
+        for k in cls.MACHINE_LOCAL_KEYS + cls.MACHINE_LOCAL_STATE_KEYS:
+            if k in local:
+                out[k] = local[k]
+        lprofs = local.get("profiles") if isinstance(local.get("profiles"), dict) else {}
+        oprofs = out.get("profiles") if isinstance(out.get("profiles"), dict) else {}
+        for pk, p in oprofs.items():
+            lp = lprofs.get(pk)
+            if isinstance(p, dict) and isinstance(lp, dict):
+                for k in cls.MACHINE_LOCAL_KEYS:
+                    if k in lp:
+                        p[k] = lp[k]
+        return out
+
     def export_settings_file(self):
         """Xuất toàn bộ cấu hình 2 Tab ra file .json để sao lưu hoặc đồng bộ sang máy khác/VPS."""
         try:
@@ -6387,6 +6424,7 @@ class KronosDesktopApp:
                     "last_active_tab": self.active_profile_key,
                     "profiles": dict(self.profile_settings)
                 }
+            data = self._strip_machine_local(data)  # không xuất Magic / đường dẫn MT5 / số luồng AI / trạng thái riêng máy
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -6412,6 +6450,17 @@ class KronosDesktopApp:
 
             if not isinstance(imported_data, dict):
                 raise ValueError("Định dạng file không hợp lệ (không phải đối tượng JSON).")
+
+            # Giữ Magic / đường dẫn MT5 / số luồng AI / trạng thái riêng của MÁY NÀY (file từ máy khác không được đè)
+            self.save_user_settings(show_feedback=False)
+            local_data = {}
+            if os.path.exists(SETTINGS_FILE):
+                try:
+                    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        local_data = json.load(f)
+                except Exception:
+                    local_data = {}
+            imported_data = self._merge_machine_local(imported_data, local_data)
 
             os.makedirs(SETTINGS_DIR, exist_ok=True)
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
