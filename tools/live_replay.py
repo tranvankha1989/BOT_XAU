@@ -584,6 +584,35 @@ def install_ai_cache(app, cache):
     app._fast_predict_scenarios = cached
 
 
+def install_fetch_memo(app, broker):
+    """fetch_mt5_candles(include_forming=False) chỉ đổi khi có nến đóng mới hoặc nến mới có tick đầu tiên. Vòng nến của live
+    gọi nó mỗi 2 giây -> dựng lại DataFrame pandas (~4ms) hàng chục nghìn lần/ngày. Dùng lại kết quả (trả BẢN SAO) khi khóa
+    (khung, số nến, số nến đã đóng, có nến đang chạy) chưa đổi: code bot nhận dữ liệu y hệt, chỉ nhanh hơn."""
+    real = app.fetch_mt5_candles
+    memo = {}
+
+    def fetch(symbol, timeframe_str, count, include_forming=False):
+        tf_sec = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600}.get(str(timeframe_str))
+        arr = broker.rates.get(tf_sec) if tf_sec else None
+        if include_forming or arr is None or len(arr) == 0:
+            return real(symbol, timeframe_str, count, include_forming=include_forming)
+        now = broker.clock.now
+        n_closed = int(np.searchsorted(arr["time"], now - tf_sec, side="right"))
+        fs = int(now // tf_sec) * tf_sec
+        has_forming = broker._idx(now) + 1 > int(np.searchsorted(broker.ms, fs * 1000, side="left"))
+        key = (str(symbol), tf_sec, int(count), n_closed, bool(has_forming))
+        hit = memo.get(key)
+        if hit is None:
+            hit = real(symbol, timeframe_str, count, include_forming=False)
+            if hit is None:
+                return None
+            if len(memo) > 64:
+                memo.clear()
+            memo[key] = hit
+        return hit.copy()
+    app.fetch_mt5_candles = fetch
+
+
 # ───────────────────────── Vòng phát lại ─────────────────────────
 class Replayer:
     """Điều phối 2 vòng của live trên đồng hồ phát lại.
@@ -697,6 +726,8 @@ class Replayer:
                 if pct != last_pct and pct % self.progress_step == 0:
                     last_pct = pct
                     self.progress(pct, t)
+            # KHÔNG bỏ qua giờ nghỉ phiên khi đang có lệnh mở: live vẫn thử sửa lệnh mỗi 15s và bị sàn từ chối, các lần thất bại
+            # để lại trạng thái (vd chờ thoát ở Entry+0.35) -> bỏ qua thì kết quả khác live (đã thử 19/11: lệnh #100016 lệch 1.2$).
             if not self._busy():
                 # Nhàn rỗi (không lệnh mở, không vùng canh, không phân tích): các hàm vòng tick không làm gì ->
                 # nhảy tới lần vòng nến phát hiện nến phân tích kế tiếp (mốc đóng nến + detect_delay)
@@ -851,7 +882,7 @@ class _AttrPatch:
 # ───────────────────────── Báo cáo ─────────────────────────
 def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc: float, capital: float = 1000.0,
              seed: int = 1, ai_latency: float = 8.5, detect_delay: float = 1.6, use_cache: bool = True, progress=None,
-             progress_step: int = 5, on_data=None, event_path: str = None) -> dict:
+             progress_step: int = 5, on_data=None, event_path: str = None, keep_trace: bool = False) -> dict:
     """Phát lại CHÍNH code bot live trên tick MT5 (chỉ đọc). cfg đã được nạp và ghi đè (rb.load_strategy_cfg + --set).
     Trả dict: closed (lệnh đã đóng, có cả lệnh đóng cuối kỳ), rejects, logs, errors, n_analyses, cache, end_utc.
     progress(pct, t_sec, n_closed, n_analyses, cache) được gọi định kỳ nếu có."""
@@ -860,6 +891,10 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
     cfg["engine"] = "Chạy trực tiếp máy Local"       # AI chạy trên máy này (cùng mô hình)
     cfg["telegram_enabled"] = False
     cfg["symbol"] = symbol
+    if not keep_trace:
+        # debug_trace chỉ ghi nhật ký chẩn đoán (không đổi luật). Bật ở live thì backtest ghi nối vào 1 file trace/ngày dùng chung
+        # cho mọi lần chạy lại -> file phình (28MB) và mỗi lần ghi mất ~0.5s (75% thời gian chạy). Muốn có: --set debug_trace=True
+        cfg["debug_trace"] = False
     cache_root = os.path.join(bot_mod.SETTINGS_DIR, "replay_cache")
     print("[*] Đang đọc tick + nến từ MT5 (chỉ đọc, có cache)...")
     sym_info, ms, bid, ask, rates = load_market_data(symbol, start_utc, end_utc, cache_dir=cache_root)
@@ -880,6 +915,7 @@ def simulate(bot_mod, pk: str, cfg: dict, symbol: str, start_utc: float, end_utc
     cache = ScenarioCache(os.path.join(bot_mod.SETTINGS_DIR, "bt_ai_cache")) if use_cache else None
     if cache is not None:
         install_ai_cache(app, cache)
+    install_fetch_memo(app, broker)
     stream = EventStream(event_path, broker, app, pk, logs, symbol) if event_path else None
     if stream is not None:
         def _capture_ui(profile_key, df_live_scalp, df_live_ana, scenarios, mean_df, sig_title, sig_color, detail_text,
@@ -1196,7 +1232,8 @@ def main(argv=None) -> int:
         bot_mod.KronosDesktopApp._cancel_pending_for_new_scan = lambda self, pk: None
         print("[*] So sánh       : TẮT hủy lệnh chờ cũ khi nến mới (--no-cancel-pending)")
     res = simulate(bot_mod, pk, cfg, symbol, start_utc, end_utc, capital=args.capital, seed=args.seed,
-                   ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress)
+                   ai_latency=args.ai_latency, detect_delay=args.detect_delay, progress=progress,
+                   keep_trace=any(str(x).strip().startswith("debug_trace=") for x in args.set))
     closed, logs, errors, rejects = res["closed"], res["logs"], res["errors"], res["rejects"]
     n_analyses, cache, end_utc = res["n_analyses"], res["cache"], res["end_utc"]
 
