@@ -129,5 +129,73 @@ class TestBtSettings(Base):
         self.assertEqual(app._bt_show_val("rev_loss_mode", "wait_be", var), "Chờ hồi về Entry")
 
 
+class TestBtSettingsFile(Base):
+    """Nút 💾 Lưu ra file / 📂 Mở file trong bảng Thông số Backtest: giữ lại và nạp lại bộ thông số, không đụng bot live."""
+
+    def _app(self):
+        app = make_app(lot="0.03")
+        app.show_toast = mock.Mock()
+        app.log = mock.Mock()
+        app._update_bt_tf_display = mock.Mock()
+        app._refresh_bt_settings_window = mock.Mock()
+        return app
+
+    def test_export_then_import_roundtrip_without_touching_live(self):
+        app = self._app()
+        app._get_bt_cfg(PK)
+        app.bt_settings[PK]["max_hold_mins"] = "15"
+        path = os.path.join(self.tmp, "bt_saved.json")
+        with mock.patch.object(b.filedialog, "asksaveasfilename", return_value=path):
+            app._bt_export_settings_file(PK)
+        with open(path, encoding="utf-8") as f:
+            prof = json.load(f)["profiles"][PK]
+        self.assertEqual(prof["max_hold_mins"], "15")
+        self.assertEqual(prof["lot"], "0.03")  # file giữ cả Lot của thanh Backtest
+        for k in ("hf_token", "telegram_bot_token", "telegram_chat_id"):
+            self.assertNotIn(k, prof)  # không bao giờ ghi token ra file
+        app.bt_settings[PK]["max_hold_mins"] = "30"
+        app.bt_lot_var.set("0.10")
+        with mock.patch.object(b.filedialog, "askopenfilename", return_value=path),                 mock.patch.object(b.messagebox, "askyesno", return_value=True):
+            app._bt_import_settings_file(PK)
+        self.assertEqual(app._get_bt_cfg(PK)["max_hold_mins"], "15")  # về đúng bộ đã lưu
+        self.assertEqual(app.bt_lot_var.get(), "0.03")
+        self.assertEqual(self.saved()[PK]["max_hold_mins"], "15")
+        self.assertEqual(app.profile_settings[PK]["max_hold_mins"], "10")  # bot live không đổi
+        app._refresh_bt_settings_window.assert_called_once()
+
+    def test_import_live_export_drops_secrets_and_hidden_keys(self):
+        app = self._app()
+        path = os.path.join(self.tmp, "live_export.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"last_active_tab": PK, "profiles": {PK: {"consensus": "80", "hf_token": "X", "telegram_bot_token": "Y",
+                                                                "trend_filter": True, "magic_number": "1"}}}, f)
+        with mock.patch.object(b.filedialog, "askopenfilename", return_value=path),                 mock.patch.object(b.messagebox, "askyesno", return_value=True):
+            app._bt_import_settings_file(PK)
+        st = app.bt_settings[PK]
+        self.assertEqual(st["consensus"], "80")
+        for k in ("hf_token", "telegram_bot_token", "trend_filter", "magic_number"):
+            self.assertNotIn(k, st)
+        self.assertFalse(app._get_bt_cfg(PK).get("trend_filter"))  # lọc cấu trúc đã ẩn: vẫn tắt
+
+    def test_import_wrong_profile_or_cancel_changes_nothing(self):
+        app = self._app()
+        app._get_bt_cfg(PK)
+        before = dict(app.bt_settings[PK])
+        path = os.path.join(self.tmp, "btc_only.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"profiles": {"BTCUSD": {"consensus": "90"}}}, f)
+        with mock.patch.object(b.filedialog, "askopenfilename", return_value=path):
+            app._bt_import_settings_file(PK)
+        self.assertEqual(app.bt_settings[PK], before)
+        app.show_toast.assert_called()
+        with mock.patch.object(b.filedialog, "askopenfilename", return_value=""):
+            app._bt_import_settings_file(PK)  # bấm Hủy
+        with mock.patch.object(b.filedialog, "askopenfilename", return_value=os.path.join(self.tmp, "bt_x.json")),                 mock.patch.object(b.messagebox, "askyesno", return_value=False):
+            with open(os.path.join(self.tmp, "bt_x.json"), "w", encoding="utf-8") as f:
+                json.dump({"profiles": {PK: {"consensus": "99"}}}, f)
+            app._bt_import_settings_file(PK)  # không đồng ý nạp
+        self.assertEqual(app.bt_settings[PK], before)
+
+
 if __name__ == "__main__":
     unittest.main()

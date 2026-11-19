@@ -4077,6 +4077,14 @@ class KronosDesktopApp:
                   relief=tk.FLAT, padx=7, cursor="hand2", command=self._apply_bt_settings_to_menu).pack(side=tk.LEFT, padx=2)
         tk.Button(btns, text="Đóng", bg="#232d3f", fg=TEXT_MUTED, font=("Segoe UI", 8),
                   relief=tk.FLAT, padx=7, cursor="hand2", command=win.destroy).pack(side=tk.RIGHT, padx=2)
+        btns2 = tk.Frame(win, bg=PANEL_BG)
+        btns2.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Button(btns2, text="💾 Lưu ra file...", bg="#2a2440", fg="#c4b5fd", font=("Segoe UI", 8, "bold"),
+                  relief=tk.FLAT, padx=7, cursor="hand2", command=lambda: self._bt_export_settings_file(pk)).pack(side=tk.LEFT, padx=2)
+        tk.Button(btns2, text="📂 Mở file...", bg="#2a2440", fg="#c4b5fd", font=("Segoe UI", 8, "bold"),
+                  relief=tk.FLAT, padx=7, cursor="hand2", command=lambda: self._bt_import_settings_file(pk)).pack(side=tk.LEFT, padx=2)
+        tk.Label(btns2, text="giữ lại / nạp lại bộ thông số Backtest", bg=PANEL_BG, fg=TEXT_MUTED,
+                 font=("Segoe UI", 7, "italic")).pack(side=tk.LEFT, padx=6)
 
         outer = tk.Frame(win, bg=PANEL_BG)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -4104,6 +4112,86 @@ class KronosDesktopApp:
                     self._bt_add_form_row(body, pk, key, smap.get(key), cfg.get(key))
                 except Exception as e:
                     self._write_file_log(f"[BACKTEST] Không dựng được ô {key}: {e}", is_error=True)
+
+    BT_EXPORT_KIND = "kronos_backtest_settings"
+
+    def _bt_dialog_parent(self):
+        """Cửa sổ cha cho hộp chọn file: bảng Thông số Backtest nếu còn mở, không thì cửa sổ chính."""
+        win = getattr(self, "_bt_cfg_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                return win
+        except Exception:
+            pass
+        return getattr(self, "root", None)
+
+    def _bt_export_settings_file(self, pk: str):
+        """Lưu bộ thông số Backtest của pk ra file .json (KHÔNG có token) để giữ lại / dùng lại sau.
+        Cùng dạng file cấu hình của app ({"profiles": {pk: {...}}}) nên dùng được với tools/live_replay.py --config."""
+        try:
+            cfg = self._get_bt_cfg(pk)
+            for k in self.BT_SECRET_KEYS:
+                cfg.pop(k, None)
+            parent = self._bt_dialog_parent()
+            file_path = filedialog.asksaveasfilename(
+                parent=parent, title=f"Lưu cấu hình Backtest [{pk}] ra file", defaultextension=".json",
+                initialfile=f"backtest_{pk}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")])
+            if not file_path:
+                return
+            data = {"kind": self.BT_EXPORT_KIND, "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "last_active_tab": pk, "profiles": {pk: cfg}}
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            self.log(f"[BACKTEST] Đã lưu cấu hình Backtest [{pk}] ra file: {file_path}")
+            self.show_toast(f"Đã lưu cấu hình Backtest: {os.path.basename(file_path)}", is_error=False, duration_ms=2500)
+        except Exception as e:
+            self._write_file_log(f"[BACKTEST] Lỗi lưu file cấu hình Backtest: {e}", is_error=True)
+            self.show_toast(f"Lỗi lưu file cấu hình Backtest: {e}", is_error=True, duration_ms=3500)
+
+    def _bt_import_settings_file(self, pk: str):
+        """Nạp bộ thông số [pk] từ file .json vào cấu hình Backtest: file đã lưu bằng nút 'Lưu ra file' HOẶC file cấu hình
+        xuất từ menu live. Chỉ thay cấu hình BACKTEST (không đụng bot live), bỏ token và các khóa không thuộc backtest."""
+        try:
+            parent = self._bt_dialog_parent()
+            file_path = filedialog.askopenfilename(parent=parent, title=f"Mở file cấu hình cho Backtest [{pk}]",
+                                                   filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")])
+            if not file_path:
+                return
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            prof = None
+            if isinstance(data, dict):
+                profs = data.get("profiles")
+                if isinstance(profs, dict):
+                    prof = profs.get(pk)
+                elif "analysis_tf" in data or "consensus" in data:  # file chỉ có 1 bộ thông số
+                    prof = data
+            if not isinstance(prof, dict) or not prof:
+                self.show_toast(f"File không có cấu hình [{pk}]: {os.path.basename(file_path)}", is_error=True, duration_ms=3500)
+                return
+            new = {k: v for k, v in self._bt_filter_cfg(prof).items() if k not in self.BT_SECRET_KEYS and k not in self.BT_HIDDEN_KEYS}
+            if not messagebox.askyesno(
+                    "Nạp cấu hình Backtest",
+                    f"Nạp {len(new)} thông số [{pk}] từ file:\n{os.path.basename(file_path)}\n\n"
+                    f"Chỉ thay cấu hình BACKTEST, KHÔNG thay đổi bot live.", parent=parent):
+                return
+            self._get_bt_cfg(pk)  # bảo đảm đã nạp cấu hình backtest hiện có
+            self.bt_settings[pk] = new
+            self._save_bt_settings()
+            lot = prof.get("lot")
+            if lot not in (None, "") and hasattr(self, "bt_lot_var"):
+                self.bt_lot_var.set(str(lot))
+            try:
+                self._update_bt_tf_display()
+            except Exception:
+                pass
+            self._refresh_bt_settings_window()
+            self.log(f"[BACKTEST] Đã nạp {len(new)} thông số Backtest [{pk}] từ file: {file_path}")
+            self.show_toast(f"Đã nạp cấu hình Backtest từ {os.path.basename(file_path)}", is_error=False, duration_ms=2500)
+        except Exception as e:
+            self._write_file_log(f"[BACKTEST] Lỗi nạp file cấu hình Backtest: {e}", is_error=True)
+            self.show_toast(f"Lỗi nạp file cấu hình Backtest: {e}", is_error=True, duration_ms=3500)
 
     def _bt_add_form_row(self, parent, pk: str, key: str, live_var, value):
         spec = self._bt_param_spec(key, live_var)
