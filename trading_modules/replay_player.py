@@ -14,6 +14,7 @@ Trình PHÁT LẠI backtest dạng nến (kiểu TradingView Replay) cho tab Bac
 """
 import math
 import time
+from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -158,6 +159,8 @@ class ReplayPlayer:
         self._closed = False
         self._last_idx = -1
         self.focus_ticket = None  # lệnh đang được tô (bấm trong sổ lệnh) - chỉ xem, không đổi thời điểm phát
+        self._fr_samples = deque(maxlen=400)  # (giờ thật, mốc đã tính) để đo tốc độ tính của tiến trình backtest
+        self.eff_speed = float(self.speed)
 
         if self.embedded:
             self.win = tk.Frame(parent, bg=self.BG)
@@ -303,6 +306,8 @@ class ReplayPlayer:
             self._zone_t = np.array([float(e.get("t", 0.0)) for e in self.zones])
         if ch_log:
             self._log_t = np.array([x[0] for x in self.logs])
+        if self.live and not self.finished and self.frontier is not None:
+            self._fr_samples.append((time.perf_counter(), float(self.frontier)))
         if ch_ai and not self.hdr.winfo_ismapped():
             try:
                 self.hdr.pack(fill=tk.X, before=self.info_lbl.master)
@@ -313,7 +318,20 @@ class ReplayPlayer:
     def set_frontier(self, t: float):
         if self.live and not self.finished and t is not None and (self.frontier is None or t > self.frontier):
             self.frontier = float(t)
+            self._fr_samples.append((time.perf_counter(), self.frontier))
             self._mark()
+
+    def compute_rate(self, window: float = 20.0) -> float:
+        """Tốc độ tính của tiến trình backtest (giây biểu đồ / giây thật) trong ~20 giây gần nhất; 0 nếu chưa đủ mẫu."""
+        smp = self._fr_samples
+        if len(smp) < 2:
+            return 0.0
+        now = time.perf_counter()
+        while len(smp) > 2 and now - smp[0][0] > window:
+            smp.popleft()
+        (w0, f0), (w1, f1) = smp[0], smp[-1]
+        span = max(now - w0, w1 - w0)
+        return max(0.0, (f1 - f0) / span) if span >= 2.0 else 0.0
 
     def finish(self, end_utc: float = None):
         """Tiến trình đã tính xong (hoặc dừng): bỏ giới hạn mốc đã tính; end_utc mới khi bị dừng giữa chừng."""
@@ -480,7 +498,20 @@ class ReplayPlayer:
         if self.playing:
             lim = self._limit()
             prev = self.t
-            self.t = lim if self.speed >= SPEED_MAX else min(lim, self.t + dt * self.speed)
+            sp = float(self.speed)
+            if not self.finished and self.speed < SPEED_MAX:
+                # Tốc độ chọn nhanh hơn tốc độ tính: còn nhiều phần đã tính sẵn (>= 10 giây thật) thì chạy đúng tốc độ chọn,
+                # sắp hết thì chạy theo tốc độ tính (hơi chậm hơn để có đệm) -> biểu đồ chạy ĐỀU, không chạy-đứng-giật
+                rate = self.compute_rate()
+                if rate > 0.0 and sp > rate and (lim - self.t) < sp * 10.0:
+                    sp = max(1.0, rate * 0.9)
+            self.eff_speed = sp
+            self.t = lim if self.speed >= SPEED_MAX else min(lim, self.t + dt * sp)
+            if len(self.sec):
+                # Giờ nghỉ phiên (không có giá > 60 giây, vd vàng 05:00-06:00): nhảy qua, không phát biểu đồ trống
+                j = int(np.searchsorted(self.sec, self.t, side="right"))
+                if 0 < j < len(self.sec) and float(self.sec[j]) - self.t > 60.0 and self.t - float(self.sec[j - 1]) > 2.0:
+                    self.t = min(float(self.sec[j]) - 0.5, lim)
             was_waiting = self.waiting
             self.waiting = (not self.finished) and self.t >= lim - 1e-6
             if self.finished and self.t >= self.end_utc:
@@ -812,6 +843,8 @@ class ReplayPlayer:
             info += f"  |  🧠 đã tính tới {vn_str(self.frontier, '%d/%m %H:%M:%S')}"
             if self.waiting and self.playing:
                 info += "  ⏳ chờ AI tính..."
+            elif self.playing and self.speed < SPEED_MAX and self.eff_speed < self.speed - 0.5:
+                info += f"  ▶ đang chạy ~{self.eff_speed:.0f}x theo tốc độ tính"
         self.info_lbl.config(text=info)
         frac = (self.t - self.start_utc) / max(self.end_utc - self.start_utc, 1.0)
         self._slider_lock = True

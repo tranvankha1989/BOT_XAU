@@ -183,6 +183,38 @@ class TestPlayerLive(unittest.TestCase):
         self.assertIsNone(p.focus_ticket)
         p.close()
 
+    def test_skip_market_break_gap(self):
+        # Giờ nghỉ phiên (không có giá 1 giờ): đang phát thì nhảy qua, không chạy biểu đồ trống
+        a, b2 = series(600), series(600, T0 + 4200)
+        data = {k: np.r_[a[k], b2[k]] for k in a}
+        p = rp.ReplayPlayer(self.root, data, [], [], T0 + 60, T0 + 4800)
+        p.seek(T0 + 595)
+        p.set_speed("10x")
+        p.play()
+        p._last = time.perf_counter() - 1.0
+        p._tick()
+        self.assertGreater(p.t, T0 + 4100)  # đã nhảy tới sát giờ mở phiên
+        self.assertLess(p.t, T0 + 4200)
+        p.close()
+
+    def test_smooth_speed_follows_compute_rate(self):
+        # Chọn 600x nhưng tiến trình chỉ tính ~50x và còn ít phần tính sẵn -> chạy đều ~45x thay vì chạy-đứng
+        p = rp.ReplayPlayer(self.root, series(), [], [], T0 + 60, T0 + 3500, live=True)
+        p.set_speed("600x")
+        now = time.perf_counter()
+        p.frontier = T0 + 600
+        p._fr_samples.extend([(now - 10.0, T0 + 100.0), (now, T0 + 600.0)])
+        self.assertAlmostEqual(p.compute_rate(), 50.0, delta=2.0)
+        p.seek(T0 + 500)
+        p.play()
+        p._last = time.perf_counter() - 1.0
+        p._tick()
+        self.assertAlmostEqual(p.eff_speed, 45.0, delta=2.0)
+        self.assertAlmostEqual(p.t, T0 + 545, delta=3.0)
+        p.render()
+        self.assertIn("theo tốc độ tính", p.info_lbl.cget("text"))
+        p.close()
+
     def test_busy_ui_keeps_real_speed(self):
         # App bận (nhịp vẽ cách nhau 1 giây): 10x vẫn phải tiến ~10 giây biểu đồ, không bị chặn 0.25s/nhịp như trước
         p = rp.ReplayPlayer(self.root, series(), [], [], T0 + 60, T0 + 3500)
