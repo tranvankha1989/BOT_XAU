@@ -23,6 +23,7 @@ PARAM_NAMES = {
     "sl_buffer": "Giá an toàn vào SL",
     "max_sl_price": "SL tối đa",
     "rr": "Tỷ lệ R:R",
+    "min_real_rr": "RR thật tối thiểu",
     "min_entry_spacing": "Khoảng cách nhồi tối thiểu",
     "be_trigger_r": "Mức kích hoạt dời SL về Entry",
     "be_plus_price": "Giá lãi nhỏ cộng vào Entry (BE+)",
@@ -58,6 +59,7 @@ NUMERIC_RULES = {
     "sl_buffer": ("float", 0.0, True, None),
     "max_sl_price": ("float", 0.0, True, None),
     "rr": ("float", 0.0, True, None),
+    "min_real_rr": ("float", 0.0, True, None),
     "min_entry_spacing": ("float", 0.0, True, None),
     "be_trigger_r": ("float", 0.0, False, None),
     "be_plus_price": ("float", 0.0, True, None),
@@ -212,12 +214,16 @@ def _conflict_issues(cfg: dict, vals: dict) -> list:
     if mcl is not None and mcl > 0 and cdm is not None and cdm == 0:
         out.append(_issue("warn", ("cooldown_mins", "max_consec_loss"),
                           f"Thua liên tiếp {mcl:g} lệnh nhưng Thời gian tạm ngừng = 0: bot sẽ KHÔNG tạm nghỉ (tính năng như tắt)."))
-    # SL AI = max(ATR x hệ số, sàn) + Giá an toàn -> Giá an toàn >= SL tối đa thì mọi tín hiệu đều vượt trần
+    # SL tối đa đo tới SL AI; SL thật = SL AI + Giá an toàn. TP theo AI (R:R = 0) không giãn theo Giá an toàn, SL tối đa có thể bị chia đôi
+    # -> Giá an toàn >= 1/2 SL tối đa thì RR thật có thể < 1 (TP gần hơn SL thật). R:R > 0 (TP tính từ SL thật) hoặc bật RR thật tối thiểu thì không lo.
     buf, msl = vals.get("sl_buffer"), vals.get("max_sl_price")
-    if buf is not None and msl is not None and msl > 0 and buf >= msl:
+    rr_v, mrr = vals.get("rr"), vals.get("min_real_rr")
+    if (buf is not None and msl is not None and msl > 0 and buf >= msl / 2.0
+            and not (rr_v is not None and rr_v > 0) and not (mrr is not None and mrr > 0)):
         out.append(_issue("warn", ("sl_buffer", "max_sl_price"),
-                          f"Giá an toàn vào SL ({buf:g}) không nhỏ hơn SL tối đa ({msl:g}): SL của AI luôn vượt trần, "
-                          f"bot chỉ còn vào lệnh khi giá hồi về vùng canh, rất ít lệnh."))
+                          f"Giá an toàn vào SL ({buf:g}) >= 1/2 SL tối đa ({msl:g}) khi TP theo AI: SL thật = SL AI + Giá an toàn, "
+                          f"TP AI không giãn theo, lệnh có thể có TP gần hơn SL thật (RR thật < 1). "
+                          f"Nên giảm Giá an toàn hoặc đặt RR thật tối thiểu (ví dụ 1.5)."))
     rc, rbc = vals.get("rev_consensus"), vals.get("rev_be_consensus")
     if _is_on(cfg, "auto_rev_close") and rc is not None and rbc is not None and 0 < rbc < rc:
         out.append(_issue("warn", ("rev_be_consensus", "rev_consensus"),
