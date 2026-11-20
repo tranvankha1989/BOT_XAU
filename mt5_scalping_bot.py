@@ -273,6 +273,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Tỷ lệ giữa khoảng cách Chốt Lời (TP) so với Cắt Lỗ (SL). Ví dụ R:R = 2.0 nghĩa là nếu SL cách 3$ thì TP sẽ tự động được đặt cách 6$.",
         "how_to_set": "- Khuyên dùng: 1.5 đến 2.0 (Tỷ lệ vàng giúp tài khoản tăng trưởng bền vững kể cả khi Winrate chỉ cần 45%-55%).\n- Nếu nhập 0: Bot sẽ tự động lấy TP theo mục tiêu giá dự báo của mô hình AI."
     },
+    "min_real_rr": {
+        "title": "RR thật tối thiểu (đã gồm Giá an toàn)",
+        "what_is_it": "Điều kiện THÊM ngay lúc vào lệnh: RR thật = (khoảng cách từ giá hiện tại tới TP) ÷ (khoảng cách từ giá hiện tại tới SL THẬT đặt trên MT5, tức SL AI + Giá an toàn). RR thật nhỏ hơn số này thì bot KHÔNG vào, tiếp tục canh vùng chờ giá hồi về gần SL hơn. Các điều kiện cũ (RR >= 2R đo theo SL AI, chia đôi SL tối đa) vẫn giữ nguyên.",
+        "how_to_set": "- 0 = Tắt: bot chạy như cũ (mặc định).\n- Nên bật khi TP theo AI (R:R = 0) và Giá an toàn lớn: khi đó TP AI có thể gần hơn SL thật (ví dụ BTC Giá an toàn 150: SL thật 260 giá, TP 203 giá).\n- Gợi ý 1.5: chặn lệnh thua nhiều hơn thắng. 2.0: chặt nhất, ít lệnh nhất.\n- Giá khớp thật có thể trượt vài giá nên RR thật của lệnh có thể thấp hơn số này một chút."
+    },
     "entry_mode": {
         "title": "Chế độ nhồi lệnh (Entry Mode)",
         "what_is_it": "Quy tắc chiến thuật khi mở thêm lệnh thứ 2, thứ 3:\n- 'Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)': Chỉ mở lệnh mới khi các lệnh cũ đã được dời SL về hòa vốn hoặc có lãi.\n- 'Nhồi giá tốt hơn (DCA)': Mở thêm lệnh khi giá đi ngược nhưng có giá tốt hơn để hạ giá vốn bình quân. Chỉ so với lệnh cùng chiều CHƯA dời BE (lệnh đã BE không chặn lệnh mới).\n- 'Tự do theo AI': Mở thêm bất cứ khi nào AI báo tín hiệu mới và thỏa khoảng cách tối thiểu.",
@@ -540,6 +545,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "sl_buffer": "0.5",
         "max_sl_price": "5.0",
         "rr": "2.0",
+        "min_real_rr": "0",
         "min_entry_spacing": "1.0",
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
@@ -609,6 +615,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "sl_buffer": "20.0",
         "max_sl_price": "350.0",
         "rr": "2.0",
+        "min_real_rr": "0",
         "min_entry_spacing": "50.0",
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
@@ -2523,6 +2530,7 @@ class KronosDesktopApp:
         self.sl_buffer_var = self._add_labeled_entry(sec2.content, "+ Giá an toàn vào SL (Giá):", "0.5", help_key="sl_buffer")
         self.max_sl_price_var = self._add_labeled_entry(sec2.content, "SL tối đa (Giá, 0=Theo AI):", "5.0", help_key="max_sl_price")
         self.rr_var = self._add_labeled_entry(sec2.content, "Tỷ lệ R:R (0=TP Theo AI):", "2.0", help_key="rr")
+        self.min_real_rr_var = self._add_labeled_entry(sec2.content, "RR thật tối thiểu (gồm Giá an toàn, 0=Tắt):", "0", help_key="min_real_rr")
 
         # Nhóm 3: Bộ lọc vào lệnh
         _grp(sec2.content, "BỘ LỌC VÀO LỆNH")
@@ -6268,6 +6276,7 @@ class KronosDesktopApp:
             "sl_buffer": self.sl_buffer_var,
             "max_sl_price": self.max_sl_price_var,
             "rr": self.rr_var,
+            "min_real_rr": self.min_real_rr_var,
             "min_entry_spacing": self.min_entry_spacing_var,
             "entry_mode": self.entry_mode_var,
             "allow_opposite_entry": self.allow_opposite_entry_var,
@@ -6814,7 +6823,7 @@ class KronosDesktopApp:
     # Danh sách khóa cấu hình theo từng Mục của menu (nút Khôi phục mặc định + bảng thông số Backtest dùng chung)
     SETTINGS_SECTION_MAP = {
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
-        2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
+        2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
         3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
         4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
@@ -12361,6 +12370,20 @@ class KronosDesktopApp:
                     min_2r_tp = round(rr_dist * 2.0, digits)
                     tp_price = round(price + min_2r_tp, digits) if action == "BUY" else round(price - min_2r_tp, digits)
 
+                # RR thật tối thiểu (0 = tắt): đo từ giá vào tới TP cuối và SL THẬT (đã cộng Giá an toàn)
+                try:
+                    min_real_rr = max(float(cfg.get("min_real_rr", 0.0) or 0.0), 0.0)
+                except (ValueError, TypeError):
+                    min_real_rr = 0.0
+                if min_real_rr > 0.0:
+                    real_rr_sl = abs(tp_price - price) / actual_sl_dist
+                    if real_rr_sl < min_real_rr - (0.005 / actual_sl_dist):
+                        return (
+                            False,
+                            f"⏳ RR thật {real_rr_sl:.2f}R < {min_real_rr:.2f}R tối thiểu (TP cách {abs(tp_price - price):.2f}, "
+                            f"SL thật cách {actual_sl_dist:.2f} giá gồm Giá an toàn) -> chưa vào lệnh, tiếp tục canh vùng."
+                        )
+
                 spread = max(float(tick.ask - tick.bid), 0.0)
                 point = getattr(sym_info, "point", 0.01) or 0.01
                 dev_val = max(25, int(math.ceil(spread * 2.0 / point)))
@@ -13258,7 +13281,7 @@ class KronosDesktopApp:
                     if sl_tightened_for_2r:
                         base_sl_cap = max_sl_price if max_sl_price > 0.0 else cur_sl_dist
                         self.log(
-                            f"⚖️ [{pk} - Tối Ưu RR ≥ 2R] Khoảng cách TP ({dist_tp:.2f}$) < 2R của SL ({cur_sl_dist:.2f}$) -> "
+                            f"⚖️ [{pk} - Tối Ưu RR ≥ 2R] Khoảng cách TP ({dist_tp:.2f}$) < 2R của SL AI ({abs(entry_ref - sl_ai_price):.2f}$, SL thật {cur_sl_dist:.2f}$) -> "
                             f"Tự động giảm SL tối đa: {base_sl_cap:.2f}$ ÷ 2 = {effective_max_sl:.2f}$ để thu gọn khoảng cách & tối ưu RR ≥ 2R!"
                         )
 

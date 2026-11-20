@@ -107,7 +107,7 @@ class TestRules(unittest.TestCase):
         # chuỗi thua > 0 nhưng thời gian nghỉ = 0 -> bot không nghỉ
         self.assertIn("KHÔNG tạm nghỉ", warns({"max_consec_loss": "3", "cooldown_mins": "0"})[0]["msg"])
         self.assertEqual(warns({"max_consec_loss": "0", "cooldown_mins": "0"}), [])
-        self.assertIn("luôn vượt trần", warns({"sl_buffer": "4", "max_sl_price": "4"})[0]["msg"])
+        self.assertIn("RR thật < 1", warns({"sl_buffer": "4", "max_sl_price": "4"})[0]["msg"])
         self.assertEqual(warns({"sl_buffer": "4", "max_sl_price": "0"}), [])  # 0 = theo AI, không có trần
         self.assertTrue(warns({"auto_rev_close": True, "rev_consensus": "80", "rev_be_consensus": "60"}))
         self.assertEqual(warns({"auto_rev_close": True, "rev_consensus": "80", "rev_be_consensus": "0"}), [])
