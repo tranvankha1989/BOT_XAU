@@ -18,6 +18,9 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Mỗi lúc chỉ MỘT agent được sửa file; mỗi lần giao MỘT việc. Người dùng nói tiếng Việt và muốn tiết kiệm token:
   trả lời ngắn, Grep rồi Read đúng đoạn, không đọc cả file 12.000 dòng.
 - Khi báo cáo: nêu hàm đã sửa, git diff --stat, kết quả test, và NÊU RÕ điểm chưa chắc chắn (phần nào là suy luận, chưa kiểm chứng).
+- Trả lời thắc mắc của người dùng (vì sao bot vào/không vào lệnh, vì sao lỗi...; yêu cầu 20/11): câu đầu là kết luận, rồi giải thích
+  bằng lời thường theo từng bước (bot làm gì, vì sao, chuyện gì đã xảy ra, điều gì gây hiểu nhầm). KHÔNG liệt kê giá/công thức bắt người dùng
+  đối chiếu biểu đồ; tối đa 1-2 con số nói bằng lời ("thiếu khoảng 17 cent"); số liệu chi tiết chỉ đưa khi được hỏi thêm.
 
 ## Quy tắc code
 - Sửa tối thiểu (minimal diff). Không refactor, đổi tên, định dạng lại code không liên quan.
@@ -58,9 +61,11 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 | `max_consec_loss` (> 0) | `cooldown_mins` |
 | `fast_sl_cooldown_candles` (> 0) | `fast_sl_same_dir` |
 | `confirm_entry_pa` | `pa_min_confirmations`, `pa_fail_open` |
+| `min_entry_spacing` (> 0) | `halve_spacing_with_sl` |
 `be_plus_price` dùng chung cho BE, giữ lệnh, đảo chiều nên không là con của mục nào.
 
-**Thông số mới gần đây** (mặc định, Mục): `min_real_rr` (0 = tắt, 2: RR thật tối thiểu đo theo SL THẬT = SL AI + Giá an toàn, chặn trong `execute_mt5_order`; thêm 20/11 vì BTC Giá an toàn 150 + TP AI cho lệnh TP < SL), `debug_trace` (tắt, 4: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3 nhóm giới hạn ngày: gỡ vốn),
+**Thông số mới gần đây** (mặc định, Mục): `halve_spacing_with_sl` (BẬT theo người dùng chọn 20/11, 2: lần phân tích bị siết 1/2 Max SL do RR < 2R
+thì khoảng cách nhồi tối thiểu cũng /2; nơi gọi truyền `sl_halved` vào `execute_mt5_order`), `min_real_rr` (0 = tắt, 2: RR thật tối thiểu đo theo SL THẬT = SL AI + Giá an toàn, chặn trong `execute_mt5_order`; thêm 20/11 vì BTC Giá an toàn 150 + TP AI cho lệnh TP < SL), `debug_trace` (tắt, 4: ghi `logs/trace/trace_*.jsonl`), `recovery_close` (tắt, 3 nhóm giới hạn ngày: gỡ vốn),
 `structure_direction` (tắt, 2: hướng theo đỉnh/đáy, replay kém, chưa khuyên bật), `fast_sl_same_dir` (tắt, 3: SL nhanh chỉ nghỉ chiều vừa thua), `allow_opposite_entry` (tắt, 2: vẫn vào lệnh ngược chiều khi lệnh cũ đang âm), `stack_half_be` (tắt, 3: n lệnh cùng chiều chưa BE tăng lên n>=2 -> n//2 lệnh giá xấu nhất vào `pending_be_exit_tickets` chờ Entry+BE+ thoát), `trend_filter` + `structure_conflict_mode` ĐÃ ẨN khỏi giao diện (18/11, người dùng không dùng): trend_filter mặc định tắt và bị đặt tắt mỗi lần nạp cấu hình; code lọc còn giữ, thử bằng `--set trend_filter=True`, `max_hold_mins` mặc định 15,
 `max_hold_action` mặc định "Dời SL về BE+ (nếu lãi) & Dời TP về hòa (nếu lỗ)".
 Mã lý do đóng lệnh ghi vào comment MT5 `KR_<mã>` (TIME, TIMEALL, BE, GOV, REV, REVCUT, BASKET, DAILY, MANUAL, ALL):
