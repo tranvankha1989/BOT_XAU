@@ -45,7 +45,7 @@ class TestParamsLock(unittest.TestCase):
         app.__dict__.update(
             root=self.root, _param_rows=rows, _param_syncs=[], _params_locked=True,
             _get_settings_vars_map=lambda: self.vars, active_profile_key="XAUUSD",
-            log=mock.Mock(), show_toast=mock.Mock(), params_lock_btn=tk.Button(self.root),
+            log=mock.Mock(), show_toast=mock.Mock(), params_lock_btn=tk.Canvas(self.root),
             _validate_menu_settings=lambda: [], hf_token_var=tk.StringVar(master=self.root, value=""),
         )
         self.app = app
@@ -57,7 +57,8 @@ class TestParamsLock(unittest.TestCase):
         a._apply_params_lock()
         for _row, w in self.rows.values():
             self.assertEqual(str(w.cget("state")), "disabled")
-        self.assertEqual(a.params_lock_btn.cget("text"), "🔒")
+        self.assertTrue(a.params_lock_btn.find_withtag("locked"))
+        self.assertFalse(a.params_lock_btn.find_withtag("unlocked"))
         # đặt giá trị bằng code khi đang khóa vẫn được
         self.vars["rr"].set("3")
         self.assertEqual(self.vars["rr"].get(), "3")
@@ -65,7 +66,8 @@ class TestParamsLock(unittest.TestCase):
         self.assertFalse(a._params_locked)
         for k in ("rr", "auto_be", "be_trigger_r"):
             self.assertEqual(str(self.rows[str(self.vars[k])][1].cget("state")), "normal", k)
-        self.assertEqual(a.params_lock_btn.cget("text"), "🔓")
+        self.assertTrue(a.params_lock_btn.find_withtag("unlocked"))
+        self.assertFalse(a.params_lock_btn.find_withtag("locked"))
         # cha tắt -> con vẫn mờ sau khi mở khóa
         self.vars["auto_be"].set(False)
         self.assertEqual(str(self.rows[str(self.vars["be_trigger_r"])][1].cget("state")), "disabled")
