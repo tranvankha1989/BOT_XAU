@@ -1,6 +1,6 @@
 {
-  "version": "1.3.36",
+  "version": "1.3.37",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-20",
-  "description": "Phiên bản v1.3.36:\n- Menu: nút ổ khóa chỉ hiện biểu tượng 🔒 (đang khóa) / 🔓 (đã mở), bỏ tô nền đỏ/xanh.\n- Không đổi luật giao dịch."
+  "description": "Phiên bản v1.3.37:\n- Biểu đồ live cập nhật mỗi 1 giây (trước đây 2 giây).\n- Không đổi luật giao dịch."
 }
