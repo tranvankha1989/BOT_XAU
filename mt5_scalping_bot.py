@@ -2430,12 +2430,12 @@ class KronosDesktopApp:
         # Ổ khóa bên phải tiêu đề: mặc định KHÓA (thông số mờ, không sửa được); bấm để mở khóa chỉnh thông số (chỉ giao diện)
         self._params_locked = True
         self._param_syncs = []
-        self.params_lock_btn = tk.Button(
-            drawer_header, text="🔒", bg=PANEL_BG, fg="#ffffff",
-            activebackground=PANEL_BG, activeforeground="#ffffff", bd=0, highlightthickness=0,
-            font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0, cursor="hand2",
-            command=self.toggle_params_lock
+        # Ổ khóa tự vẽ (không dùng emoji: mỗi máy Windows vẽ emoji 🔒 một kiểu khác nhau)
+        self.params_lock_btn = tk.Canvas(
+            drawer_header, width=22, height=22, bg=PANEL_BG, highlightthickness=0, bd=0, cursor="hand2"
         )
+        self.params_lock_btn.bind("<Button-1>", lambda _e: self.toggle_params_lock())
+        self._draw_params_lock_icon(True)
         self.params_lock_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
         self.drawer_title_lbl = tk.Label(
@@ -6960,10 +6960,29 @@ class KronosDesktopApp:
             except Exception:
                 pass
         try:
-            # Chỉ biểu tượng, không tô nền: 🔒 (khóa) / 🔓 (đã mở)
-            self.params_lock_btn.config(text="🔒" if locked else "🔓", bg=PANEL_BG, activebackground=PANEL_BG)
+            # Chỉ hình ổ khóa, không chữ, không tô nền: quai đóng (khóa) / quai bật lên (đã mở)
+            self._draw_params_lock_icon(locked)
         except Exception:
             pass
+
+    def _draw_params_lock_icon(self, locked: bool):
+        """Vẽ ổ khóa trắng 22x22 lên Canvas params_lock_btn; tag 'locked' hoặc 'unlocked' cho test."""
+        c = self.params_lock_btn
+        c.delete("all")
+        tag = "locked" if locked else "unlocked"
+        fg = "#ffffff"
+        ox, oy = 1, 1
+        c.create_rectangle(ox + 3, oy + 9, ox + 17, oy + 20, fill=fg, outline=fg, tags=tag)
+        c.create_oval(ox + 8.6, oy + 12, ox + 11.4, oy + 14.8, fill=PANEL_BG, outline=PANEL_BG, tags=tag)
+        c.create_rectangle(ox + 9.4, oy + 14, ox + 10.6, oy + 17.5, fill=PANEL_BG, outline=PANEL_BG, tags=tag)
+        if locked:
+            c.create_arc(ox + 6, oy + 2, ox + 14, oy + 14, start=0, extent=180, style="arc", outline=fg, width=2, tags=tag)
+            c.create_line(ox + 6, oy + 8, ox + 6, oy + 9, fill=fg, width=2, tags=tag)
+            c.create_line(ox + 14, oy + 8, ox + 14, oy + 9, fill=fg, width=2, tags=tag)
+        else:
+            c.create_arc(ox + 6, oy - 1, ox + 14, oy + 11, start=0, extent=180, style="arc", outline=fg, width=2, tags=tag)
+            c.create_line(ox + 6, oy + 5, ox + 6, oy + 9, fill=fg, width=2, tags=tag)
+            c.create_line(ox + 14, oy + 5, ox + 14, oy + 6, fill=fg, width=2, tags=tag)
 
     def reset_section_settings(self, section_num: int):
         """Khôi phục các thông số của một mục cụ thể về giá trị mặc định tối ưu theo Tab đang chọn."""
