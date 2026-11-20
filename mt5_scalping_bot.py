@@ -9372,7 +9372,8 @@ class KronosDesktopApp:
 
                 # Đang xem màn hình Backtest (biểu đồ live bị ẩn): không vẽ biểu đồ live để luồng giao diện rảnh cho biểu đồ Backtest.
                 # Chỉ là vẽ; quản lý lệnh live ở trên vẫn chạy mỗi giây. Quay lại tab live -> _on_tab_changed vẽ lại ngay.
-                if self.realtime_chart_var.get() and self.heartbeat_toggle and not self.is_analyzing and self._drag_start_px is None \
+                # Vẽ biểu đồ mỗi 1 giây (trước đây 2 giây do chỉ vẽ ở nhịp heartbeat chẵn)
+                if self.realtime_chart_var.get() and not self.is_analyzing and self._drag_start_px is None \
                         and not self._bt_workspace_shown():
                     self._refresh_realtime_chart(symbol, tf_str)
         except Exception as e:
