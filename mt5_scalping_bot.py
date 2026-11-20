@@ -8435,7 +8435,7 @@ class KronosDesktopApp:
                 max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
             except (ValueError, TypeError):
                 max_sl_p = 5.0
-            lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+            lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
             lows.append(float(lim_entry))
             highs.append(float(lim_entry))
 
@@ -10933,7 +10933,7 @@ class KronosDesktopApp:
                     max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
                 except (ValueError, TypeError):
                     max_sl_p = 5.0
-                lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+                lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
                 rr_tag = " (RR>=2R)" if p.get("sl_tightened_for_2r") else ""
                 op_sign = "<=" if p["action"] == "BUY" else ">="
                 ai_state = f"Canh vùng {p['action']}{rr_tag} {op_sign} {lim_entry:.2f}"
@@ -14019,7 +14019,7 @@ class KronosDesktopApp:
                 max_sl_p = float(p.get("effective_max_sl") or self.max_sl_price_var.get())
             except (ValueError, TypeError):
                 max_sl_p = 5.0
-            lim_entry = (p["sl_price"] + max_sl_p) if p["action"] == "BUY" else (p["sl_price"] - max_sl_p)
+            lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
             op_sign = "<=" if p["action"] == "BUY" else ">="
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=0.85, alpha=0.80)
             tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
