@@ -7102,6 +7102,7 @@ class KronosDesktopApp:
             with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
+            self._tg_note_error(method, e, clean_token)
             return None
 
     # Icon/emoji bị bỏ khỏi tin Telegram; giữ lại 🟢 (U+1F7E2) và 🔴 (U+1F534). Không đụng →, ≤, ≥, •, ·, ─.
@@ -7260,6 +7261,38 @@ class KronosDesktopApp:
             self._tg_diag_log(f"Chụp biểu đồ lỗi: {box['err']} -> chỉ gửi chữ")
         return box.get("png")
 
+    def _tg_note_error(self, method: str, e: Exception, token: str = ""):
+        """Ghi lý do lỗi khi gọi Telegram (chỉ chẩn đoán). Mỗi (lệnh API, lý do) tối đa 1 dòng/120s.
+        Không bao giờ ghi token; lý do cuối cùng lưu ở self._tg_last_error để thông báo lỗi kèm theo."""
+        try:
+            if isinstance(e, urllib.error.HTTPError):
+                desc = ""
+                try:
+                    desc = str(json.loads(e.read().decode("utf-8", "replace")).get("description") or "")
+                except Exception:
+                    pass
+                hint = {401: "sai token", 403: "bot bị chặn hoặc bị xóa khỏi nhóm", 400: "sai Chat ID hoặc nội dung",
+                        409: "máy khác đang nghe cùng token", 429: "gửi quá nhiều, Telegram bắt chờ"}.get(int(e.code), "")
+                reason = f"HTTP {e.code}" + (f" ({hint})" if hint else "") + (f": {desc}" if desc else "")
+            elif isinstance(e, TimeoutError) or "timed out" in str(e).lower():
+                reason = "hết thời gian chờ (mạng chậm hoặc bị chặn)"
+            elif isinstance(e, urllib.error.URLError):
+                reason = f"không kết nối được máy chủ Telegram ({str(getattr(e, 'reason', e))[:120]})"
+            else:
+                reason = f"{type(e).__name__}: {str(e)[:120]}"
+            tok = (token or "").strip()
+            if tok:
+                reason = reason.replace(tok, "***")
+            self._tg_last_error = reason
+            now = time.monotonic()
+            last = self.__dict__.setdefault("_tg_err_log_ts", {})
+            key = (str(method), reason)
+            if now - float(last.get(key, -1e9)) >= 120.0:
+                last[key] = now
+                self.log(f"⚠️ [Telegram] Lỗi gọi {method}: {reason}")
+        except Exception:
+            pass
+
     def _tg_diag_log(self, msg: str):
         """Log chẩn đoán Telegram, tối đa 1 dòng/60 giây, không bao giờ ném lỗi."""
         try:
@@ -7308,7 +7341,8 @@ class KronosDesktopApp:
         try:
             with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
-        except Exception:
+        except Exception as e:
+            self._tg_note_error("sendPhoto", e, clean_token)
             return None
 
     def _telegram_send_ai_report(self, token: str, chat_id: str):
@@ -7325,7 +7359,7 @@ class KronosDesktopApp:
                     if isinstance(res, dict) and res.get("ok"):
                         self._tg_track_kb_message(token, chat_id, res)
                         return
-                    self._tg_diag_log("Gửi ảnh biểu đồ thất bại -> gửi tin chữ")
+                    self._tg_diag_log(f"Gửi ảnh biểu đồ thất bại ({getattr(self, '_tg_last_error', '') or 'không rõ lý do'}) -> gửi tin chữ")
                 else:
                     pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
                     name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
@@ -7950,7 +7984,7 @@ class KronosDesktopApp:
                 self.root.after(0, lambda: self.show_toast("Đã gửi tin nhắn thử thành công đến Telegram!", is_error=False, duration_ms=3500))
                 self.log("✅ [Telegram] Đã gửi tin nhắn thử nghiệm thành công tới Telegram!")
             else:
-                err_desc = res.get("description", "Không rõ nguyên nhân") if isinstance(res, dict) else "Lỗi kết nối mạng hoặc sai Token/Chat ID"
+                err_desc = res.get("description", "Không rõ nguyên nhân") if isinstance(res, dict) else (getattr(self, "_tg_last_error", "") or "Lỗi kết nối mạng hoặc sai Token/Chat ID")
                 self.root.after(0, lambda: self.show_toast(f"Lỗi gửi Telegram: {err_desc}", is_error=True, duration_ms=4500))
                 self.log(f"❌ [Telegram] Lỗi gửi tin nhắn thử: {err_desc}")
 
