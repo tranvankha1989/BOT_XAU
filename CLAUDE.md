@@ -18,6 +18,9 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Mỗi lúc chỉ MỘT agent được sửa file; mỗi lần giao MỘT việc. Người dùng nói tiếng Việt và muốn tiết kiệm token:
   trả lời ngắn, Grep rồi Read đúng đoạn, không đọc cả file 12.000 dòng.
 - Khi báo cáo: nêu hàm đã sửa, git diff --stat, kết quả test, và NÊU RÕ điểm chưa chắc chắn (phần nào là suy luận, chưa kiểm chứng).
+- Trả lời thắc mắc của người dùng (vì sao bot vào/không vào lệnh, vì sao lỗi...; yêu cầu 20/11): câu đầu là kết luận, rồi giải thích
+  bằng lời thường theo từng bước (bot làm gì, vì sao, chuyện gì đã xảy ra, điều gì gây hiểu nhầm). KHÔNG liệt kê giá/công thức bắt người dùng
+  đối chiếu biểu đồ; tối đa 1-2 con số nói bằng lời ("thiếu khoảng 17 cent"); số liệu chi tiết chỉ đưa khi được hỏi thêm.
 
 ## Quy tắc code
 - Sửa tối thiểu (minimal diff). Không refactor, đổi tên, định dạng lại code không liên quan.
