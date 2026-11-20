@@ -152,7 +152,7 @@ class TestOrderUnchanged(Base):
         # Mọi cổng qua -> vào lệnh đúng 1 lần với SL/TP đã lưu
         app = make_app()
         app._check_pending_pullback_order(SYM, tk(3886.90), profile_key=PK)
-        app.execute_mt5_order.assert_called_once_with(SYM, "SELL", 0.01, 3888.86, 3878.49, 3, profile_key=PK)
+        app.execute_mt5_order.assert_called_once_with(SYM, "SELL", 0.01, 3888.86, 3878.49, 3, profile_key=PK, sl_halved=True)
         self.assertEqual(diag(app), [])
 
 

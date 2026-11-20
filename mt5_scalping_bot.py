@@ -293,6 +293,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Khoảng cách giá tối thiểu giữa lệnh mới và lệnh đã có gần nhất, chống việc bot vào nhiều lệnh liên tiếp sát sàn sạt nhau tại cùng một mức giá.",
         "how_to_set": "- Vàng XAUUSD: Đặt 1.0$ đến 1.5$ (10 - 15 pip).\n- Giúp các vị thế được rải đều qua các vùng cản kháng cự/hỗ trợ khác nhau."
     },
+    "halve_spacing_with_sl": {
+        "title": "Chia đôi khoảng cách nhồi khi siết SL",
+        "what_is_it": "Khi lãi kỳ vọng của AI chưa gấp đôi rủi ro, bot tự siết SL tối đa còn một nửa cho lần phân tích đó. Bật ô này thì lần đó khoảng cách nhồi tối thiểu cũng còn một nửa (ví dụ Vàng 1.0 thành 0.5, BTC 50 thành 25). Các lần phân tích không bị siết SL thì khoảng cách nhồi giữ nguyên.",
+        "how_to_set": "- BẬT (Mặc định, người dùng chọn 20/11/2026).\n- TẮT: khoảng cách nhồi luôn giữ nguyên.\n- Lưu ý: lệnh nhồi nằm gần nhau hơn; giá quay đầu thì nhiều lệnh dễ dính SL cùng lúc. Chỉ có tác dụng khi Khoảng cách nhồi tối thiểu > 0. Chưa kiểm chứng bằng phát lại nhiều ngày."
+    },
     "one_order_per_candle": {
         "title": "Chỉ mở tối đa 1 lệnh mỗi cây nến",
         "what_is_it": "Chặn không cho bot mở quá 1 lệnh trong cùng một cây nến giao dịch (ví dụ nến M5). Ngăn ngừa việc thị trường giật nảy giá làm kích hoạt nhiều lệnh liên tục.",
@@ -547,6 +552,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rr": "2.0",
         "min_real_rr": "0",
         "min_entry_spacing": "1.0",
+        "halve_spacing_with_sl": True,
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
         "one_order_per_candle": True,
@@ -617,6 +623,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "rr": "2.0",
         "min_real_rr": "0",
         "min_entry_spacing": "50.0",
+        "halve_spacing_with_sl": True,
         "entry_mode": "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)",
         "allow_opposite_entry": False,
         "one_order_per_candle": True,
@@ -2570,6 +2577,8 @@ class KronosDesktopApp:
             help_key="entry_mode"
         )
         self.min_entry_spacing_var = self._add_labeled_entry(sec2.content, "Khoảng cách nhồi tối thiểu (Giá):", "1.0", help_key="min_entry_spacing")
+        self.halve_spacing_with_sl_var = tk.BooleanVar(value=True)
+        self._add_checkbutton(sec2.content, "   Chia đôi khoảng cách nhồi khi siết SL (RR < 2R)", self.halve_spacing_with_sl_var, help_key="halve_spacing_with_sl")
         self.allow_opposite_entry_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec2.content, "Vẫn vào lệnh ngược chiều khi lệnh cũ đang âm", self.allow_opposite_entry_var, help_key="allow_opposite_entry")
         self.one_order_per_candle_var = tk.BooleanVar(value=True)
@@ -2678,6 +2687,7 @@ class KronosDesktopApp:
             self._bind_param_children(self.max_hold_mins_var, [self.max_hold_action_var], numeric=True)
             self._bind_param_children(self.max_consec_loss_var, [self.cooldown_mins_var], numeric=True)
             self._bind_param_children(self.fast_sl_cooldown_candles_var, [self.fast_sl_same_dir_var], numeric=True)
+            self._bind_param_children(self.min_entry_spacing_var, [self.halve_spacing_with_sl_var], numeric=True)
             self._bind_param_children(self.confirm_entry_pa_var, [self.pa_min_confirmations_var, self.pa_fail_open_var])
         except Exception as _e:
             self._write_file_log(f"[UI] Không dựng được cây thông số: {_e}", is_error=True)
@@ -6278,6 +6288,7 @@ class KronosDesktopApp:
             "rr": self.rr_var,
             "min_real_rr": self.min_real_rr_var,
             "min_entry_spacing": self.min_entry_spacing_var,
+            "halve_spacing_with_sl": self.halve_spacing_with_sl_var,
             "entry_mode": self.entry_mode_var,
             "allow_opposite_entry": self.allow_opposite_entry_var,
             "one_order_per_candle": self.one_order_per_candle_var,
@@ -6823,7 +6834,7 @@ class KronosDesktopApp:
     # Danh sách khóa cấu hình theo từng Mục của menu (nút Khôi phục mặc định + bảng thông số Backtest dùng chung)
     SETTINGS_SECTION_MAP = {
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
-        2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
+        2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "halve_spacing_with_sl", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
         3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
         4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
@@ -10891,7 +10902,8 @@ class KronosDesktopApp:
             if pk == self.active_profile_key:
                 self.pending_pullback_order = None
 
-            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk, **({"sl_ai_price": sl_ref} if use_sl_ai else {}))
+            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk,
+                                                     sl_halved=bool(p.get("sl_tightened_for_2r")), **({"sl_ai_price": sl_ref} if use_sl_ai else {}))
             if ok_ord:
                 if ctx.get("last_candle_time") is not None:
                     self._last_order_candle_ts[pk] = ctx.get("last_candle_time")
@@ -12288,7 +12300,8 @@ class KronosDesktopApp:
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         return calculate_atr(df, period)
 
-    def execute_mt5_order(self, symbol: str, action: str, lot: float, sl_price: float, tp_price: float, max_positions: int, profile_key: str = None, sl_ai_price: float = None):
+    def execute_mt5_order(self, symbol: str, action: str, lot: float, sl_price: float, tp_price: float, max_positions: int, profile_key: str = None, sl_ai_price: float = None,
+                          sl_halved: bool = False):
         pk = profile_key or self.active_profile_key
         cfg = self._get_profile_cfg(pk)
         ctx = self.profile_ctx[pk]
@@ -12349,6 +12362,12 @@ class KronosDesktopApp:
                         min_spacing = max(float(cfg.get("min_entry_spacing", default_spacing)), 0.0)
                     except ValueError:
                         min_spacing = default_spacing
+                    # Lần phân tích bị siết 1/2 Max SL (RR < 2R) -> chia đôi luôn khoảng cách nhồi
+                    # (halve_spacing_with_sl, mặc định BẬT, người dùng chọn 20/11/2026)
+                    sp_tag = ""
+                    if sl_halved and min_spacing > 0.0 and str(cfg.get("halve_spacing_with_sl", True)).strip().lower() in ("1", "true", "yes", "on"):
+                        min_spacing = round(min_spacing / 2.0, 4)
+                        sp_tag = " (đã chia đôi do siết SL)"
 
                     tick_check = mt5.symbol_info_tick(symbol)
                     cur_chk_price = (tick_check.ask if action == "BUY" else tick_check.bid) if tick_check else 0.0
@@ -12356,7 +12375,7 @@ class KronosDesktopApp:
                         for p in positions:
                             dist = abs(cur_chk_price - p.price_open)
                             if dist < (min_spacing - 1e-4):
-                                return False, f"⚠️ [{pk}] Giá hiện tại ({cur_chk_price:.2f}) quá sát lệnh #{p.ticket} (Entry {p.price_open:.2f}, cách {dist:.2f} < tối thiểu {min_spacing:.2f} giá). Bỏ qua nhồi lệnh."
+                                return False, f"⚠️ [{pk}] Giá hiện tại ({cur_chk_price:.2f}) quá sát lệnh #{p.ticket} (Entry {p.price_open:.2f}, cách {dist:.2f} < tối thiểu {min_spacing:.2f} giá{sp_tag}). Bỏ qua nhồi lệnh."
 
                     # 3. Chế độ nhồi lệnh (entry_mode)
                     entry_mode = str(cfg.get("entry_mode", "Chỉ nhồi khi đã khóa lãi lệnh trước (Risk-Free)")).strip()
@@ -12379,11 +12398,11 @@ class KronosDesktopApp:
                             if action == "BUY":
                                 best_price = min(p.price_open for p in same_dir_pos)
                                 if cur_chk_price > (best_price - min_spacing + 1e-4):
-                                    return False, f"⚠️ [{pk} - DCA] Giá BUY hiện tại ({cur_chk_price:.2f}) không thấp hơn lệnh BUY thấp nhất ({best_price:.2f}) ít nhất {min_spacing:.2f} giá. Bỏ qua nhồi lệnh."
+                                    return False, f"⚠️ [{pk} - DCA] Giá BUY hiện tại ({cur_chk_price:.2f}) không thấp hơn lệnh BUY thấp nhất ({best_price:.2f}) ít nhất {min_spacing:.2f} giá{sp_tag}. Bỏ qua nhồi lệnh."
                             else:
                                 best_price = max(p.price_open for p in same_dir_pos)
                                 if cur_chk_price < (best_price + min_spacing - 1e-4):
-                                    return False, f"⚠️ [{pk} - DCA] Giá SELL hiện tại ({cur_chk_price:.2f}) không cao hơn lệnh SELL cao nhất ({best_price:.2f}) ít nhất {min_spacing:.2f} giá. Bỏ qua nhồi lệnh."
+                                    return False, f"⚠️ [{pk} - DCA] Giá SELL hiện tại ({cur_chk_price:.2f}) không cao hơn lệnh SELL cao nhất ({best_price:.2f}) ít nhất {min_spacing:.2f} giá{sp_tag}. Bỏ qua nhồi lệnh."
 
                 tick = mt5.symbol_info_tick(symbol)
                 sym_info = mt5.symbol_info(symbol)
@@ -13465,7 +13484,8 @@ class KronosDesktopApp:
                                 dist_tp = min_tp_dist
                                 zone_watch_order["target_tp_price"] = tp_price
                             ctx["pending_pullback_order"] = None
-                            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk, sl_ai_price=sl_ai_price)
+                            ok_ord, ord_msg = self.execute_mt5_order(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=pk, sl_ai_price=sl_ai_price,
+                                                                     sl_halved=bool(sl_tightened_for_2r))
                             if ok_ord:
                                 self._last_order_candle_ts[pk] = last_time
                             # Duy trì vùng canh giá trong suốt chu kỳ AI (VD: 5 phút M5) để nếu có nhịp hồi tiếp theo (và thỏa mãn Risk-Free/DCA + qua nến M1 mới) thì Python tự xử lý mà không cần gọi lại AI

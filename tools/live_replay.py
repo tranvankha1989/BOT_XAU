@@ -1115,7 +1115,7 @@ def run_replay_job(job_path: str) -> int:
         seed = int(job.get("seed", 1))
         rb.set_seed(seed)
         keys = ["tf", "analysis_tf", "lot", "scenarios", "consensus", "max_dispersion", "min_move", "sl_buffer", "max_sl_price", "rr",
-                "min_entry_spacing", "max_pos", "entry_mode", "max_hold_mins", "max_hold_action", "confirm_entry_pa",
+                "min_entry_spacing", "halve_spacing_with_sl", "max_pos", "entry_mode", "max_hold_mins", "max_hold_action", "confirm_entry_pa",
                 "pa_min_confirmations", "lookback", "pred_len", "daily_tp_usd", "daily_sl_usd", "blocked_trading_windows"]
         params = {k: cfg.get(k) for k in keys}
         emit(type="start", note=note, symbol=symbol, threads=n_thr, params=params)
@@ -1237,7 +1237,7 @@ def main(argv=None) -> int:
     print(f"[*] Profile / Symbol : {pk} / {symbol} | {args.start} -> {args.end} (giờ VN)")
     print(f"[*] Cấu hình         : {note}")
     keys = ["tf", "analysis_tf", "lot", "consensus", "max_dispersion", "min_move", "sl_buffer", "max_sl_price", "rr",
-            "min_entry_spacing", "max_pos", "entry_mode", "max_hold_mins", "max_hold_action", "trend_filter",
+            "min_entry_spacing", "halve_spacing_with_sl", "max_pos", "entry_mode", "max_hold_mins", "max_hold_action", "trend_filter",
             "structure_conflict_mode", "confirm_entry_pa", "pa_min_confirmations", "pred_len", "daily_tp_usd", "daily_sl_usd",
             "blocked_trading_windows"]
     print("[*] Thông số chính   : " + ", ".join(f"{k}={cfg.get(k)}" for k in keys))

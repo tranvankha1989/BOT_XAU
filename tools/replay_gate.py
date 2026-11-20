@@ -284,7 +284,7 @@ def run_replay(data: ReplayData, windows: list, args) -> dict:
         return real_gate_log(app, pk, gate, *a, **k)
     app._pb_gate_log = counting_gate_log
 
-    def fake_execute(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=None):
+    def fake_execute(symbol, action, lot, sl_price, tp_price, max_pos, profile_key=None, **_kw):
         t = fake.tick
         idx = data.tick_index(clock.now)
         out = simulate_outcome(data, idx, action, float(sl_price), float(tp_price))
