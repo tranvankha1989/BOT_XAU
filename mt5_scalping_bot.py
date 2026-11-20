@@ -1180,7 +1180,10 @@ class KronosDesktopApp:
 
         # Khởi động luồng gửi tin và luồng điều khiển Telegram từ xa qua điện thoại
         threading.Thread(target=self._telegram_dispatcher_loop, daemon=True).start()
-        threading.Thread(target=self._telegram_polling_worker, daemon=True).start()
+        self._tg_poll_gen = 0
+        self._tg_poll_beat = time.time()
+        self._tg_start_polling()
+        threading.Thread(target=self._tg_poll_watchdog_loop, daemon=True).start()
 
         # Khởi động kết nối, chạy phân tích AI lần đầu tự động và bật luồng Real-Time
         self.root.after(150, self.check_mt5_connection)
@@ -7383,12 +7386,47 @@ class KronosDesktopApp:
                 except Exception:
                     pass  # không để luồng gửi tin chết vì 1 tin lỗi
 
-    def _telegram_polling_worker(self):
-        """Luồng ngầm lắng nghe lệnh điều khiển từ xa từ điện thoại người dùng qua Telegram (Long-Polling)."""
-        offset = None
-        cleaned_webhook_token = None
+    def _tg_diag(self, key: str, msg: str, every: float = 120.0):
+        """Log chẩn đoán Telegram, mỗi loại (key) tối đa 1 dòng / `every` giây; không bao giờ ném lỗi, không in token."""
+        try:
+            now = time.time()
+            last = getattr(self, "_tg_diag_last", None)
+            if last is None:
+                last = self._tg_diag_last = {}
+            if now - last.get(key, 0.0) < every:
+                return
+            last[key] = now
+            self.log(f"[Telegram] {msg}")
+        except Exception:
+            pass
+
+    def _tg_start_polling(self):
+        """Tạo luồng nghe Telegram MỚI (thế hệ mới); luồng cũ nếu còn kẹt sẽ tự thoát khi hết kẹt."""
+        self._tg_poll_gen = int(getattr(self, "_tg_poll_gen", 0)) + 1
+        self._tg_poll_beat = time.time()
+        threading.Thread(target=self._telegram_polling_worker, args=(self._tg_poll_gen,), daemon=True).start()
+
+    def _tg_poll_watchdog_loop(self):
+        """Canh luồng nghe Telegram: nếu quá 120s không có nhịp (luồng kẹt/chết) thì tự tạo luồng mới, khỏi phải khởi động lại app."""
         while not getattr(self, "_app_closing", False):
+            time.sleep(20)
             try:
+                idle = time.time() - float(getattr(self, "_tg_poll_beat", time.time()))
+                if idle > 120.0:
+                    self._tg_diag("watchdog", f"Luồng nghe lệnh không phản hồi {idle:.0f}s -> tự khởi động lại luồng nghe (không cần restart app).", 60.0)
+                    self._tg_start_polling()
+            except Exception:
+                pass
+
+    def _telegram_polling_worker(self, gen=None):
+        """Luồng ngầm lắng nghe lệnh điều khiển từ xa từ điện thoại người dùng qua Telegram (Long-Polling)."""
+        if gen is None:
+            gen = getattr(self, "_tg_poll_gen", 0)
+        offset = getattr(self, "_tg_poll_offset", None)  # giữ vị trí đọc khi luồng được tạo lại (không mất/lặp tin)
+        cleaned_webhook_token = getattr(self, "_tg_poll_token", None)
+        while not getattr(self, "_app_closing", False) and gen == getattr(self, "_tg_poll_gen", gen):
+            try:
+                self._tg_poll_beat = time.time()
                 en_var = getattr(self, "telegram_enabled_var", None)
                 if not (en_var and en_var.get()):
                     time.sleep(3)
@@ -7407,7 +7445,9 @@ class KronosDesktopApp:
                     if del_res and del_res.get("ok"):
                         self.log("[Telegram] Đã gỡ bỏ webhook cũ và kích hoạt chế độ lắng nghe độc quyền cho Trading AI PRO.")
                     cleaned_webhook_token = token
+                    self._tg_poll_token = token
                     offset = None
+                    self._tg_poll_offset = None
                     # Tên bot: chỉ làm theo lệnh /lệnh@tên_bot gửi ĐÚNG bot này (nhóm có nhiều bot)
                     try:
                         me = self._telegram_api_call(token, "getMe", None, timeout=15)
@@ -7421,12 +7461,17 @@ class KronosDesktopApp:
 
                 res = self._telegram_api_call(token, "getUpdates", payload, timeout=25)
                 if not res or not res.get("ok"):
+                    self._tg_diag("poll_fail", "Nghe lệnh thất bại (lỗi mạng, token sai hoặc máy khác đang nghe cùng token -> 409). Thử lại sau 3s.", 300.0)
                     time.sleep(3)
                     continue
 
                 updates = res.get("result", [])
                 for upd in updates:
+                    if gen != getattr(self, "_tg_poll_gen", gen):
+                        break  # đã có luồng nghe mới thay thế -> luồng cũ dừng, tránh xử lý trùng
                     offset = max(offset or 0, upd.get("update_id", 0) + 1)
+                    self._tg_poll_offset = offset
+                    self._tg_poll_beat = time.time()
 
                     # 1. Bắt tương tác từ nút bấm trực tiếp (Inline Keyboard Callback Query)
                     cq = upd.get("callback_query")
@@ -7447,13 +7492,16 @@ class KronosDesktopApp:
                     from_id = str((msg.get("from") or {}).get("id", ""))
                     # Lá chắn an ninh: Chỉ chấp nhận tin từ đúng Chat ID đã đăng ký, hoặc chat riêng của người điều khiển
                     if not self._tg_sender_allowed(chat_id, from_id, sender):
+                        self._tg_diag("drop_sender", f"Bỏ qua tin từ chat ...{sender[-4:]} (người gửi ...{from_id[-4:]}): không khớp ID nhóm đã cài và không phải chat riêng của người điều khiển. Nhóm có thể đã đổi ID (nâng cấp siêu nhóm)?", 300.0)
                         continue
 
                     text = str(msg.get("text", "")).strip()
                     if text:
+                        self._tg_diag("recv", f"Nhận tin {'trong nhóm' if sender.startswith('-') else 'chat riêng'}: '{text[:30]}'", 2.0)
                         self._handle_telegram_command(text, chat_id, token, from_id=from_id, in_group=sender.startswith("-"))
 
-            except Exception:
+            except Exception as e_tg:
+                self._tg_diag("poll_exc", f"Lỗi khi xử lý tin/lệnh (tin đó có thể mất): {type(e_tg).__name__}: {str(e_tg)[:120]}", 60.0)
                 time.sleep(3)
 
     def _handle_telegram_callback(self, cq: dict, chat_id: str, token: str):
@@ -7629,6 +7677,8 @@ class KronosDesktopApp:
                 "chat_id": chat_id,
                 "text": "ℹ️ Lệnh hợp lệ (gõ đúng nguyên lệnh): /menu, /stats (hoặc 'thống kê'), /ai (hoặc 'phân tích'), /pause (hoặc 'tạm dừng'), /resume (hoặc 'bật bot', 'chạy').",
             })
+        elif in_group:
+            self._tg_diag("ignore_group", f"Tin trong nhóm không phải lệnh hợp lệ nên bot im lặng: '{text[:30]}' (gõ đúng nguyên lệnh: /menu /stats /ai /pause /resume).", 60.0)
 
     def _generate_telegram_ai_report(self) -> str:
         """Tin cho nút '🧠 Phân tích AI' / lệnh /ai: kết quả phân tích AI mới nhất của từng mã (dòng tín hiệu, dự báo,
@@ -9552,7 +9602,11 @@ class KronosDesktopApp:
                 elif ("[tp" in cmt) or (r_ratio >= 1.0) or (net_pnl >= one_r):
                     category = "WIN"
                     if "[tp" in cmt:
-                        status = f"ĐÃ CHỐT TP ({close_t})"
+                        # TP đã bị bot dời (Quy tắc 3: AI đảo chiều -> kéo TP về Entry+): giá đóng lệch xa TP gốc
+                        if tp_price > 0 and open_p > 0 and abs(close_p - tp_price) > 0.15 * abs(tp_price - open_p):
+                            status = f"THOÁT VỀ ENTRY+ - TP ĐÃ DỜI ({close_t})"
+                        else:
+                            status = f"ĐÃ CHỐT TP ({close_t})"
                     else:
                         status = f"ĐÃ CHỐT LÃI ({close_t})"
                 else:
