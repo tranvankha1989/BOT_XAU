@@ -7098,6 +7098,7 @@ class KronosDesktopApp:
             ctx = ssl._create_unverified_context()
         except Exception:
             pass
+        self._tg_tls_set("", "")
         try:
             with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
@@ -7265,7 +7266,9 @@ class KronosDesktopApp:
         """Ghi lý do lỗi khi gọi Telegram (chỉ chẩn đoán). Mỗi (lệnh API, lý do) tối đa 1 dòng/120s.
         Không bao giờ ghi token; lý do cuối cùng lưu ở self._tg_last_error để thông báo lỗi kèm theo."""
         try:
+            kind = "other"
             if isinstance(e, urllib.error.HTTPError):
+                kind = "http"
                 desc = ""
                 try:
                     desc = str(json.loads(e.read().decode("utf-8", "replace")).get("description") or "")
@@ -7274,15 +7277,27 @@ class KronosDesktopApp:
                 hint = {401: "sai token", 403: "bot bị chặn hoặc bị xóa khỏi nhóm", 400: "sai Chat ID hoặc nội dung",
                         409: "máy khác đang nghe cùng token", 429: "gửi quá nhiều, Telegram bắt chờ"}.get(int(e.code), "")
                 reason = f"HTTP {e.code}" + (f" ({hint})" if hint else "") + (f": {desc}" if desc else "")
-            elif isinstance(e, TimeoutError) or "timed out" in str(e).lower():
-                reason = "hết thời gian chờ (mạng chậm hoặc bị chặn)"
             elif isinstance(e, urllib.error.URLError):
-                reason = f"không kết nối được máy chủ Telegram ({str(getattr(e, 'reason', e))[:120]})"
+                # urllib bọc trong URLError mọi lỗi xảy ra TRƯỚC khi gửi xong yêu cầu (dò địa chỉ, kết nối, bắt tay TLS,
+                # gửi dữ liệu) -> Telegram CHƯA nhận được tin, gửi lại không bị trùng
+                kind = "not_sent"
+                r = getattr(e, "reason", e)
+                if isinstance(r, TimeoutError) or "timed out" in str(r).lower():
+                    reason = "chưa gửi đi được: hết thời gian chờ kết nối tới Telegram (mạng chậm hoặc bị chặn)"
+                else:
+                    reason = f"không kết nối được máy chủ Telegram ({str(r)[:120]}), tin chưa gửi đi"
+            elif isinstance(e, TimeoutError) or "timed out" in str(e).lower():
+                # Đã gửi xong yêu cầu, hết giờ khi CHỜ TRẢ LỜI: Telegram có thể đã nhận và xử lý chậm (tin tới muộn)
+                kind = "sent_slow"
+                reason = "hết thời gian chờ Telegram trả lời (máy chủ Telegram chậm)"
+                if str(method) in ("sendMessage", "sendPhoto"):
+                    reason += ": tin đã gửi đi, có thể vẫn tới muộn, đừng bấm gửi lại"
             else:
                 reason = f"{type(e).__name__}: {str(e)[:120]}"
             tok = (token or "").strip()
             if tok:
                 reason = reason.replace(tok, "***")
+            self._tg_tls_set(kind, reason)
             self._tg_last_error = reason
             now = time.monotonic()
             last = self.__dict__.setdefault("_tg_err_log_ts", {})
@@ -7292,6 +7307,21 @@ class KronosDesktopApp:
                 self.log(f"⚠️ [Telegram] Lỗi gọi {method}: {reason}")
         except Exception:
             pass
+
+    def _tg_tls_set(self, kind: str, reason: str):
+        """Lưu loại lỗi Telegram gần nhất RIÊNG cho luồng đang gọi (luồng nghe lệnh và luồng gửi tin không đè nhau).
+        kind: "" (thành công) / not_sent (chưa gửi đi, gửi lại an toàn) / sent_slow (đã gửi, chờ trả lời quá giờ) / http / other."""
+        try:
+            tls = self.__dict__.setdefault("_tg_tls", threading.local())
+            tls.kind, tls.reason = kind, reason
+        except Exception:
+            pass
+
+    def _tg_tls_get(self, name: str = "kind") -> str:
+        try:
+            return str(getattr(self.__dict__.setdefault("_tg_tls", threading.local()), name, "") or "")
+        except Exception:
+            return ""
 
     def _tg_diag_log(self, msg: str):
         """Log chẩn đoán Telegram, tối đa 1 dòng/60 giây, không bao giờ ném lỗi."""
@@ -7338,6 +7368,7 @@ class KronosDesktopApp:
             ctx = ssl._create_unverified_context()
         except Exception:
             pass
+        self._tg_tls_set("", "")
         try:
             with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
@@ -7358,6 +7389,10 @@ class KronosDesktopApp:
                                                     reply_markup=self._get_telegram_inline_keyboard())
                     if isinstance(res, dict) and res.get("ok"):
                         self._tg_track_kb_message(token, chat_id, res)
+                        return
+                    if self._tg_tls_get("kind") == "sent_slow":
+                        # Ảnh đã gửi đi nhưng Telegram trả lời chậm: ảnh có thể vẫn tới muộn -> không gửi thêm tin chữ (tránh trùng)
+                        self._tg_diag("photo_slow", "Gửi ảnh biểu đồ: Telegram trả lời chậm, ảnh có thể tới muộn -> không gửi thêm tin chữ (tránh trùng).", 60.0)
                         return
                     self._tg_diag_log(f"Gửi ảnh biểu đồ thất bại ({getattr(self, '_tg_last_error', '') or 'không rõ lý do'}) -> gửi tin chữ")
                 else:
@@ -7440,14 +7475,30 @@ class KronosDesktopApp:
                 break
 
             msg_text, reply_markup = item
-            token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
-            chat_id = self._tg_target_chat_id()  # ID nhóm chat, trống -> gửi riêng ID người điều khiển
-
-            if token and chat_id:
+            # Tin CHƯA tới Telegram (lỗi kết nối) -> tự gửi lại sau 5s, 15s, 30s, 60s..., tối đa 10 phút.
+            # Đã gửi nhưng Telegram trả lời chậm -> KHÔNG gửi lại (tin sẽ tới muộn, gửi lại bị trùng).
+            t0 = time.monotonic()
+            n = 0
+            while not getattr(self, "_app_closing", False):
+                token = str(getattr(self, "telegram_bot_token_var", tk.StringVar()).get()).strip()
+                chat_id = self._tg_target_chat_id()  # ID nhóm chat, trống -> gửi riêng ID người điều khiển
+                if not (token and chat_id):
+                    break
                 try:
-                    self._telegram_send_with_keyboard(token, chat_id, msg_text, reply_markup=reply_markup, timeout=12)
+                    res = self._telegram_send_with_keyboard(token, chat_id, msg_text, reply_markup=reply_markup, timeout=12)
                 except Exception:
-                    pass  # không để luồng gửi tin chết vì 1 tin lỗi
+                    break  # không để luồng gửi tin chết vì 1 tin lỗi
+                if (isinstance(res, dict) and res.get("ok")) or self._tg_tls_get("kind") != "not_sent":
+                    break
+                wait = (5, 15, 30, 60)[min(n, 3)]
+                if time.monotonic() - t0 + wait > 600:
+                    self._tg_diag("resend_drop", "Bỏ 1 tin thông báo: 10 phút vẫn chưa kết nối được tới Telegram.", 60.0)
+                    break
+                n += 1
+                self._tg_diag("resend", f"Tin thông báo chưa gửi đi được (lỗi kết nối) -> tự gửi lại sau {wait}s (lần {n}).", 60.0)
+                end = time.monotonic() + wait
+                while time.monotonic() < end and not getattr(self, "_app_closing", False):
+                    time.sleep(0.5)
 
     def _tg_diag(self, key: str, msg: str, every: float = 120.0):
         """Log chẩn đoán Telegram, mỗi loại (key) tối đa 1 dòng / `every` giây; không bao giờ ném lỗi, không in token."""
@@ -7984,7 +8035,7 @@ class KronosDesktopApp:
                 self.root.after(0, lambda: self.show_toast("Đã gửi tin nhắn thử thành công đến Telegram!", is_error=False, duration_ms=3500))
                 self.log("✅ [Telegram] Đã gửi tin nhắn thử nghiệm thành công tới Telegram!")
             else:
-                err_desc = res.get("description", "Không rõ nguyên nhân") if isinstance(res, dict) else (getattr(self, "_tg_last_error", "") or "Lỗi kết nối mạng hoặc sai Token/Chat ID")
+                err_desc = res.get("description", "Không rõ nguyên nhân") if isinstance(res, dict) else (self._tg_tls_get("reason") or getattr(self, "_tg_last_error", "") or "Lỗi kết nối mạng hoặc sai Token/Chat ID")
                 self.root.after(0, lambda: self.show_toast(f"Lỗi gửi Telegram: {err_desc}", is_error=True, duration_ms=4500))
                 self.log(f"❌ [Telegram] Lỗi gửi tin nhắn thử: {err_desc}")
 
