@@ -57,7 +57,7 @@ class TestParamsLock(unittest.TestCase):
         a._apply_params_lock()
         for _row, w in self.rows.values():
             self.assertEqual(str(w.cget("state")), "disabled")
-        self.assertEqual(a.params_lock_btn.cget("text"), "🔒")
+        self.assertEqual(a.params_lock_btn.cget("text"), "🔒 ĐANG KHÓA")
         # đặt giá trị bằng code khi đang khóa vẫn được
         self.vars["rr"].set("3")
         self.assertEqual(self.vars["rr"].get(), "3")
@@ -65,7 +65,7 @@ class TestParamsLock(unittest.TestCase):
         self.assertFalse(a._params_locked)
         for k in ("rr", "auto_be", "be_trigger_r"):
             self.assertEqual(str(self.rows[str(self.vars[k])][1].cget("state")), "normal", k)
-        self.assertEqual(a.params_lock_btn.cget("text"), "🔓")
+        self.assertEqual(a.params_lock_btn.cget("text"), "🔓 ĐÃ MỞ KHÓA")
         # cha tắt -> con vẫn mờ sau khi mở khóa
         self.vars["auto_be"].set(False)
         self.assertEqual(str(self.rows[str(self.vars["be_trigger_r"])][1].cget("state")), "disabled")
