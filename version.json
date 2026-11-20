@@ -1,6 +1,6 @@
 {
-  "version": "1.3.32",
+  "version": "1.3.33",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-19",
-  "description": "Phiên bản v1.3.32:\n- Menu: thêm ổ khóa ở tiêu đề. Mặc định KHÓA: các ô thông số, nút Khôi phục mặc định, Lưu, Xuất/Nhập cấu hình, Kết nối MT5 và Chart Real-Time bị vô hiệu hóa (chữ vẫn đọc được). Bấm ổ khóa để mở.\n- Thêm nút 'Lưu cấu hình mặc định': lấy thông số hiện tại làm mặc định cho các nút 'Khôi phục mặc định' (không gồm Magic, đường dẫn MT5, số luồng AI, token, Telegram).\n- Không đổi luật giao dịch."
+  "release_date": "2026-11-20",
+  "description": "Phiên bản v1.3.33:\n- Telegram: bot tự khởi động lại luồng nghe lệnh khi bị kẹt (khỏi phải restart app), thêm log chẩn đoán [Telegram] (tin nhận, tin bị bỏ, lỗi mạng/409).\n- Lịch sử lệnh: lệnh thoát do TP đã bị bot dời về Entry+ (AI đảo chiều) hiện nhãn 'THOÁT VỀ ENTRY+ - TP ĐÃ DỜI' thay vì 'ĐÃ CHỐT TP'.\n- Không đổi luật giao dịch."
 }
