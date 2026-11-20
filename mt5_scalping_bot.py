@@ -2431,8 +2431,8 @@ class KronosDesktopApp:
         self._params_locked = True
         self._param_syncs = []
         self.params_lock_btn = tk.Button(
-            drawer_header, text="🔒", bg="#7f1d1d", fg="#ffffff",
-            activebackground="#991b1b", activeforeground="#ffffff",
+            drawer_header, text="🔒", bg=PANEL_BG, fg="#ffffff",
+            activebackground=PANEL_BG, activeforeground="#ffffff", bd=0, highlightthickness=0,
             font=("Segoe UI", 12, "bold"), relief=tk.FLAT, width=3, pady=0, cursor="hand2",
             command=self.toggle_params_lock
         )
@@ -6960,11 +6960,8 @@ class KronosDesktopApp:
             except Exception:
                 pass
         try:
-            # Hai trạng thái dễ phân biệt: 🔒 nền đỏ (khóa) / 🔓 nền xanh (đã mở)
-            if locked:
-                self.params_lock_btn.config(text="🔒", bg="#7f1d1d", fg="#ffffff", activebackground="#991b1b", activeforeground="#ffffff")
-            else:
-                self.params_lock_btn.config(text="🔓", bg="#166534", fg="#ffffff", activebackground="#15803d", activeforeground="#ffffff")
+            # Chỉ biểu tượng, không tô nền: 🔒 (khóa) / 🔓 (đã mở)
+            self.params_lock_btn.config(text="🔒" if locked else "🔓", bg=PANEL_BG, activebackground=PANEL_BG)
         except Exception:
             pass
 
