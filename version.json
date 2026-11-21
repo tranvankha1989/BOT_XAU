@@ -1,6 +1,6 @@
 {
-  "version": "1.3.43",
+  "version": "1.3.44",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-21",
-  "description": "Phiên bản v1.3.43:\n- Telegram: tin vào lệnh và tin Phân tích AI có chấm màu theo chiều lệnh: chấm xanh = BUY, chấm đỏ = SELL. Tin đóng lệnh giữ như cũ (chấm xanh = thắng, chấm đỏ = thua).\n- Gồm cả các thay đổi của v1.3.42: đường Vùng canh hiện đúng mức vào lệnh thật, tin Phân tích AI gọn mỗi mã 1 ảnh, ô Nhiệt độ AI ở Mục 4, bấm biểu tượng Taskbar lần nữa để thu nhỏ cửa sổ."
+  "description": "Phiên bản v1.3.44:\n- Xuất / Nhập cấu hình theo từng tab: xuất ở tab nào chỉ lưu thông số tab đó (file XAU_settings_... hoặc BTC_settings_...). Nhập file của tab khác thì báo \"Sai cấu hình\" và không thay đổi gì; nhập đúng tab chỉ đổi tab đó, tab kia giữ nguyên. File không chứa Magic, đường dẫn MT5, số luồng AI, Telegram, HF Token.\n- Telegram: nút bấm gọn 2 hàng (Báo cáo, Phân tích AI, Bật/Dừng Vàng, Bật/Dừng BTC). Chữ nút ghi việc sẽ làm khi bấm. Tin cũ không còn sót nút sau khi mở lại app."
 }
