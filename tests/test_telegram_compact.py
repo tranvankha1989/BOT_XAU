@@ -43,7 +43,8 @@ class TestKeyboard(unittest.TestCase):
         del app.__dict__["_get_telegram_inline_keyboard"]  # dùng hàm thật
         kb = app._get_telegram_inline_keyboard()["inline_keyboard"]
         self.assertEqual([x["callback_data"] for x in kb[0]], ["tg_stats", "tg_ai"])
-        self.assertEqual(kb[1][0]["text"], "🟡 VÀNG: ⏸ DỪNG")
+        self.assertEqual(len(kb), 2)  # gọn 2 hàng 4 nút
+        self.assertEqual([x["text"] for x in kb[1]], ["Dừng Vàng", "Bật BTC"])  # Vàng đang chạy -> bấm để dừng
 
 
 class TestSendWithKeyboard(unittest.TestCase):
@@ -68,6 +69,36 @@ class TestSendWithKeyboard(unittest.TestCase):
         self.assertEqual(calls[2][0][2]["message_id"], 101)
         self.assertEqual(calls[2][0][2]["reply_markup"], {"inline_keyboard": []})
         self.assertEqual(app._tg_last_kb_msg_id, 102)
+
+    def test_mo_lai_app_van_go_nut_tin_cu(self):
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "kb.json")
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        app1 = make_app(_telegram_api_call=self._api(), _tg_kb_state_file=path)
+        app1._telegram_send_with_keyboard("T", "1", "tin 1")  # mã 101, ghi ra file
+        api2 = mock.Mock(side_effect=lambda t, m, d=None, timeout=15: {"ok": True, "result": {"message_id": 301}} if m == "sendMessage" else {"ok": True})
+        app2 = make_app(_telegram_api_call=api2, _tg_kb_state_file=path)  # app mở lại: bộ nhớ trống
+        app2._telegram_send_with_keyboard("T", "1", "tin 2")
+        edit = app2._telegram_api_call.call_args_list[1][0]
+        self.assertEqual((edit[1], edit[2]["message_id"]), ("editMessageReplyMarkup", 101))
+
+    def test_go_nut_loi_mang_thi_thu_lai_lan_sau(self):
+        ids = iter([201, 202])
+        state = {"fail": True}
+
+        def call(token, method, data=None, timeout=15):
+            if method == "sendMessage":
+                return {"ok": True, "result": {"message_id": next(ids)}}
+            if state["fail"]:
+                app._tg_tls_set("not_sent", "x")
+                return None
+            return {"ok": True}
+        app = make_app(_telegram_api_call=mock.Mock(side_effect=call), _tg_last_kb_msg_id=100)
+        app._telegram_send_with_keyboard("T", "1", "a")  # gỡ nút tin 100 lỗi mạng
+        state["fail"] = False
+        app._telegram_send_with_keyboard("T", "1", "b")
+        edited = [c[0][2]["message_id"] for c in app._telegram_api_call.call_args_list if c[0][1] == "editMessageReplyMarkup"]
+        self.assertEqual(edited, [100, 201, 100])  # lần sau gỡ tin 201 và thử lại tin 100
 
     def test_gui_loi_khong_go_nut_cu(self):
         app = make_app(_telegram_api_call=mock.Mock(return_value=None), _tg_last_kb_msg_id=55)

@@ -1165,6 +1165,8 @@ class KronosDesktopApp:
         # Nút bấm chỉ nằm dưới tin Telegram MỚI NHẤT: nhớ mã tin đang có nút để gỡ khi gửi tin mới
         self._tg_kb_lock = threading.Lock()
         self._tg_last_kb_msg_id = None
+        # Nhớ tin đang có nút qua lần mở app sau (cập nhật/khởi động lại), để tin cũ không còn sót nút (21/11/2026)
+        self._tg_kb_state_file = os.path.join(SETTINGS_DIR, "telegram_kb_state.json")
 
         # Trạng thái Module Kiểm thử Chiến Lược (Backtest Tick-Level Engine)
         self._backtest_unlocked = False
@@ -7571,22 +7573,20 @@ class KronosDesktopApp:
         xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
         btc_running = bool(self.profile_ctx.get("BTCUSD", {}).get("auto_loop_running", False))
 
-        xau_text = "🟡 VÀNG: ⏸ DỪNG" if xau_running else "🟡 VÀNG: ▶️ BẬT"
-        btc_text = "🟠 BTC: ⏸ DỪNG" if btc_running else "🟠 BTC: ▶️ BẬT"
+        # Gọn 2 hàng 4 nút (người dùng chọn 21/11/2026): chữ nút ghi việc SẼ LÀM khi bấm ("Bật Vàng" = Vàng đang tắt, bấm để bật).
+        # Bỏ nút Dừng/Bật Cả 2 (tin cũ còn nút đó vẫn bấm được: callback tg_stop_all / tg_start_all giữ nguyên).
+        xau_text = "Dừng Vàng" if xau_running else "Bật Vàng"
+        btc_text = "Dừng BTC" if btc_running else "Bật BTC"
 
         return {
             "inline_keyboard": [
                 [
-                    {"text": "📊 Báo cáo", "callback_data": "tg_stats"},
-                    {"text": "🧠 Phân tích AI", "callback_data": "tg_ai"}
+                    {"text": "Báo cáo", "callback_data": "tg_stats"},
+                    {"text": "Phân tích AI", "callback_data": "tg_ai"}
                 ],
                 [
                     {"text": xau_text, "callback_data": "tg_toggle_xau"},
                     {"text": btc_text, "callback_data": "tg_toggle_btc"}
-                ],
-                [
-                    {"text": "⏸️ Dừng Cả 2", "callback_data": "tg_stop_all"},
-                    {"text": "▶️ Bật Cả 2", "callback_data": "tg_start_all"}
                 ]
             ]
         }
@@ -7612,15 +7612,51 @@ class KronosDesktopApp:
             return res
         with lock:
             old_id = getattr(self, "_tg_last_kb_msg_id", None)
+            old_chat = chat_id
+            if old_id is None and not self.__dict__.get("_tg_kb_state_loaded"):
+                # Lần gửi đầu sau khi mở app: lấy tin có nút của lần chạy trước (nếu có) để gỡ nút
+                self._tg_kb_state_loaded = True
+                st = self._tg_kb_state_load()
+                if st:
+                    old_chat, old_id = st
             self._tg_last_kb_msg_id = new_id
-        if old_id and old_id != new_id:
+            self._tg_kb_state_save(chat_id, new_id)
+            stale = list(self.__dict__.get("_tg_kb_stale") or [])
+            self._tg_kb_stale = []
+        targets = ([(old_chat, old_id)] if old_id and old_id != new_id else []) + [x for x in stale if x[1] != new_id]
+        for t_chat, t_id in targets:
             try:
-                self._telegram_api_call(token, "editMessageReplyMarkup", {
-                    "chat_id": chat_id, "message_id": old_id, "reply_markup": {"inline_keyboard": []},
+                r = self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": t_chat, "message_id": t_id, "reply_markup": {"inline_keyboard": []},
                 }, timeout=10)
+                if not (isinstance(r, dict) and r.get("ok")) and self._tg_tls_get("kind") in ("not_sent", "sent_slow"):
+                    with lock:  # lỗi kết nối: thử gỡ lại ở lần gửi tin có nút sau (giữ tối đa 5 tin)
+                        self._tg_kb_stale = (list(self.__dict__.get("_tg_kb_stale") or []) + [(t_chat, t_id)])[-5:]
             except Exception:
                 pass
         return res
+
+    def _tg_kb_state_load(self):
+        """(chat_id, mã tin) đang có nút của lần chạy trước, hoặc None. Không có đường dẫn (test/app chưa khởi tạo) -> None."""
+        p = self.__dict__.get("_tg_kb_state_file")
+        if not p:
+            return None
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            return str(d["chat_id"]), int(d["kb_msg_id"])
+        except Exception:
+            return None
+
+    def _tg_kb_state_save(self, chat_id, msg_id):
+        p = self.__dict__.get("_tg_kb_state_file")
+        if not p:
+            return
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"chat_id": str(chat_id), "kb_msg_id": int(msg_id)}, f)
+        except Exception:
+            pass
 
     def _telegram_dispatcher_loop(self):
         """Luồng ngầm gửi tin nhắn từ hàng đợi ra Telegram hoàn toàn bất đồng bộ (0 giật lag UI / 0 nghẽn MT5)."""
