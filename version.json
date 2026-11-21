@@ -1,6 +1,6 @@
 {
-  "version": "1.3.42",
+  "version": "1.3.43",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-21",
-  "description": "Phiên bản v1.3.42:\n- Biểu đồ: đường Vùng canh hiện đúng mức giá bot thật sự chịu vào lệnh (đã tính SL tối đa, RR 2R tới TP, RR thật tối thiểu nếu bật; lệnh BUY đã trừ spread). Nhãn ghi rõ điều kiện đang giới hạn.\n- Telegram nút Phân tích AI: mỗi mã đang AUTO BẬT gửi 1 ảnh biểu đồ kèm 2 dòng gọn (tín hiệu, vùng canh, lệnh đang mở, kết quả hôm nay). Mã AUTO TẮT không gửi ảnh và lệnh, chỉ 1 dòng.\n- Mục 4: ô mới \"Nhiệt độ AI (T, 0 = tự động)\". Để 0 thì chạy như cũ; nhập số thì AI dùng đúng số đó.\n- Cửa sổ: bấm biểu tượng app trên thanh Taskbar lần nữa thì thu nhỏ cửa sổ."
+  "description": "Phiên bản v1.3.43:\n- Telegram: tin vào lệnh và tin Phân tích AI có chấm màu theo chiều lệnh: chấm xanh = BUY, chấm đỏ = SELL. Tin đóng lệnh giữ như cũ (chấm xanh = thắng, chấm đỏ = thua).\n- Gồm cả các thay đổi của v1.3.42: đường Vùng canh hiện đúng mức vào lệnh thật, tin Phân tích AI gọn mỗi mã 1 ảnh, ô Nhiệt độ AI ở Mục 4, bấm biểu tượng Taskbar lần nữa để thu nhỏ cửa sổ."
 }

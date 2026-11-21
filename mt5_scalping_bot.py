@@ -7465,7 +7465,8 @@ class KronosDesktopApp:
         if not info:
             parts.append("chưa có phân tích AI")
         elif act in ("BUY", "SELL"):
-            parts.append(f"{act} {ctx['cached_consensus']}%" if ctx.get("cached_consensus") else act)
+            dot = "🟢" if act == "BUY" else "🔴"  # chấm màu theo chiều (người dùng yêu cầu 21/11/2026)
+            parts.append(f"{dot} {act} {ctx['cached_consensus']}%" if ctx.get("cached_consensus") else f"{dot} {act}")
         else:
             parts.append("ĐỨNG NGOÀI")
         try:
@@ -8083,8 +8084,10 @@ class KronosDesktopApp:
         sym_tag = "VÀNG" if "XAU" in symbol.upper() or "GOLD" in symbol.upper() else symbol
 
         # Tin gọn 2 dòng (người dùng chọn 19/11/2026); nút bấm do hàm gửi gắn vào tin mới nhất
+        # Chấm màu theo chiều lệnh (người dùng yêu cầu 21/11/2026): BUY 🟢, SELL 🔴
+        dir_dot = "🟢" if str(action).upper() == "BUY" else "🔴"
         msg = (
-            f"🚀 {sym_tag} {action} {lot:.2f} @ {price:.2f} · {now_str}\n"
+            f"{dir_dot} {sym_tag} {action} {lot:.2f} @ {price:.2f} · {now_str}\n"
             f"SL {sl:.2f} (-{sl_dist:.2f}) · TP {tp:.2f} (+{tp_dist:.2f} · {rr_val:.1f}R){ai_str} · #{ticket}"
         )
         self._telegram_queue.put((msg, None))
