@@ -11025,7 +11025,7 @@ class KronosDesktopApp:
             d_lim, why = min(limits, key=lambda x: x[0])
             gate = round(sl_ai + sgn * d_lim, 2)
             line = round(gate - spread, 2) if action == "BUY" else gate
-            return {"gate": gate, "line": line, "why": why, "ok": d_lim > 0.0}
+            return {"gate": gate, "line": line, "why": why, "ok": d_lim > 0.0, "spread": spread}
         except Exception:
             return None
 
@@ -13751,6 +13751,8 @@ class KronosDesktopApp:
                         "target_tp_price": tp_price,
                         "atr": atr,
                     }
+                    if tick is not None:  # biểu đồ vẽ ngay sau phân tích (trước vòng tick đầu) cũng trừ được spread
+                        self.__dict__.setdefault("_zone_spread", {})[pk] = max(float(tick.ask - tick.bid), 0.0)
                     _zl = self._zone_entry_limit(zone_watch_order, pk, tick)  # chỉ hiển thị: mức vào thật (giống đường Vùng canh trên biểu đồ)
                     zone_show = _zl["line"] if _zl else limit_entry_price
                     if self._is_daily_limit_locked(pk):
@@ -14364,9 +14366,26 @@ class KronosDesktopApp:
             _zl = self._zone_entry_limit(p, self.active_profile_key)
             if _zl:  # mức vào THẬT: qua cả cổng SL tối đa + RR, BUY đã trừ spread (biểu đồ theo Bid)
                 lim_entry = _zl["line"]
-                zone_why = (_zl["why"] + (", đã trừ spread" if p["action"] == "BUY" else "")) if _zl["ok"] else f"KHÔNG vào được: {_zl['why']}"
+                zone_why = (_zl["why"] + (", đã trừ spread" if p["action"] == "BUY" and _zl.get("spread", 0) > 0 else "")) if _zl["ok"] else f"KHÔNG vào được: {_zl['why']}"
             op_sign = "<=" if p["action"] == "BUY" else ">="
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=0.85, alpha=0.80)
+            # Đáy vùng = SL gốc AI (chỉ hiển thị): giá vượt qua mức này thì bot KHÔNG vào (nến khung vào lệnh đóng qua -> hủy vùng).
+            # Tô dải giữa đáy và mức vào để thấy vùng vào lệnh có 2 đầu, không phải "cứ dưới đường vàng là vào".
+            try:
+                sl_root = float(p.get("sl_ai_price") or 0.0)
+                if sl_root > 0.0 and _zl and _zl["ok"]:
+                    self.ax.axhspan(min(sl_root, lim_entry), max(sl_root, lim_entry), color=GOLD_ACCENT, alpha=0.07, zorder=1)
+                    self.ax.axhline(y=sl_root, color=GOLD_ACCENT, linestyle=":", linewidth=0.8, alpha=0.70)
+                    t_floor = self.ax.text(
+                        base_label_x, sl_root,
+                        f" Mép vùng {sl_root:.2f} (SL gốc AI): giá qua mức này bot không vào ",
+                        color=GOLD_ACCENT,
+                        bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor=GOLD_ACCENT, lw=0.6, alpha=0.85),
+                        fontsize=6.8, va="center", clip_on=True
+                    )
+                    self._pos_text_artists.append((t_floor, 1))
+            except Exception:
+                pass
             tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
             t_wait = self.ax.text(
                 base_label_x, lim_entry,

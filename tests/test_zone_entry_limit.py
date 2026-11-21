@@ -53,6 +53,16 @@ class TestZoneEntryLimit(unittest.TestCase):
         app._zone_spread = {"BTCUSD": 10.0}
         z = app._zone_entry_limit(P_BUY, "BTCUSD")
         self.assertAlmostEqual(z["line"], z["gate"] - 10.0, places=2)
+        self.assertEqual(z["spread"], 10.0)
+        # chưa có spread (vd vừa mở app, biểu đồ vẽ trước vòng tick đầu): không trừ, nhãn không được ghi "đã trừ spread"
+        z0 = make_app({"rr": 2.0})._zone_entry_limit(P_BUY, "BTCUSD")
+        self.assertEqual((z0["line"], z0["spread"]), (z0["gate"], 0.0))
+
+    def test_phan_tich_luu_spread_truoc_khi_ve(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mt5_scalping_bot.py"), encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("_zl = self._zone_entry_limit(zone_watch_order, pk, tick)")
+        self.assertIn('self.__dict__.setdefault("_zone_spread", {})[pk] = max(float(tick.ask - tick.bid), 0.0)', src[i - 300:i])
 
     def test_replay_dai_vung_canh_dung_muc_that(self):
         import json
