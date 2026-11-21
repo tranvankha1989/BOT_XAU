@@ -831,6 +831,17 @@ class EventStream:
             if cap > 0.0 and sl_ai > 0.0:
                 far, brk = cap + float(tols.get("max_sl_tol", 0.05)), float(tols.get("sl_break_tol", 0.25))
                 lo, hi = (sl_ai - far, sl_ai - brk) if action == "SELL" else (sl_ai + brk, sl_ai + far)
+            # Mức vào THẬT (qua cả cổng RR, BUY trừ spread) giống đường Vùng canh trên biểu đồ live
+            zl_fn = getattr(self.app, "_zone_entry_limit", None)
+            _zl = zl_fn(p, self.pk, self.broker.symbol_info_tick(self.symbol)) if callable(zl_fn) else None
+            if _zl:
+                brk = float(tols.get("sl_break_tol", 0.25))
+                if not _zl["ok"]:
+                    lo = hi = None
+                elif action == "SELL":
+                    lo, hi = _zl["line"], sl_ai - brk
+                else:
+                    lo, hi = sl_ai + brk, _zl["line"]
             self._w({"type": "zone", "t": round(float(t), 3), "action": action, "lo": lo, "hi": hi, "sl_ai": sl_ai,
                      "sl": float(p.get("sl_price", 0.0) or 0.0), "tp": float(p.get("target_tp_price") or p.get("tp_price") or 0.0)})
         except Exception:

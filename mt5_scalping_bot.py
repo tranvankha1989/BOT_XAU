@@ -7827,6 +7827,9 @@ class KronosDesktopApp:
                     if eff > 0.0:
                         is_buy = pend["action"] == "BUY"
                         zone = float(pend["sl_ai_price"]) + (eff if is_buy else -eff)
+                        _zl = self._zone_entry_limit(pend, pk)
+                        if _zl:
+                            zone = _zl["line"]
                         lines.append(f"⏳ Đang canh vùng {pend['action']} {'≤' if is_buy else '≥'} {zone:.2f}")
                 parts.append("\n".join(x for x in lines if x))
             except Exception:
@@ -8447,6 +8450,9 @@ class KronosDesktopApp:
             except (ValueError, TypeError):
                 max_sl_p = 5.0
             lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
+            _zl = self._zone_entry_limit(p, self.active_profile_key)
+            if _zl:
+                lim_entry = _zl["line"]
             lows.append(float(lim_entry))
             highs.append(float(lim_entry))
 
@@ -10727,6 +10733,55 @@ class KronosDesktopApp:
         except Exception:
             pass
 
+    def _zone_entry_limit(self, p, pk: str = None, tick=None):
+        """CHỈ HIỂN THỊ (không đổi cổng vào lệnh): mức giá vào THẬT của vùng canh = mức xa nhất giá còn qua các cổng GIÁ của
+        _check_pending_pullback_order + execute_mt5_order: SL tối đa (neo SL AI gốc + dung sai), RR >= max(rr, 2) tới TP của vùng,
+        RR thật tối thiểu (min_real_rr, SL thật gồm Giá an toàn) nếu bật. Cổng đo BUY bằng Ask, SELL bằng Bid; biểu đồ vẽ theo Bid
+        nên mức BUY trừ spread hiện tại. Không gọi MT5. Trả dict {gate, line, why, ok} hoặc None nếu thiếu dữ liệu."""
+        try:
+            pk = pk or self.active_profile_key
+            action = p["action"]
+            sgn = 1.0 if action == "BUY" else -1.0
+            sl_ai = float(p.get("sl_ai_price") or p["sl_price"])
+            sl_real = float(p.get("sl_price") or sl_ai)
+            cfg = self._get_profile_cfg(pk)
+            try:
+                rr = max(float(cfg.get("rr", 2.0)), 0.0)
+            except (ValueError, TypeError):
+                rr = 2.0
+            try:
+                min_real_rr = max(float(cfg.get("min_real_rr", 0.0) or 0.0), 0.0)
+            except (ValueError, TypeError):
+                min_real_rr = 0.0
+            try:
+                cap = float(p.get("effective_max_sl", cfg.get("max_sl_price", 5.0)) or 0.0)
+            except (ValueError, TypeError):
+                cap = 0.0
+            if tick is not None:
+                spread = max(float(tick.ask - tick.bid), 0.0)
+            else:
+                spread = max(float(self.__dict__.get("_zone_spread", {}).get(pk, 0.0) or 0.0), 0.0)
+            limits = []
+            if cap > 0.0:
+                tol = float(symbol_tolerances(p.get("symbol") or "", spread, 0.0).get("max_sl_tol", 0.05))
+                limits.append((cap + tol, f"SL≤{cap:.2f}$"))
+            tp = p.get("target_tp_price")
+            if tp:
+                d_tp = sgn * (float(tp) - sl_ai)  # khoảng từ SL AI gốc tới TP
+                req_rr = max(rr, 2.0)
+                limits.append((d_tp / (1.0 + req_rr), f"RR≥{req_rr:g}R"))
+                if min_real_rr > 0.0:
+                    buf = max(sgn * (sl_ai - sl_real), 0.0)  # Giá an toàn
+                    limits.append(((d_tp - min_real_rr * buf) / (1.0 + min_real_rr), f"RR thật≥{min_real_rr:g}R"))
+            if not limits:
+                return None
+            d_lim, why = min(limits, key=lambda x: x[0])
+            gate = round(sl_ai + sgn * d_lim, 2)
+            line = round(gate - spread, 2) if action == "BUY" else gate
+            return {"gate": gate, "line": line, "why": why, "ok": d_lim > 0.0}
+        except Exception:
+            return None
+
     def _check_pending_pullback_order(self, symbol: str, tick, profile_key: str = None):
         """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa thì khớp lệnh ngay khi đạt (Có khóa chống đúp lệnh)."""
         pk = profile_key or self.active_profile_key
@@ -10777,6 +10832,7 @@ class KronosDesktopApp:
         sl_ref = float(_sl_ai_raw) if use_sl_ai else sl_price
         cur_price = tick.ask if action == "BUY" else tick.bid
         spread_usd = tick.ask - tick.bid
+        self.__dict__.setdefault("_zone_spread", {})[pk] = spread_usd  # chỉ để vẽ đường Vùng canh (_zone_entry_limit)
         tols = self._get_symbol_tolerances(symbol, tick)
 
         cur_sl_dist = (cur_price - sl_ref) if action == "BUY" else (sl_ref - cur_price)
@@ -10946,6 +11002,9 @@ class KronosDesktopApp:
                 except (ValueError, TypeError):
                     max_sl_p = 5.0
                 lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
+                _zl = self._zone_entry_limit(p, self.active_profile_key, tick)
+                if _zl:
+                    lim_entry = _zl["line"]
                 rr_tag = " (RR>=2R)" if p.get("sl_tightened_for_2r") else ""
                 op_sign = "<=" if p["action"] == "BUY" else ">="
                 ai_state = f"Canh vùng {p['action']}{rr_tag} {op_sign} {lim_entry:.2f}"
@@ -13433,6 +13492,8 @@ class KronosDesktopApp:
                         "target_tp_price": tp_price,
                         "atr": atr,
                     }
+                    _zl = self._zone_entry_limit(zone_watch_order, pk, tick)  # chỉ hiển thị: mức vào thật (giống đường Vùng canh trên biểu đồ)
+                    zone_show = _zl["line"] if _zl else limit_entry_price
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
                         reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
@@ -13444,23 +13505,23 @@ class KronosDesktopApp:
                         self.log(f"[{pk}] {trade_msg}")
                     elif has_losing_opposite_pos and not self._cfg_flag(cfg, "allow_opposite_entry"):
                         ctx["pending_pullback_order"] = zone_watch_order
-                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {limit_entry_price:.2f})"
+                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {zone_show:.2f})"
                         self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
                     elif effective_max_sl > 0.0 and abs(entry_ref - sl_ai_price) > effective_max_sl + tols["max_sl_tol"]:
                         ctx["pending_pullback_order"] = zone_watch_order
                         cond_op = "<=" if action == "BUY" else ">="
                         tight_tag = " [Siết 1/2 Max SL do RR < 2R]" if sl_tightened_for_2r else ""
                         trade_msg = (
-                            f"🎯 AI {analysis_tf} đã chốt vùng {action} -> Python đang canh giá về {cond_op} {limit_entry_price:.2f} "
+                            f"🎯 AI {analysis_tf} đã chốt vùng {action} -> Python đang canh giá về {cond_op} {zone_show:.2f} "
                             f"(SL: {sl_price:.2f} [Max {effective_max_sl:.2f}${tight_tag}], TP: {tp_price:.2f})"
                         )
                         self.log(
                             f"🎯 [{pk} - Canh Vùng Giá AI {analysis_tf}{tight_tag}] AI báo {action} (SL: {sl_price:.2f}, TP: {tp_price:.2f}, cách SL {cur_sl_dist:.2f}$ > Max {effective_max_sl:.2f}$). "
-                            f"Python đang canh giá {scalp_tf}/Tick về vùng {cond_op} {limit_entry_price:.2f} để tự động vào lệnh!"
+                            f"Python đang canh giá {scalp_tf}/Tick về vùng {cond_op} {zone_show:.2f} để tự động vào lệnh!"
                         )
                     elif spread_usd > max_spread:
                         ctx["pending_pullback_order"] = zone_watch_order
-                        trade_msg = f"⚠️ Spread hiện tại cao ({spread_usd:.2f}$ > {max_spread}$) — Đang canh Spread hạ trong vùng {action} @ {limit_entry_price:.2f}"
+                        trade_msg = f"⚠️ Spread hiện tại cao ({spread_usd:.2f}$ > {max_spread}$) — Đang canh Spread hạ trong vùng {action} @ {zone_show:.2f}"
                         self.log(f"[{pk}] {trade_msg}")
                     elif is_auto_on and self._last_order_candle_ts.get(pk) == last_time:
                         ctx["pending_pullback_order"] = zone_watch_order
@@ -13494,7 +13555,7 @@ class KronosDesktopApp:
                             self.log(ord_msg)
                     else:
                         ctx["pending_pullback_order"] = zone_watch_order
-                        self.log(f"[{pk}] Có vùng tín hiệu {action} {symbol} @ {limit_entry_price:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Python tự canh giá vào lệnh.")
+                        self.log(f"[{pk}] Có vùng tín hiệu {action} {symbol} @ {zone_show:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Python tự canh giá vào lệnh.")
                 else:
                     ctx["pending_pullback_order"] = None
                     if is_high_uncertainty:
@@ -14040,12 +14101,17 @@ class KronosDesktopApp:
             except (ValueError, TypeError):
                 max_sl_p = 5.0
             lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
+            zone_why = f"SL≤{max_sl_p:.2f}$"
+            _zl = self._zone_entry_limit(p, self.active_profile_key)
+            if _zl:  # mức vào THẬT: qua cả cổng SL tối đa + RR, BUY đã trừ spread (biểu đồ theo Bid)
+                lim_entry = _zl["line"]
+                zone_why = (_zl["why"] + (", đã trừ spread" if p["action"] == "BUY" else "")) if _zl["ok"] else f"KHÔNG vào được: {_zl['why']}"
             op_sign = "<=" if p["action"] == "BUY" else ">="
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=0.85, alpha=0.80)
             tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
             t_wait = self.ax.text(
                 base_label_x, lim_entry,
-                f" 🎯 Vùng canh {p['action']}{tight_tag} {op_sign} {lim_entry:.2f} (SL≤{max_sl_p:.2f}$) ",
+                f" 🎯 Vùng canh {p['action']}{tight_tag} {op_sign} {lim_entry:.2f} ({zone_why}) ",
                 color=GOLD_ACCENT,
                 bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor=GOLD_ACCENT, lw=0.8, alpha=0.88),
                 fontsize=7.2, fontweight="bold", va="center", clip_on=True
