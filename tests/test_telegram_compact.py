@@ -100,6 +100,14 @@ class TestSendWithKeyboard(unittest.TestCase):
         edited = [c[0][2]["message_id"] for c in app._telegram_api_call.call_args_list if c[0][1] == "editMessageReplyMarkup"]
         self.assertEqual(edited, [100, 201, 100])  # lần sau gỡ tin 201 và thử lại tin 100
 
+    def test_bam_nut_o_tin_cu_thi_go_nut_tin_do(self):
+        # Tin 7 còn nút từ bản cũ (bot không nhớ), tin 50 đang giữ nút: bấm Báo cáo ở tin 7 -> gỡ nút cả 7 và 50
+        app = make_app(_telegram_api_call=self._api(), _tg_last_kb_msg_id=50)
+        app._handle_telegram_callback({"id": "c", "data": "tg_stats", "message": {"message_id": 7}}, "1", "T")
+        edited = sorted(c[0][2]["message_id"] for c in app._telegram_api_call.call_args_list if c[0][1] == "editMessageReplyMarkup")
+        self.assertEqual(edited, [7, 50])
+        self.assertEqual(app._tg_last_kb_msg_id, 101)
+
     def test_gui_loi_khong_go_nut_cu(self):
         app = make_app(_telegram_api_call=mock.Mock(return_value=None), _tg_last_kb_msg_id=55)
         self.assertIsNone(app._telegram_send_with_keyboard("T", "1", "tin"))
