@@ -7388,31 +7388,157 @@ class KronosDesktopApp:
             return None
 
     def _telegram_send_ai_report(self, token: str, chat_id: str):
-        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ khung scalp kèm chữ phân tích + nút bấm
-        trong CÙNG 1 tin (nhanh hơn: 1 lần gửi thay vì 2). Chữ dài quá giới hạn chú thích ảnh (1024 ký tự) thì gửi ảnh rồi tin chữ.
-        Chụp/gửi ảnh lỗi thì vẫn gửi tin chữ như cũ."""
-        report = self._generate_telegram_ai_report()
-        try:
-            png = self._tg_capture_chart_png()
+        """Nút 'Phân tích AI' / lệnh /ai (mẫu người dùng chọn 21/11/2026): mỗi mã đang AUTO BẬT gửi 1 ẢNH biểu đồ khung scalp
+        kèm 2 dòng ngắn (_tg_ai_brief); mã AUTO TẮT không gửi ảnh/lệnh, chỉ 1 dòng 'AUTO TẮT' ở tin cuối. Nút bấm gắn ở tin cuối.
+        Ảnh lỗi -> gửi chữ; ảnh đã gửi nhưng Telegram trả lời chậm -> không gửi thêm chữ (tránh trùng)."""
+        on, off = [], []
+        for pk, name in (("XAUUSD", "VÀNG"), ("BTCUSD", "BTC")):
+            ctx = (getattr(self, "profile_ctx", None) or {}).get(pk) or {}
+            (on if bool(ctx.get("auto_loop_running", False)) else off).append((pk, name))
+        off_txt = "\n".join(f"{name} · AUTO TẮT" for _, name in off)
+        if not on:
+            self._telegram_send_with_keyboard(token, chat_id, off_txt)
+            return
+        for i, (pk, name) in enumerate(on):
+            last = i == len(on) - 1
+            try:
+                cap = self._tg_ai_brief(pk)
+            except Exception:
+                cap = f"{name} · AUTO BẬT"
+            if last and off_txt:
+                cap += "\n" + off_txt
+            try:
+                png = self._tg_chart_png_for(pk)
+            except Exception:
+                png = None
             if png:
-                if len(self._tg_plain_text(report) or "") <= 1024:
-                    res = self._telegram_send_photo(token, chat_id, png, report,
-                                                    reply_markup=self._get_telegram_inline_keyboard())
-                    if isinstance(res, dict) and res.get("ok"):
+                self._tg_tls_set("", "")
+                try:
+                    res = self._telegram_send_photo(token, chat_id, png, cap,
+                                                    reply_markup=self._get_telegram_inline_keyboard() if last else None)
+                except Exception:
+                    res = None
+                if isinstance(res, dict) and res.get("ok"):
+                    if last:
                         self._tg_track_kb_message(token, chat_id, res)
-                        return
-                    if self._tg_tls_get("kind") == "sent_slow":
-                        # Ảnh đã gửi đi nhưng Telegram trả lời chậm: ảnh có thể vẫn tới muộn -> không gửi thêm tin chữ (tránh trùng)
-                        self._tg_diag("photo_slow", "Gửi ảnh biểu đồ: Telegram trả lời chậm, ảnh có thể tới muộn -> không gửi thêm tin chữ (tránh trùng).", 60.0)
-                        return
-                    self._tg_diag_log(f"Gửi ảnh biểu đồ thất bại ({getattr(self, '_tg_last_error', '') or 'không rõ lý do'}) -> gửi tin chữ")
-                else:
-                    pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
-                    name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
-                    self._telegram_send_photo(token, chat_id, png, f"Biểu đồ {name} lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}")
+                    continue
+                if self._tg_tls_get("kind") == "sent_slow":
+                    # Ảnh đã gửi đi nhưng Telegram trả lời chậm: ảnh có thể vẫn tới muộn -> không gửi thêm tin chữ (tránh trùng)
+                    self._tg_diag("photo_slow", "Gửi ảnh biểu đồ: Telegram trả lời chậm, ảnh có thể tới muộn -> không gửi thêm tin chữ (tránh trùng).", 60.0)
+                    continue
+                self._tg_diag_log(f"Gửi ảnh biểu đồ {name} thất bại ({getattr(self, '_tg_last_error', '') or 'không rõ lý do'}) -> gửi tin chữ")
+            if last:
+                self._telegram_send_with_keyboard(token, chat_id, cap)
+            else:
+                self._telegram_api_call(token, "sendMessage", {"chat_id": chat_id, "text": cap})
+
+    def _tg_ai_brief(self, pk: str) -> str:
+        """Chữ gọn 2 dòng cho 1 mã (mẫu B, người dùng chọn 21/11/2026). Dòng 1: tên + giờ phân tích AI + AUTO + kết luận AI
+        + vùng canh (mức vào thật) / tạm nghỉ / dừng hôm nay. Dòng 2: lệnh đang mở + kết quả lệnh đã đóng hôm nay.
+        Chỉ đọc dữ liệu đã có + lệnh của bot (lọc Magic), không gọi AI. Phần nào lỗi thì ghi '?'."""
+        name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+        ctx = (getattr(self, "profile_ctx", None) or {}).get(pk) or {}
+        info = ctx.get("_tg_ai_info") if isinstance(ctx.get("_tg_ai_info"), dict) else {}
+        parts = [f"{name} {str(info.get('ts', ''))[:5]}".strip(), "AUTO BẬT"]
+        act = ctx.get("cached_action")
+        if not info:
+            parts.append("chưa có phân tích AI")
+        elif act in ("BUY", "SELL"):
+            parts.append(f"{act} {ctx['cached_consensus']}%" if ctx.get("cached_consensus") else act)
+        else:
+            parts.append("ĐỨNG NGOÀI")
+        try:
+            if self._is_daily_limit_locked(pk):
+                parts.append("dừng hôm nay")
+            elif self._is_cooldown_active(pk):
+                parts.append(self._get_cooldown_remaining_str(pk).replace("Tạm ngưng giao dịch do ", "nghỉ: ").replace("Tạm ngưng", "nghỉ"))
+            else:
+                pend = self.pending_pullback_order if pk == getattr(self, "active_profile_key", None) else ctx.get("pending_pullback_order")
+                if isinstance(pend, dict) and pend.get("zone_watch") and pend.get("action") in ("BUY", "SELL"):
+                    zl = self._zone_entry_limit(pend, pk)
+                    if zl and zl["ok"]:
+                        parts.append(f"canh {'<=' if pend['action'] == 'BUY' else '>='} {zl['line']:.2f}")
+                    elif zl:
+                        parts.append("vùng canh không vào được")
         except Exception:
             pass
-        self._telegram_send_with_keyboard(token, chat_id, report)
+        symbol = ""
+        try:
+            symbol = str(self._get_profile_cfg(pk).get("symbol", "")).strip()
+        except Exception:
+            pass
+        pos_txt = "?"
+        try:
+            poss = self._get_bot_positions(symbol, profile_key=pk) if symbol else []
+            if poss:
+                buy_t = getattr(mt5, "POSITION_TYPE_BUY", 0)
+                nb = sum(1 for p in poss if p.type == buy_t)
+                ns = len(poss) - nb
+                sides = ", ".join(s for s in (f"{nb} BUY" if nb else "", f"{ns} SELL" if ns else "") if s)
+                pos_txt = f"{sides} {sum(float(getattr(p, 'profit', 0.0) or 0.0) for p in poss):+.2f}$"
+            else:
+                pos_txt = "không có"
+        except Exception:
+            pass
+        day_txt = "?"
+        try:
+            deals = self._get_today_closed_deals(symbol, profile_key=pk) if symbol else []
+            if deals:
+                day_txt = f"{sum(float(d.get('net_pnl', 0.0) or 0.0) for d in deals):+.2f}$ ({len(deals)} lệnh)"
+            else:
+                day_txt = "chưa có lệnh"
+        except Exception:
+            pass
+        return " · ".join(parts) + f"\nLệnh: {pos_txt} · Hôm nay: {day_txt}"
+
+    def _tg_chart_png_for(self, pk: str):
+        """Ảnh biểu đồ cho 1 mã: tab đang mở -> chụp biểu đồ chính (như trước); mã chạy ngầm -> vẽ ảnh gọn riêng."""
+        if pk == getattr(self, "active_profile_key", None):
+            return self._tg_capture_chart_png()
+        return self._tg_render_profile_png(pk)
+
+    def _tg_render_profile_png(self, pk: str):
+        """Ảnh gọn khung SCALP cho mã chạy ngầm (không mở tab): nến, SL/TP AI, đường Vùng canh (mức vào thật),
+        lệnh đang mở (Entry/SL/TP), giá hiện tại. Vẽ ở luồng Telegram bằng Figure riêng, không đụng biểu đồ chính. Lỗi -> None."""
+        try:
+            from trading_modules.tg_chart import render_chart_png
+            cfg = self._get_profile_cfg(pk)
+            symbol = str(cfg.get("symbol", "")).strip()
+            tf = str(cfg.get("tf", "M1")).strip() or "M1"
+            if not symbol:
+                return None
+            df = self.fetch_mt5_candles(symbol, tf, 150, include_forming=True)
+            ctx = self.profile_ctx.get(pk) or {}
+            lines = []
+            if ctx.get("cached_action") in ("BUY", "SELL"):
+                if ctx.get("cached_sl"):
+                    lines.append({"price": ctx["cached_sl"], "color": RED_DOWN, "label": "SL AI"})
+                if ctx.get("cached_tp"):
+                    lines.append({"price": ctx["cached_tp"], "color": GREEN_UP, "label": "TP AI"})
+            pend = ctx.get("pending_pullback_order")
+            if isinstance(pend, dict) and pend.get("action") in ("BUY", "SELL"):
+                zl = self._zone_entry_limit(pend, pk)
+                if zl and zl["ok"]:
+                    op = "<=" if pend["action"] == "BUY" else ">="
+                    lines.append({"price": zl["line"], "color": GOLD_ACCENT, "label": f"Vùng canh {pend['action']} {op} {zl['line']:.2f}"})
+            buy_t = getattr(mt5, "POSITION_TYPE_BUY", 0)
+            for p in self._get_bot_positions(symbol, profile_key=pk) or []:
+                side = "BUY" if p.type == buy_t else "SELL"
+                lines.append({"price": p.price_open, "color": "#90caf9", "ls": "-",
+                              "label": f"#{p.ticket} {side} {float(p.volume):g} ({float(p.profit):+.2f}$)"})
+                if p.sl:
+                    lines.append({"price": p.sl, "color": RED_DOWN, "label": f"#{p.ticket} SL", "ls": ":"})
+                if p.tp:
+                    lines.append({"price": p.tp, "color": GREEN_UP, "label": f"#{p.ticket} TP", "ls": ":"})
+            with self._mt5_lock:
+                tick = mt5.symbol_info_tick(symbol)
+            last = float(tick.bid) if tick else float(df["close"].iloc[-1])
+            name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+            title = f"{name} {symbol} ({tf}) · {datetime.now(tz=VN_TZ).strftime('%H:%M')} · Giá {last:.2f}"
+            return render_chart_png(df, title, lines, last_price=last, up=GREEN_UP, down=RED_DOWN)
+        except Exception as e:
+            self._tg_diag_log(f"Vẽ ảnh biểu đồ {pk} lỗi ({e}) -> chỉ gửi chữ")
+            return None
 
     def _get_telegram_inline_keyboard(self) -> dict:
         """

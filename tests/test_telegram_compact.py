@@ -76,18 +76,21 @@ class TestSendWithKeyboard(unittest.TestCase):
         self.assertEqual(app._tg_last_kb_msg_id, 55)
 
 
+OFF2 = "VÀNG · AUTO TẮT\nBTC · AUTO TẮT"  # cả 2 mã AUTO TẮT: chỉ gửi chữ
+
+
 class TestAiButton(unittest.TestCase):
     def test_bam_nut_ai(self):
-        app = make_app(_telegram_send_with_keyboard=mock.Mock(), _generate_telegram_ai_report=mock.Mock(return_value="AI-REPORT"))
+        app = make_app(_telegram_send_with_keyboard=mock.Mock())
         app._handle_telegram_callback({"id": "cq1", "data": "tg_ai", "message": {"message_id": 7}}, "1", "T")
         self.assertEqual(app._telegram_api_call.call_args[0][1], "answerCallbackQuery")
-        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "AI-REPORT")
+        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", OFF2)
 
     def test_lenh_go_ai(self):
         for t in ("/ai", "phân tích", "Phân tích AI"):
-            app = make_app(_telegram_send_with_keyboard=mock.Mock(), _generate_telegram_ai_report=mock.Mock(return_value="R"))
+            app = make_app(_telegram_send_with_keyboard=mock.Mock())
             app._handle_telegram_command(t, "1", "T")
-            app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "R")
+            app._telegram_send_with_keyboard.assert_called_once_with("T", "1", OFF2)
             app.start_auto_scan.assert_not_called()
             app.stop_auto_scan.assert_not_called()
 
@@ -191,12 +194,13 @@ class TestPlainTextAndChart(unittest.TestCase):
 
     def test_nut_ai_gui_1_tin_anh_kem_chu_va_nut(self):
         app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
+                       profile_ctx={"XAUUSD": {"auto_loop_running": True}, "BTCUSD": {}},
                        _telegram_send_photo=mock.Mock(return_value={"ok": True, "result": {"message_id": 50}}),
                        _telegram_send_with_keyboard=mock.Mock(),
-                       _generate_telegram_ai_report=mock.Mock(return_value="R"))
+                       _tg_ai_brief=mock.Mock(return_value="R"))
         app._handle_telegram_callback({"id": "cq1", "data": "tg_ai", "message": {"message_id": 7}}, "1", "T")
         args, kw = app._telegram_send_photo.call_args
-        self.assertEqual(args, ("T", "1", b"PNG", "R"))
+        self.assertEqual(args, ("T", "1", b"PNG", "R\nBTC · AUTO TẮT"))  # mã tắt: chỉ 1 dòng, không ảnh
         self.assertIn("inline_keyboard", kw["reply_markup"])
         app._telegram_send_with_keyboard.assert_not_called()
         self.assertEqual(app._tg_last_kb_msg_id, 50)
@@ -204,20 +208,61 @@ class TestPlainTextAndChart(unittest.TestCase):
     def test_gui_anh_loi_thi_gui_chu(self):
         order = []
         app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
+                       profile_ctx={"XAUUSD": {"auto_loop_running": True}, "BTCUSD": {}},
                        _telegram_send_photo=mock.Mock(side_effect=lambda *a, **k: order.append("photo")),
                        _telegram_send_with_keyboard=mock.Mock(side_effect=lambda *a, **k: order.append("text")),
-                       _generate_telegram_ai_report=mock.Mock(return_value="R"))
+                       _tg_ai_brief=mock.Mock(return_value="R"))
         app._telegram_send_ai_report("T", "1")
         self.assertEqual(order, ["photo", "text"])
 
-    def test_chu_qua_dai_thi_anh_rieng_roi_chu(self):
-        app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
-                       _telegram_send_photo=mock.Mock(return_value={"ok": True}),
+    def test_2_ma_bat_moi_ma_1_anh_nut_o_tin_cuoi(self):
+        app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"XAU"), active_profile_key="XAUUSD",
+                       _tg_render_profile_png=mock.Mock(return_value=b"BTC"),
+                       profile_ctx={"XAUUSD": {"auto_loop_running": True}, "BTCUSD": {"auto_loop_running": True}},
+                       _telegram_send_photo=mock.Mock(return_value={"ok": True, "result": {"message_id": 9}}),
                        _telegram_send_with_keyboard=mock.Mock(),
-                       _generate_telegram_ai_report=mock.Mock(return_value="x" * 1100))
+                       _tg_ai_brief=mock.Mock(side_effect=lambda pk: f"cap {pk}"))
         app._telegram_send_ai_report("T", "1")
-        self.assertIn("Biểu đồ VÀNG", app._telegram_send_photo.call_args[0][3])
-        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "x" * 1100)
+        calls = app._telegram_send_photo.call_args_list
+        self.assertEqual([c[0][2:] for c in calls], [(b"XAU", "cap XAUUSD"), (b"BTC", "cap BTCUSD")])
+        self.assertIsNone(calls[0][1]["reply_markup"])  # nút chỉ ở tin cuối
+        self.assertIn("inline_keyboard", calls[1][1]["reply_markup"])
+        app._tg_render_profile_png.assert_called_once_with("BTCUSD")  # mã chạy ngầm: vẽ ảnh riêng
+
+    def test_ca_2_ma_tat_chi_gui_chu(self):
+        app = make_app(_tg_capture_chart_png=mock.Mock(return_value=b"PNG"), active_profile_key="XAUUSD",
+                       _telegram_send_photo=mock.Mock(), _telegram_send_with_keyboard=mock.Mock())
+        app._telegram_send_ai_report("T", "1")
+        app._telegram_send_photo.assert_not_called()
+        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "VÀNG · AUTO TẮT\nBTC · AUTO TẮT")
+
+    def test_chu_gon_2_dong(self):
+        pend = {"zone_watch": True, "action": "BUY", "symbol": "BTCUSDm"}
+        ctx = {"auto_loop_running": True, "_tg_ai_info": {"ts": "08:14:05", "tf": "M5"}, "cached_action": "BUY",
+               "cached_consensus": "81", "pending_pullback_order": pend}
+        pos = types.SimpleNamespace(type=b.mt5.POSITION_TYPE_BUY, profit=12.3)
+        app = make_app(profile_ctx={"XAUUSD": {}, "BTCUSD": ctx}, active_profile_key="XAUUSD",
+                       _is_daily_limit_locked=lambda pk: False, _is_cooldown_active=lambda pk: False,
+                       _zone_entry_limit=lambda p, pk: {"line": 58931.57, "ok": True},
+                       _get_profile_cfg=lambda pk: {"symbol": "BTCUSDm"},
+                       _get_bot_positions=lambda s, profile_key=None: [pos],
+                       _get_today_closed_deals=lambda s, profile_key=None: [{"net_pnl": -9.72}, {"net_pnl": -6.51}, {"net_pnl": 5.76}])
+        self.assertEqual(app._tg_ai_brief("BTCUSD"),
+                         "BTC 08:14 · AUTO BẬT · BUY 81% · canh <= 58931.57\nLệnh: 1 BUY +12.30$ · Hôm nay: -10.47$ (3 lệnh)")
+        app._get_bot_positions = lambda s, profile_key=None: []
+        app._get_today_closed_deals = lambda s, profile_key=None: []
+        ctx.update(cached_action=None, cached_consensus="73", pending_pullback_order=None)
+        self.assertEqual(app._tg_ai_brief("BTCUSD"), "BTC 08:14 · AUTO BẬT · ĐỨNG NGOÀI\nLệnh: không có · Hôm nay: chưa có lệnh")
+
+    def test_ve_anh_gon_cho_ma_chay_ngam(self):
+        import pandas as pd
+        from trading_modules.tg_chart import render_chart_png
+        df = pd.DataFrame({"timestamps": pd.date_range("2026-11-21 00:00", periods=60, freq="min"),
+                           "open": [100 + i * 0.1 for i in range(60)], "high": [100.5 + i * 0.1 for i in range(60)],
+                           "low": [99.5 + i * 0.1 for i in range(60)], "close": [100.2 + i * 0.1 for i in range(60)]})
+        png = render_chart_png(df, "BTC BTCUSDm (M1)", [{"price": 101.0, "color": "#ffd54f", "label": "Vùng canh BUY <= 101.00"}],
+                               last_price=106.0)
+        self.assertEqual(png[1:4], b"PNG")
 
     def test_chup_khung_scalp_roi_tra_lai_khung_cu(self):
         import matplotlib
@@ -240,10 +285,11 @@ class TestPlainTextAndChart(unittest.TestCase):
 
     def test_chup_loi_van_gui_chu(self):
         app = make_app(_tg_capture_chart_png=mock.Mock(side_effect=RuntimeError("x")), _telegram_send_photo=mock.Mock(),
-                       _telegram_send_with_keyboard=mock.Mock(), _generate_telegram_ai_report=mock.Mock(return_value="R"))
+                       active_profile_key="XAUUSD", profile_ctx={"XAUUSD": {"auto_loop_running": True}, "BTCUSD": {}},
+                       _telegram_send_with_keyboard=mock.Mock(), _tg_ai_brief=mock.Mock(return_value="R"))
         app._telegram_send_ai_report("T", "1")
         app._telegram_send_photo.assert_not_called()
-        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "R")
+        app._telegram_send_with_keyboard.assert_called_once_with("T", "1", "R\nBTC · AUTO TẮT")
 
     def test_chup_bieu_do_that_tu_luong_nen(self):
         import matplotlib
