@@ -1,6 +1,6 @@
 {
-  "version": "1.3.45",
+  "version": "1.3.46",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-21",
-  "description": "Phiên bản v1.3.45:\n- Biểu đồ: tô dải Vùng canh có 2 mép: mép trên là mức vào lệnh (đường vàng), mép dưới là SL gốc của AI. Giá rơi xuyên qua mép dưới thì bot không vào (kịch bản AI đã sai), nến đóng qua mép thì hủy vùng. Chỉ đổi hiển thị, luật vào lệnh giữ nguyên.\n- Biểu đồ: đường Vùng canh trừ đúng spread ngay cả khi vừa mở lại app (trước đây có lúc nhãn ghi đã trừ nhưng chưa trừ)."
+  "description": "Phiên bản v1.3.46:\n- Telegram: bấm Báo cáo / Phân tích AI ở một tin cũ còn nút (ví dụ tin gửi từ bản trước) thì tin đó tự gỡ nút; chỉ tin mới nhất còn nút.\n- Gồm cả v1.3.45: biểu đồ tô dải Vùng canh 2 mép (mức vào lệnh và SL gốc AI), trừ spread đúng khi vừa mở app."
 }

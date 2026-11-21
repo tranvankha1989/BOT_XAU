@@ -7697,6 +7697,23 @@ class KronosDesktopApp:
                 pass
         return res
 
+    def _tg_mark_kb_stale(self, chat_id, msg_id):
+        """Đưa 1 tin còn nút vào danh sách chờ gỡ nút (gỡ ở lần gửi tin có nút kế tiếp). Bỏ qua nếu đó là tin đang giữ nút."""
+        try:
+            mid = int(msg_id)
+            lock = getattr(self, "_tg_kb_lock", None)
+            if lock is None:
+                return
+            with lock:
+                if mid == getattr(self, "_tg_last_kb_msg_id", None):
+                    return
+                st = list(self.__dict__.get("_tg_kb_stale") or [])
+                if (str(chat_id), mid) not in st:
+                    st.append((str(chat_id), mid))
+                self._tg_kb_stale = st[-5:]
+        except Exception:
+            pass
+
     def _tg_kb_state_load(self):
         """(chat_id, mã tin) đang có nút của lần chạy trước, hoặc None. Không có đường dẫn (test/app chưa khởi tạo) -> None."""
         p = self.__dict__.get("_tg_kb_state_file")
@@ -7886,6 +7903,10 @@ class KronosDesktopApp:
             self._telegram_api_call(token, "answerCallbackQuery", {
                 "callback_query_id": cq_id, "text": self._tg_deny_control_text(chat_id), "show_alert": True})
             return
+
+        # Bấm nút xem ở một tin cũ còn nút (vd tin gửi từ bản trước, bot chưa ghi nhớ): gỡ nút tin đó khi gửi tin trả lời có nút mới
+        if data in ("tg_stats", "tg_ai") and msg_id:
+            self._tg_mark_kb_stale(chat_id, msg_id)
 
         if data == "tg_stats":
             self._telegram_api_call(token, "answerCallbackQuery", {
