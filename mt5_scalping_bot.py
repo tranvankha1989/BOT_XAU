@@ -1165,6 +1165,8 @@ class KronosDesktopApp:
         # Nút bấm chỉ nằm dưới tin Telegram MỚI NHẤT: nhớ mã tin đang có nút để gỡ khi gửi tin mới
         self._tg_kb_lock = threading.Lock()
         self._tg_last_kb_msg_id = None
+        # Nhớ tin đang có nút qua lần mở app sau (cập nhật/khởi động lại), để tin cũ không còn sót nút (21/11/2026)
+        self._tg_kb_state_file = os.path.join(SETTINGS_DIR, "telegram_kb_state.json")
 
         # Trạng thái Module Kiểm thử Chiến Lược (Backtest Tick-Level Engine)
         self._backtest_unlocked = False
@@ -6563,44 +6565,84 @@ class KronosDesktopApp:
                         p[k] = lp[k]
         return out
 
+    # Xuất / Nhập cấu hình THEO TAB (người dùng yêu cầu 21/11/2026): file chỉ chứa thông số của 1 tab, nhập đúng tab mới áp dụng,
+    # chỉ đổi tab đó. Dạng file {"profiles": {tab: {...}}} như trước nên tools/live_replay.py --config và nút nạp file Backtest vẫn đọc được.
+    PROFILE_FILE_TAGS = {"XAUUSD": "XAU", "BTCUSD": "BTC"}
+    PROFILE_TAB_NAMES = {"XAUUSD": "Vàng (XAUUSD)", "BTCUSD": "BTC (BTCUSD)"}
+    # Không xuất; khi nhập giữ của máy này: thông số riêng máy + HF Token/Space (dùng chung 2 tab, đổi sẽ ảnh hưởng tab kia)
+    PROFILE_IO_EXCLUDED = MACHINE_LOCAL_KEYS + ("hf_token", "hf_space")
+
+    @classmethod
+    def _settings_file_profile(cls, data, active_pk: str):
+        """(tab, thông số) của file cấu hình. File 1 tab (bản mới) -> tab trong file; file cũ có cả 2 tab -> phần của tab đang mở;
+        file rất cũ 1 hồ sơ phẳng -> đoán theo symbol. Không nhận ra -> ValueError."""
+        if not isinstance(data, dict):
+            raise ValueError("Định dạng file không hợp lệ (không phải đối tượng JSON).")
+        profs = data.get("profiles")
+        if isinstance(profs, dict):
+            tabs = [pk for pk in cls.PROFILE_FILE_TAGS if isinstance(profs.get(pk), dict)]
+            if len(tabs) == 1:
+                return tabs[0], dict(profs[tabs[0]])
+            if active_pk in tabs:
+                return active_pk, dict(profs[active_pk])
+            raise ValueError("File không có thông số của tab Vàng hay BTC.")
+        sym = str(data.get("symbol", "")).upper()
+        if "BTC" in sym:
+            return "BTCUSD", dict(data)
+        if "XAU" in sym or "GOLD" in sym:
+            return "XAUUSD", dict(data)
+        raise ValueError("Không nhận ra file cấu hình này thuộc tab Vàng hay BTC.")
+
     def export_settings_file(self):
-        """Xuất toàn bộ cấu hình 2 Tab ra file .json để sao lưu hoặc đồng bộ sang máy khác/VPS."""
+        """Xuất cấu hình CHỈ của tab đang mở ra file XAU_settings_<giờ>.json / BTC_settings_<giờ>.json.
+        Không gồm thông số riêng máy (Magic, đường dẫn MT5, số luồng AI, Telegram) và HF Token/Space."""
         try:
             self.save_user_settings(show_feedback=False)
-            default_name = f"kronos_settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            pk = self.active_profile_key
+            tab_name = self.PROFILE_TAB_NAMES.get(pk, pk)
+            default_name = f"{self.PROFILE_FILE_TAGS.get(pk, pk)}_settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             file_path = filedialog.asksaveasfilename(
                 parent=self.root,
-                title="Xuất File Cấu Hình",
+                title=f"Xuất File Cấu Hình tab {tab_name}",
                 defaultextension=".json",
                 initialfile=default_name,
                 filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
             )
             if not file_path:
                 return
+            prof = None
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            else:
-                data = {
-                    "last_active_tab": self.active_profile_key,
-                    "profiles": dict(self.profile_settings)
-                }
-            data = self._strip_machine_local(data)  # không xuất Magic / đường dẫn MT5 / số luồng AI / trạng thái riêng máy
+                    saved = json.load(f)
+                if isinstance(saved, dict) and isinstance(saved.get("profiles"), dict) and isinstance(saved["profiles"].get(pk), dict):
+                    prof = saved["profiles"][pk]
+            if prof is None:
+                prof = dict(self.profile_settings.get(pk) or {})
+            data = {
+                "kind": "kronos_tab_settings",
+                "profile": pk,
+                "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "profiles": {pk: {k: v for k, v in prof.items() if k not in self.PROFILE_IO_EXCLUDED}},
+            }
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
-            self.log(f"[CẤU HÌNH] Đã xuất file cài đặt thành công: {os.path.basename(file_path)}")
-            self.show_toast(f"Đã xuất cấu hình: {os.path.basename(file_path)}", is_error=False, duration_ms=2500)
+            self.log(f"[CẤU HÌNH] Đã xuất cấu hình tab {tab_name} (chỉ tab này): {os.path.basename(file_path)}")
+            self.show_toast(f"Đã xuất cấu hình tab {tab_name}: {os.path.basename(file_path)}", is_error=False, duration_ms=2500)
         except Exception as e:
             self.log_error("EXPORT_SETTINGS", e)
             self.show_toast(f"Lỗi xuất file: {e}", is_error=True, duration_ms=3000)
 
     def import_settings_file(self):
-        """Nhập file .json từ máy khác vào, cập nhật trực tiếp lên giao diện và lưu vào máy."""
+        """Nhập file cấu hình vào ĐÚNG tab đang mở. File của tab khác -> báo lỗi "Sai cấu hình", không thay đổi gì.
+        Chỉ thay thông số tab đang mở; tab kia, thông số riêng máy (Magic, MT5, luồng AI, Telegram), HF Token/Space giữ nguyên.
+        File cũ có cả 2 tab: chỉ lấy phần của tab đang mở."""
         try:
+            pk = self.active_profile_key
+            tab_name = self.PROFILE_TAB_NAMES.get(pk, pk)
             file_path = filedialog.askopenfilename(
                 parent=self.root,
-                title="Chọn File Cấu Hình Cần Nhập",
+                title=f"Chọn File Cấu Hình cho tab {tab_name}",
                 filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
             )
             if not file_path:
@@ -6608,11 +6650,20 @@ class KronosDesktopApp:
 
             with open(file_path, "r", encoding="utf-8") as f:
                 imported_data = json.load(f)
+            file_pk, settings = self._settings_file_profile(imported_data, pk)
+            if file_pk != pk:
+                f_name = self.PROFILE_TAB_NAMES.get(file_pk, file_pk)
+                msg = (f"Sai cấu hình: file '{os.path.basename(file_path)}' là cấu hình tab {f_name}, nhưng bạn đang mở tab {tab_name}.\n"
+                       f"Hãy chuyển sang tab {f_name} rồi nhập lại. Chưa có thông số nào bị thay đổi.")
+                self.log(f"[CẤU HÌNH] {msg}")
+                self.show_toast(f"Sai cấu hình: file của tab {f_name}, đang mở tab {tab_name}", is_error=True, duration_ms=4000)
+                try:
+                    messagebox.showerror("Sai cấu hình", msg, parent=self.root)
+                except Exception:
+                    pass
+                return
 
-            if not isinstance(imported_data, dict):
-                raise ValueError("Định dạng file không hợp lệ (không phải đối tượng JSON).")
-
-            # Giữ Magic / đường dẫn MT5 / số luồng AI / trạng thái riêng của MÁY NÀY (file từ máy khác không được đè)
+            # Lưu trạng thái hiện tại rồi CHỈ thay phần của tab đang mở; tab kia và khóa riêng máy giữ nguyên
             self.save_user_settings(show_feedback=False)
             local_data = {}
             if os.path.exists(SETTINGS_FILE):
@@ -6621,22 +6672,34 @@ class KronosDesktopApp:
                         local_data = json.load(f)
                 except Exception:
                     local_data = {}
-            imported_data = self._merge_machine_local(imported_data, local_data)
+            if not isinstance(local_data, dict):
+                local_data = {}
+            profs = local_data.get("profiles") if isinstance(local_data.get("profiles"), dict) else {}
+            cur = profs.get(pk) if isinstance(profs.get(pk), dict) else dict(self.profile_settings.get(pk) or {})
+            new_p = {k: v for k, v in settings.items() if k not in self.PROFILE_IO_EXCLUDED}
+            for k in self.PROFILE_IO_EXCLUDED:
+                if k in cur:
+                    new_p[k] = cur[k]
+            for tab in self.PROFILE_FILE_TAGS:
+                if tab != pk and tab not in profs and isinstance(self.profile_settings.get(tab), dict):
+                    profs[tab] = dict(self.profile_settings[tab])
+            profs[pk] = new_p
+            local_data["profiles"] = profs
 
             os.makedirs(SETTINGS_DIR, exist_ok=True)
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(imported_data, f, ensure_ascii=False, indent=2)
+                json.dump(local_data, f, ensure_ascii=False, indent=2)
 
             self.load_user_settings()
-            self.apply_live_settings_and_rescan(profile_key=self.active_profile_key, source_label="Nhập File Cấu Hình")
+            self.apply_live_settings_and_rescan(profile_key=pk, source_label="Nhập File Cấu Hình")
             now_str = datetime.now().strftime("%H:%M:%S")
             if hasattr(self, "save_status_lbl"):
                 self.save_status_lbl.config(
-                    text=f"✓ Đã nạp từ file lúc {now_str}",
+                    text=f"✓ Đã nạp tab {self.PROFILE_FILE_TAGS.get(pk, pk)} từ file lúc {now_str}",
                     fg="#10b981"
                 )
-            self.log(f"[CẤU HÌNH] Đã nhập và áp dụng thành công cấu hình từ: {os.path.basename(file_path)}")
-            self.show_toast("Đã nhập & Áp dụng cấu hình thành công!", is_error=False, duration_ms=2500)
+            self.log(f"[CẤU HÌNH] Đã nhập cấu hình tab {tab_name} từ: {os.path.basename(file_path)} (tab kia giữ nguyên)")
+            self.show_toast(f"Đã nhập & áp dụng cấu hình tab {tab_name}!", is_error=False, duration_ms=2500)
         except Exception as e:
             self.log_error("IMPORT_SETTINGS", e)
             self.show_toast(f"Lỗi nhập file: {e}", is_error=True, duration_ms=3000)
@@ -7571,22 +7634,20 @@ class KronosDesktopApp:
         xau_running = bool(self.profile_ctx.get("XAUUSD", {}).get("auto_loop_running", False))
         btc_running = bool(self.profile_ctx.get("BTCUSD", {}).get("auto_loop_running", False))
 
-        xau_text = "🟡 VÀNG: ⏸ DỪNG" if xau_running else "🟡 VÀNG: ▶️ BẬT"
-        btc_text = "🟠 BTC: ⏸ DỪNG" if btc_running else "🟠 BTC: ▶️ BẬT"
+        # Gọn 2 hàng 4 nút (người dùng chọn 21/11/2026): chữ nút ghi việc SẼ LÀM khi bấm ("Bật Vàng" = Vàng đang tắt, bấm để bật).
+        # Bỏ nút Dừng/Bật Cả 2 (tin cũ còn nút đó vẫn bấm được: callback tg_stop_all / tg_start_all giữ nguyên).
+        xau_text = "Dừng Vàng" if xau_running else "Bật Vàng"
+        btc_text = "Dừng BTC" if btc_running else "Bật BTC"
 
         return {
             "inline_keyboard": [
                 [
-                    {"text": "📊 Báo cáo", "callback_data": "tg_stats"},
-                    {"text": "🧠 Phân tích AI", "callback_data": "tg_ai"}
+                    {"text": "Báo cáo", "callback_data": "tg_stats"},
+                    {"text": "Phân tích AI", "callback_data": "tg_ai"}
                 ],
                 [
                     {"text": xau_text, "callback_data": "tg_toggle_xau"},
                     {"text": btc_text, "callback_data": "tg_toggle_btc"}
-                ],
-                [
-                    {"text": "⏸️ Dừng Cả 2", "callback_data": "tg_stop_all"},
-                    {"text": "▶️ Bật Cả 2", "callback_data": "tg_start_all"}
                 ]
             ]
         }
@@ -7612,15 +7673,51 @@ class KronosDesktopApp:
             return res
         with lock:
             old_id = getattr(self, "_tg_last_kb_msg_id", None)
+            old_chat = chat_id
+            if old_id is None and not self.__dict__.get("_tg_kb_state_loaded"):
+                # Lần gửi đầu sau khi mở app: lấy tin có nút của lần chạy trước (nếu có) để gỡ nút
+                self._tg_kb_state_loaded = True
+                st = self._tg_kb_state_load()
+                if st:
+                    old_chat, old_id = st
             self._tg_last_kb_msg_id = new_id
-        if old_id and old_id != new_id:
+            self._tg_kb_state_save(chat_id, new_id)
+            stale = list(self.__dict__.get("_tg_kb_stale") or [])
+            self._tg_kb_stale = []
+        targets = ([(old_chat, old_id)] if old_id and old_id != new_id else []) + [x for x in stale if x[1] != new_id]
+        for t_chat, t_id in targets:
             try:
-                self._telegram_api_call(token, "editMessageReplyMarkup", {
-                    "chat_id": chat_id, "message_id": old_id, "reply_markup": {"inline_keyboard": []},
+                r = self._telegram_api_call(token, "editMessageReplyMarkup", {
+                    "chat_id": t_chat, "message_id": t_id, "reply_markup": {"inline_keyboard": []},
                 }, timeout=10)
+                if not (isinstance(r, dict) and r.get("ok")) and self._tg_tls_get("kind") in ("not_sent", "sent_slow"):
+                    with lock:  # lỗi kết nối: thử gỡ lại ở lần gửi tin có nút sau (giữ tối đa 5 tin)
+                        self._tg_kb_stale = (list(self.__dict__.get("_tg_kb_stale") or []) + [(t_chat, t_id)])[-5:]
             except Exception:
                 pass
         return res
+
+    def _tg_kb_state_load(self):
+        """(chat_id, mã tin) đang có nút của lần chạy trước, hoặc None. Không có đường dẫn (test/app chưa khởi tạo) -> None."""
+        p = self.__dict__.get("_tg_kb_state_file")
+        if not p:
+            return None
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            return str(d["chat_id"]), int(d["kb_msg_id"])
+        except Exception:
+            return None
+
+    def _tg_kb_state_save(self, chat_id, msg_id):
+        p = self.__dict__.get("_tg_kb_state_file")
+        if not p:
+            return
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"chat_id": str(chat_id), "kb_msg_id": int(msg_id)}, f)
+        except Exception:
+            pass
 
     def _telegram_dispatcher_loop(self):
         """Luồng ngầm gửi tin nhắn từ hàng đợi ra Telegram hoàn toàn bất đồng bộ (0 giật lag UI / 0 nghẽn MT5)."""

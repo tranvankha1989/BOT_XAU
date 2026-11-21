@@ -48,6 +48,9 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
   (ô sai tô đỏ, cần lưu ý tô cam; nút Lưu và "Áp Dụng Vào Bot Live" bị chặn khi còn ô đỏ; chỉ giao diện, bot vẫn đọc ô như cũ).
 - Thông số riêng từng máy (KHÔNG chép khi Xuất / Nhập file cấu hình, người dùng yêu cầu 19/11): thêm vào `MACHINE_LOCAL_KEYS`
   (hiện: Magic, đường dẫn MT5, số luồng AI, toàn bộ Mục 5 Telegram); trạng thái riêng máy ở `MACHINE_LOCAL_STATE_KEYS`.
+  Xuất / Nhập cấu hình THEO TỪNG TAB (21/11): file `XAU_settings_*.json` / `BTC_settings_*.json` chỉ chứa tab đang mở
+  (`{"profile", "profiles": {tab: ...}}`, vẫn dùng được cho `--config`); nhập file của tab khác báo "Sai cấu hình", không đổi gì;
+  nhập chỉ đổi tab đang mở; `PROFILE_IO_EXCLUDED` (khóa riêng máy + hf_token/hf_space) không xuất và giữ của máy này.
 - Luật mới cần replay được: `tools/live_replay.py --set <khóa>=<giá trị>` (chạy chính code live, không cần sửa tool).
 
 **Cây thông số hiện tại** (cha → con):
