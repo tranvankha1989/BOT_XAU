@@ -119,7 +119,7 @@ class TestCompactMessages(unittest.TestCase):
         app._telegram_notify_order_opened(4182479748, "XAUUSDm", "BUY", 0.02, 3733.14, 3729.00, 3748.50, "XAUUSD")
         msg, markup = app._telegram_queue.get_nowait()
         l1, l2 = msg.split("\n")
-        self.assertTrue(l1.startswith("🚀 VÀNG BUY 0.02 @ 3733.14 · "))
+        self.assertTrue(l1.startswith("🟢 VÀNG BUY 0.02 @ 3733.14 · "))
         self.assertEqual(l2, "SL 3729.00 (-4.14) · TP 3748.50 (+15.36 · 3.7R) · AI 91% · #4182479748")
         self.assertIsNone(markup)
 
@@ -128,6 +128,8 @@ class TestCompactMessages(unittest.TestCase):
         app._telegram_notify_order_opened(5, "XAUUSDm", "SELL", 0.02, 3734.24, 3738.03, 3718.0, "XAUUSD")
         msg, _ = app._telegram_queue.get_nowait()
         self.assertNotIn("AI", msg.split("\n")[1])
+        self.assertTrue(msg.startswith("🔴 VÀNG SELL "))
+        self.assertEqual(app._tg_plain_text(msg), msg)  # bộ lọc icon Telegram giữ chấm màu
 
     def test_tin_dong_lenh(self):
         app = make_app(_get_today_deals_stats=mock.Mock(return_value=(99.0, 0, None)))
@@ -248,7 +250,7 @@ class TestPlainTextAndChart(unittest.TestCase):
                        _get_bot_positions=lambda s, profile_key=None: [pos],
                        _get_today_closed_deals=lambda s, profile_key=None: [{"net_pnl": -9.72}, {"net_pnl": -6.51}, {"net_pnl": 5.76}])
         self.assertEqual(app._tg_ai_brief("BTCUSD"),
-                         "BTC 08:14 · AUTO BẬT · BUY 81% · canh <= 58931.57\nLệnh: 1 BUY +12.30$ · Hôm nay: -10.47$ (3 lệnh)")
+                         "BTC 08:14 · AUTO BẬT · 🟢 BUY 81% · canh <= 58931.57\nLệnh: 1 BUY +12.30$ · Hôm nay: -10.47$ (3 lệnh)")
         app._get_bot_positions = lambda s, profile_key=None: []
         app._get_today_closed_deals = lambda s, profile_key=None: []
         ctx.update(cached_action=None, cached_consensus="73", pending_pullback_order=None)
