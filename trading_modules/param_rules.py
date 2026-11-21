@@ -41,6 +41,7 @@ PARAM_NAMES = {
     "fast_sl_cooldown_candles": "Nghỉ nếu SL nhanh (nến)",
     "lookback": "Số nến lịch sử AI (Lookback)",
     "pred_len": "Số nến dự báo",
+    "ai_temperature": "Nhiệt độ AI (T)",
     "blocked_trading_windows": "Khung giờ cấm",
 }
 
@@ -77,6 +78,7 @@ NUMERIC_RULES = {
     "fast_sl_cooldown_candles": ("float", 0.0, True, None),
     "lookback": ("int", 1, True, None),
     "pred_len": ("int", 1, True, None),
+    "ai_temperature": ("float", 0.0, True, 2.0),  # 0 = tự động; bot kẹp trong 0.1 - 2.0 (_apply_ai_temperature)
 }
 
 # Đặt 0 = Tắt luôn hợp lệ
@@ -224,6 +226,12 @@ def _conflict_issues(cfg: dict, vals: dict) -> list:
                           f"Giá an toàn vào SL ({buf:g}) >= 1/2 SL tối đa ({msl:g}) khi TP theo AI: SL thật = SL AI + Giá an toàn, "
                           f"TP AI không giãn theo, lệnh có thể có TP gần hơn SL thật (RR thật < 1). "
                           f"Nên giảm Giá an toàn hoặc đặt RR thật tối thiểu (ví dụ 1.5)."))
+    # Nhiệt độ AI tự đặt quá thấp/cao: kịch bản gần như trùng nhau (đồng thuận ảo) hoặc lung tung (khó đạt đồng thuận)
+    t_ai = vals.get("ai_temperature")
+    if t_ai is not None and (0 < t_ai < 0.4 or t_ai > 1.2):
+        out.append(_issue("warn", ("ai_temperature",),
+                          f"Nhiệt độ AI {t_ai:g} {'quá thấp: các kịch bản gần như giống hệt nhau, Đồng thuận cao giả tạo' if t_ai < 0.4 else 'cao: kịch bản rất lung tung, khó đạt Đồng thuận'}. "
+                          f"Thường đặt 0 (tự động) hoặc 0.5 - 1.0."))
     rc, rbc = vals.get("rev_consensus"), vals.get("rev_be_consensus")
     if _is_on(cfg, "auto_rev_close") and rc is not None and rbc is not None and 0 < rbc < rc:
         out.append(_issue("warn", ("rev_be_consensus", "rev_consensus"),

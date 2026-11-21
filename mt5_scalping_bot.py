@@ -497,6 +497,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Số lượng cây nến tiếp theo mà AI sẽ vẽ đường dự báo trên biểu đồ.",
         "how_to_set": "- Mặc định: 6 nến (Trên khung M5 tương đương 30 phút, trên M15 tương đương 90 phút).\n- Khoảng cách 6 nến là tối ưu nhất để xác định đỉnh/đáy cho một nhịp Scalping."
     },
+    "ai_temperature": {
+        "title": "Nhiệt độ AI (T)",
+        "what_is_it": "Độ 'bay bổng' của AI khi vẽ các kịch bản. T thấp: các kịch bản giống nhau hơn (Đồng thuận dễ cao, Phân tán thấp). T cao: kịch bản đa dạng hơn (Đồng thuận khó đạt hơn). T không làm AI đoán đúng hơn, chỉ đổi độ giống nhau giữa các kịch bản.",
+        "how_to_set": "- 0 = Tự động (mặc định, như cũ): bot tự tính theo khung phân tích (M5 khoảng 0.65, giật mạnh giảm, đi ngang tăng nhẹ; trong khoảng 0.48 - 0.82).\n- Nhập số (ví dụ 0.6 - 0.9): dùng đúng số đó cho mọi lần phân tích, dòng tín hiệu ghi '(tự đặt)'.\n- 1.0 là mức tự nhiên của mô hình. Nên chạy Backtest/phát lại để so sánh trước khi đổi trên bot thật."
+    },
 
     # ─── MỤC 5: THÔNG BÁO & ĐIỀU KHIỂN TELEGRAM ───
     "telegram_enabled": {
@@ -595,6 +600,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "hf_token": "",
         "lookback": "450",
         "pred_len": "6",
+        "ai_temperature": "0",
         "realtime_chart": True,
         "telegram_enabled": False,
         "telegram_bot_token": "",
@@ -666,6 +672,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "hf_token": "",
         "lookback": "450",
         "pred_len": "6",
+        "ai_temperature": "0",
         "realtime_chart": True,
         "telegram_enabled": False,
         "telegram_bot_token": "",
@@ -1807,8 +1814,18 @@ class KronosDesktopApp:
             SWP_NOZORDER = 0x0004
             ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             new_ex_style = (ex_style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
-            if ex_style != new_ex_style:
-                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
+            # Cửa sổ không viền mất cờ thu nhỏ -> bấm icon Taskbar lần 2 không thu nhỏ. Thêm lại WS_MINIMIZEBOX | WS_SYSMENU
+            # (không có WS_CAPTION nên không hiện lại thanh tiêu đề Windows) để Windows tự thu nhỏ / khôi phục khi bấm icon.
+            GWL_STYLE = -16
+            WS_MINIMIZEBOX = 0x00020000
+            WS_SYSMENU = 0x00080000
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+            new_style = style | WS_MINIMIZEBOX | WS_SYSMENU
+            if style != new_style:
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
+            if ex_style != new_ex_style or style != new_style:
+                if ex_style != new_ex_style:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
                 ctypes.windll.user32.SetWindowPos(
                     hwnd, 0, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
@@ -2714,6 +2731,7 @@ class KronosDesktopApp:
         self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18, help_key="hf_token")
         self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450", help_key="lookback")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6", help_key="pred_len")
+        self.ai_temperature_var = self._add_labeled_entry(sec4.content, "Nhiệt độ AI (T, 0 = tự động):", "0", help_key="ai_temperature")
         self.debug_trace_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec4.content, "Ghi nhật ký debug theo nến (chỉ để chẩn đoán)", self.debug_trace_var, help_key="debug_trace")
         tk.Button(
@@ -5077,6 +5095,7 @@ class KronosDesktopApp:
             y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
 
             dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(sub_df, ana_tf_str)
+            dyn_t, regime_tag = self._apply_ai_temperature(cfg, dyn_t, regime_tag)
             # Cache kịch bản AI thô: chỉ tools/run_backtest.py gắn vào (live/UI: None -> chạy AI như cũ)
             _sc_cache = getattr(self, "_bt_scenario_cache", None)
             scenarios = None
@@ -6330,6 +6349,7 @@ class KronosDesktopApp:
             "hf_token": self.hf_token_var,
             "lookback": self.lookback_var,
             "pred_len": self.pred_len_var,
+            "ai_temperature": self.ai_temperature_var,
             "realtime_chart": self.realtime_chart_var,
             "telegram_enabled": self.telegram_enabled_var,
             "telegram_bot_token": self.telegram_bot_token_var,
@@ -6417,6 +6437,7 @@ class KronosDesktopApp:
             str(cfg.get("engine", "")).strip(),
             str(cfg.get("lookback", "450")).strip(),
             str(cfg.get("pred_len", "6")).strip(),
+            str(cfg.get("ai_temperature", "0")).strip(),
             str(cfg.get("scenarios", "8")).strip(),
             str(cfg.get("consensus", "75")).strip(),
             str(cfg.get("max_dispersion", "2.5")).strip(),
@@ -6836,7 +6857,7 @@ class KronosDesktopApp:
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
         2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "halve_spacing_with_sl", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
         3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
-        4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
+        4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "ai_temperature", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
     }
 
@@ -7388,31 +7409,157 @@ class KronosDesktopApp:
             return None
 
     def _telegram_send_ai_report(self, token: str, chat_id: str):
-        """Nút 'Phân tích AI' / lệnh /ai: gửi ẢNH biểu đồ khung scalp kèm chữ phân tích + nút bấm
-        trong CÙNG 1 tin (nhanh hơn: 1 lần gửi thay vì 2). Chữ dài quá giới hạn chú thích ảnh (1024 ký tự) thì gửi ảnh rồi tin chữ.
-        Chụp/gửi ảnh lỗi thì vẫn gửi tin chữ như cũ."""
-        report = self._generate_telegram_ai_report()
-        try:
-            png = self._tg_capture_chart_png()
+        """Nút 'Phân tích AI' / lệnh /ai (mẫu người dùng chọn 21/11/2026): mỗi mã đang AUTO BẬT gửi 1 ẢNH biểu đồ khung scalp
+        kèm 2 dòng ngắn (_tg_ai_brief); mã AUTO TẮT không gửi ảnh/lệnh, chỉ 1 dòng 'AUTO TẮT' ở tin cuối. Nút bấm gắn ở tin cuối.
+        Ảnh lỗi -> gửi chữ; ảnh đã gửi nhưng Telegram trả lời chậm -> không gửi thêm chữ (tránh trùng)."""
+        on, off = [], []
+        for pk, name in (("XAUUSD", "VÀNG"), ("BTCUSD", "BTC")):
+            ctx = (getattr(self, "profile_ctx", None) or {}).get(pk) or {}
+            (on if bool(ctx.get("auto_loop_running", False)) else off).append((pk, name))
+        off_txt = "\n".join(f"{name} · AUTO TẮT" for _, name in off)
+        if not on:
+            self._telegram_send_with_keyboard(token, chat_id, off_txt)
+            return
+        for i, (pk, name) in enumerate(on):
+            last = i == len(on) - 1
+            try:
+                cap = self._tg_ai_brief(pk)
+            except Exception:
+                cap = f"{name} · AUTO BẬT"
+            if last and off_txt:
+                cap += "\n" + off_txt
+            try:
+                png = self._tg_chart_png_for(pk)
+            except Exception:
+                png = None
             if png:
-                if len(self._tg_plain_text(report) or "") <= 1024:
-                    res = self._telegram_send_photo(token, chat_id, png, report,
-                                                    reply_markup=self._get_telegram_inline_keyboard())
-                    if isinstance(res, dict) and res.get("ok"):
+                self._tg_tls_set("", "")
+                try:
+                    res = self._telegram_send_photo(token, chat_id, png, cap,
+                                                    reply_markup=self._get_telegram_inline_keyboard() if last else None)
+                except Exception:
+                    res = None
+                if isinstance(res, dict) and res.get("ok"):
+                    if last:
                         self._tg_track_kb_message(token, chat_id, res)
-                        return
-                    if self._tg_tls_get("kind") == "sent_slow":
-                        # Ảnh đã gửi đi nhưng Telegram trả lời chậm: ảnh có thể vẫn tới muộn -> không gửi thêm tin chữ (tránh trùng)
-                        self._tg_diag("photo_slow", "Gửi ảnh biểu đồ: Telegram trả lời chậm, ảnh có thể tới muộn -> không gửi thêm tin chữ (tránh trùng).", 60.0)
-                        return
-                    self._tg_diag_log(f"Gửi ảnh biểu đồ thất bại ({getattr(self, '_tg_last_error', '') or 'không rõ lý do'}) -> gửi tin chữ")
-                else:
-                    pk = str(getattr(self, "active_profile_key", "XAUUSD") or "XAUUSD")
-                    name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
-                    self._telegram_send_photo(token, chat_id, png, f"Biểu đồ {name} lúc {datetime.now(tz=VN_TZ).strftime('%H:%M:%S')}")
+                    continue
+                if self._tg_tls_get("kind") == "sent_slow":
+                    # Ảnh đã gửi đi nhưng Telegram trả lời chậm: ảnh có thể vẫn tới muộn -> không gửi thêm tin chữ (tránh trùng)
+                    self._tg_diag("photo_slow", "Gửi ảnh biểu đồ: Telegram trả lời chậm, ảnh có thể tới muộn -> không gửi thêm tin chữ (tránh trùng).", 60.0)
+                    continue
+                self._tg_diag_log(f"Gửi ảnh biểu đồ {name} thất bại ({getattr(self, '_tg_last_error', '') or 'không rõ lý do'}) -> gửi tin chữ")
+            if last:
+                self._telegram_send_with_keyboard(token, chat_id, cap)
+            else:
+                self._telegram_api_call(token, "sendMessage", {"chat_id": chat_id, "text": cap})
+
+    def _tg_ai_brief(self, pk: str) -> str:
+        """Chữ gọn 2 dòng cho 1 mã (mẫu B, người dùng chọn 21/11/2026). Dòng 1: tên + giờ phân tích AI + AUTO + kết luận AI
+        + vùng canh (mức vào thật) / tạm nghỉ / dừng hôm nay. Dòng 2: lệnh đang mở + kết quả lệnh đã đóng hôm nay.
+        Chỉ đọc dữ liệu đã có + lệnh của bot (lọc Magic), không gọi AI. Phần nào lỗi thì ghi '?'."""
+        name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+        ctx = (getattr(self, "profile_ctx", None) or {}).get(pk) or {}
+        info = ctx.get("_tg_ai_info") if isinstance(ctx.get("_tg_ai_info"), dict) else {}
+        parts = [f"{name} {str(info.get('ts', ''))[:5]}".strip(), "AUTO BẬT"]
+        act = ctx.get("cached_action")
+        if not info:
+            parts.append("chưa có phân tích AI")
+        elif act in ("BUY", "SELL"):
+            parts.append(f"{act} {ctx['cached_consensus']}%" if ctx.get("cached_consensus") else act)
+        else:
+            parts.append("ĐỨNG NGOÀI")
+        try:
+            if self._is_daily_limit_locked(pk):
+                parts.append("dừng hôm nay")
+            elif self._is_cooldown_active(pk):
+                parts.append(self._get_cooldown_remaining_str(pk).replace("Tạm ngưng giao dịch do ", "nghỉ: ").replace("Tạm ngưng", "nghỉ"))
+            else:
+                pend = self.pending_pullback_order if pk == getattr(self, "active_profile_key", None) else ctx.get("pending_pullback_order")
+                if isinstance(pend, dict) and pend.get("zone_watch") and pend.get("action") in ("BUY", "SELL"):
+                    zl = self._zone_entry_limit(pend, pk)
+                    if zl and zl["ok"]:
+                        parts.append(f"canh {'<=' if pend['action'] == 'BUY' else '>='} {zl['line']:.2f}")
+                    elif zl:
+                        parts.append("vùng canh không vào được")
         except Exception:
             pass
-        self._telegram_send_with_keyboard(token, chat_id, report)
+        symbol = ""
+        try:
+            symbol = str(self._get_profile_cfg(pk).get("symbol", "")).strip()
+        except Exception:
+            pass
+        pos_txt = "?"
+        try:
+            poss = self._get_bot_positions(symbol, profile_key=pk) if symbol else []
+            if poss:
+                buy_t = getattr(mt5, "POSITION_TYPE_BUY", 0)
+                nb = sum(1 for p in poss if p.type == buy_t)
+                ns = len(poss) - nb
+                sides = ", ".join(s for s in (f"{nb} BUY" if nb else "", f"{ns} SELL" if ns else "") if s)
+                pos_txt = f"{sides} {sum(float(getattr(p, 'profit', 0.0) or 0.0) for p in poss):+.2f}$"
+            else:
+                pos_txt = "không có"
+        except Exception:
+            pass
+        day_txt = "?"
+        try:
+            deals = self._get_today_closed_deals(symbol, profile_key=pk) if symbol else []
+            if deals:
+                day_txt = f"{sum(float(d.get('net_pnl', 0.0) or 0.0) for d in deals):+.2f}$ ({len(deals)} lệnh)"
+            else:
+                day_txt = "chưa có lệnh"
+        except Exception:
+            pass
+        return " · ".join(parts) + f"\nLệnh: {pos_txt} · Hôm nay: {day_txt}"
+
+    def _tg_chart_png_for(self, pk: str):
+        """Ảnh biểu đồ cho 1 mã: tab đang mở -> chụp biểu đồ chính (như trước); mã chạy ngầm -> vẽ ảnh gọn riêng."""
+        if pk == getattr(self, "active_profile_key", None):
+            return self._tg_capture_chart_png()
+        return self._tg_render_profile_png(pk)
+
+    def _tg_render_profile_png(self, pk: str):
+        """Ảnh gọn khung SCALP cho mã chạy ngầm (không mở tab): nến, SL/TP AI, đường Vùng canh (mức vào thật),
+        lệnh đang mở (Entry/SL/TP), giá hiện tại. Vẽ ở luồng Telegram bằng Figure riêng, không đụng biểu đồ chính. Lỗi -> None."""
+        try:
+            from trading_modules.tg_chart import render_chart_png
+            cfg = self._get_profile_cfg(pk)
+            symbol = str(cfg.get("symbol", "")).strip()
+            tf = str(cfg.get("tf", "M1")).strip() or "M1"
+            if not symbol:
+                return None
+            df = self.fetch_mt5_candles(symbol, tf, 150, include_forming=True)
+            ctx = self.profile_ctx.get(pk) or {}
+            lines = []
+            if ctx.get("cached_action") in ("BUY", "SELL"):
+                if ctx.get("cached_sl"):
+                    lines.append({"price": ctx["cached_sl"], "color": RED_DOWN, "label": "SL AI"})
+                if ctx.get("cached_tp"):
+                    lines.append({"price": ctx["cached_tp"], "color": GREEN_UP, "label": "TP AI"})
+            pend = ctx.get("pending_pullback_order")
+            if isinstance(pend, dict) and pend.get("action") in ("BUY", "SELL"):
+                zl = self._zone_entry_limit(pend, pk)
+                if zl and zl["ok"]:
+                    op = "<=" if pend["action"] == "BUY" else ">="
+                    lines.append({"price": zl["line"], "color": GOLD_ACCENT, "label": f"Vùng canh {pend['action']} {op} {zl['line']:.2f}"})
+            buy_t = getattr(mt5, "POSITION_TYPE_BUY", 0)
+            for p in self._get_bot_positions(symbol, profile_key=pk) or []:
+                side = "BUY" if p.type == buy_t else "SELL"
+                lines.append({"price": p.price_open, "color": "#90caf9", "ls": "-",
+                              "label": f"#{p.ticket} {side} {float(p.volume):g} ({float(p.profit):+.2f}$)"})
+                if p.sl:
+                    lines.append({"price": p.sl, "color": RED_DOWN, "label": f"#{p.ticket} SL", "ls": ":"})
+                if p.tp:
+                    lines.append({"price": p.tp, "color": GREEN_UP, "label": f"#{p.ticket} TP", "ls": ":"})
+            with self._mt5_lock:
+                tick = mt5.symbol_info_tick(symbol)
+            last = float(tick.bid) if tick else float(df["close"].iloc[-1])
+            name = "VÀNG" if pk == "XAUUSD" else ("BTC" if pk == "BTCUSD" else pk)
+            title = f"{name} {symbol} ({tf}) · {datetime.now(tz=VN_TZ).strftime('%H:%M')} · Giá {last:.2f}"
+            return render_chart_png(df, title, lines, last_price=last, up=GREEN_UP, down=RED_DOWN)
+        except Exception as e:
+            self._tg_diag_log(f"Vẽ ảnh biểu đồ {pk} lỗi ({e}) -> chỉ gửi chữ")
+            return None
 
     def _get_telegram_inline_keyboard(self) -> dict:
         """
@@ -7827,6 +7974,9 @@ class KronosDesktopApp:
                     if eff > 0.0:
                         is_buy = pend["action"] == "BUY"
                         zone = float(pend["sl_ai_price"]) + (eff if is_buy else -eff)
+                        _zl = self._zone_entry_limit(pend, pk)
+                        if _zl:
+                            zone = _zl["line"]
                         lines.append(f"⏳ Đang canh vùng {pend['action']} {'≤' if is_buy else '≥'} {zone:.2f}")
                 parts.append("\n".join(x for x in lines if x))
             except Exception:
@@ -8447,6 +8597,9 @@ class KronosDesktopApp:
             except (ValueError, TypeError):
                 max_sl_p = 5.0
             lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
+            _zl = self._zone_entry_limit(p, self.active_profile_key)
+            if _zl:
+                lim_entry = _zl["line"]
             lows.append(float(lim_entry))
             highs.append(float(lim_entry))
 
@@ -10727,6 +10880,55 @@ class KronosDesktopApp:
         except Exception:
             pass
 
+    def _zone_entry_limit(self, p, pk: str = None, tick=None):
+        """CHỈ HIỂN THỊ (không đổi cổng vào lệnh): mức giá vào THẬT của vùng canh = mức xa nhất giá còn qua các cổng GIÁ của
+        _check_pending_pullback_order + execute_mt5_order: SL tối đa (neo SL AI gốc + dung sai), RR >= max(rr, 2) tới TP của vùng,
+        RR thật tối thiểu (min_real_rr, SL thật gồm Giá an toàn) nếu bật. Cổng đo BUY bằng Ask, SELL bằng Bid; biểu đồ vẽ theo Bid
+        nên mức BUY trừ spread hiện tại. Không gọi MT5. Trả dict {gate, line, why, ok} hoặc None nếu thiếu dữ liệu."""
+        try:
+            pk = pk or self.active_profile_key
+            action = p["action"]
+            sgn = 1.0 if action == "BUY" else -1.0
+            sl_ai = float(p.get("sl_ai_price") or p["sl_price"])
+            sl_real = float(p.get("sl_price") or sl_ai)
+            cfg = self._get_profile_cfg(pk)
+            try:
+                rr = max(float(cfg.get("rr", 2.0)), 0.0)
+            except (ValueError, TypeError):
+                rr = 2.0
+            try:
+                min_real_rr = max(float(cfg.get("min_real_rr", 0.0) or 0.0), 0.0)
+            except (ValueError, TypeError):
+                min_real_rr = 0.0
+            try:
+                cap = float(p.get("effective_max_sl", cfg.get("max_sl_price", 5.0)) or 0.0)
+            except (ValueError, TypeError):
+                cap = 0.0
+            if tick is not None:
+                spread = max(float(tick.ask - tick.bid), 0.0)
+            else:
+                spread = max(float(self.__dict__.get("_zone_spread", {}).get(pk, 0.0) or 0.0), 0.0)
+            limits = []
+            if cap > 0.0:
+                tol = float(symbol_tolerances(p.get("symbol") or "", spread, 0.0).get("max_sl_tol", 0.05))
+                limits.append((cap + tol, f"SL≤{cap:.2f}$"))
+            tp = p.get("target_tp_price")
+            if tp:
+                d_tp = sgn * (float(tp) - sl_ai)  # khoảng từ SL AI gốc tới TP
+                req_rr = max(rr, 2.0)
+                limits.append((d_tp / (1.0 + req_rr), f"RR≥{req_rr:g}R"))
+                if min_real_rr > 0.0:
+                    buf = max(sgn * (sl_ai - sl_real), 0.0)  # Giá an toàn
+                    limits.append(((d_tp - min_real_rr * buf) / (1.0 + min_real_rr), f"RR thật≥{min_real_rr:g}R"))
+            if not limits:
+                return None
+            d_lim, why = min(limits, key=lambda x: x[0])
+            gate = round(sl_ai + sgn * d_lim, 2)
+            line = round(gate - spread, 2) if action == "BUY" else gate
+            return {"gate": gate, "line": line, "why": why, "ok": d_lim > 0.0}
+        except Exception:
+            return None
+
     def _check_pending_pullback_order(self, symbol: str, tick, profile_key: str = None):
         """Kiểm tra mỗi 1 giây: Nếu đang có tín hiệu chờ giá hồi về <= SL tối đa thì khớp lệnh ngay khi đạt (Có khóa chống đúp lệnh)."""
         pk = profile_key or self.active_profile_key
@@ -10777,6 +10979,7 @@ class KronosDesktopApp:
         sl_ref = float(_sl_ai_raw) if use_sl_ai else sl_price
         cur_price = tick.ask if action == "BUY" else tick.bid
         spread_usd = tick.ask - tick.bid
+        self.__dict__.setdefault("_zone_spread", {})[pk] = spread_usd  # chỉ để vẽ đường Vùng canh (_zone_entry_limit)
         tols = self._get_symbol_tolerances(symbol, tick)
 
         cur_sl_dist = (cur_price - sl_ref) if action == "BUY" else (sl_ref - cur_price)
@@ -10946,6 +11149,9 @@ class KronosDesktopApp:
                 except (ValueError, TypeError):
                     max_sl_p = 5.0
                 lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
+                _zl = self._zone_entry_limit(p, self.active_profile_key, tick)
+                if _zl:
+                    lim_entry = _zl["line"]
                 rr_tag = " (RR>=2R)" if p.get("sl_tightened_for_2r") else ""
                 op_sign = "<=" if p["action"] == "BUY" else ">="
                 ai_state = f"Canh vùng {p['action']}{rr_tag} {op_sign} {lim_entry:.2f}"
@@ -12072,6 +12278,17 @@ class KronosDesktopApp:
         """Nhiệt độ/top-p thích ứng của Kronos. Logic ở trading_modules/kronos_sampling.py."""
         return compute_adaptive_sampling_params(df_ai, analysis_tf)
 
+    @staticmethod
+    def _apply_ai_temperature(cfg: dict, dyn_t: float, regime_tag: str) -> tuple:
+        """Nhiệt độ AI người dùng đặt (ai_temperature > 0) thay T tự tính; 0 / trống / sai = tự động như cũ. Top-P vẫn tự động."""
+        try:
+            t_user = float(str(cfg.get("ai_temperature", 0) or 0).strip() or 0)
+        except (ValueError, TypeError):
+            t_user = 0.0
+        if t_user > 0.0:
+            return round(min(max(t_user, 0.1), 2.0), 2), f"{regime_tag} (tự đặt)"
+        return dyn_t, regime_tag
+
     def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float, profile_key: str = None) -> dict:
         """Cấu trúc thị trường (BOS/CHoCH, order-flow, râu nến). Logic nằm ở trading_modules/structure.py; hàm này chỉ đọc cấu hình rồi gọi module.
         profile_key: profile đang phân tích (đọc đúng structure_conflict_mode của profile đó, không lấy theo tab đang mở)."""
@@ -12979,6 +13196,7 @@ class KronosDesktopApp:
                 scenarios = None
                 used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local (KV-Cache)"
                 dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(df_ai, analysis_tf)
+                dyn_t, regime_tag = self._apply_ai_temperature(cfg, dyn_t, regime_tag)
                 macro_ctx = self._analyze_scalping_micro_macro_context(df, df_scalp, atr, profile_key=pk)
 
                 if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
@@ -13433,6 +13651,8 @@ class KronosDesktopApp:
                         "target_tp_price": tp_price,
                         "atr": atr,
                     }
+                    _zl = self._zone_entry_limit(zone_watch_order, pk, tick)  # chỉ hiển thị: mức vào thật (giống đường Vùng canh trên biểu đồ)
+                    zone_show = _zl["line"] if _zl else limit_entry_price
                     if self._is_daily_limit_locked(pk):
                         ctx["pending_pullback_order"] = None
                         reason_lk = self.daily_limit_reason if pk == self.active_profile_key else ctx.get("daily_limit_reason", "")
@@ -13444,23 +13664,23 @@ class KronosDesktopApp:
                         self.log(f"[{pk}] {trade_msg}")
                     elif has_losing_opposite_pos and not self._cfg_flag(cfg, "allow_opposite_entry"):
                         ctx["pending_pullback_order"] = zone_watch_order
-                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {limit_entry_price:.2f})"
+                        trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {zone_show:.2f})"
                         self.log(f"⏳ [{pk} - Quy tắc 2] Đang có lệnh ngược chiều chờ về Entry hòa vốn -> Tạm ngưng mở lệnh {action} mới.")
                     elif effective_max_sl > 0.0 and abs(entry_ref - sl_ai_price) > effective_max_sl + tols["max_sl_tol"]:
                         ctx["pending_pullback_order"] = zone_watch_order
                         cond_op = "<=" if action == "BUY" else ">="
                         tight_tag = " [Siết 1/2 Max SL do RR < 2R]" if sl_tightened_for_2r else ""
                         trade_msg = (
-                            f"🎯 AI {analysis_tf} đã chốt vùng {action} -> Python đang canh giá về {cond_op} {limit_entry_price:.2f} "
+                            f"🎯 AI {analysis_tf} đã chốt vùng {action} -> Python đang canh giá về {cond_op} {zone_show:.2f} "
                             f"(SL: {sl_price:.2f} [Max {effective_max_sl:.2f}${tight_tag}], TP: {tp_price:.2f})"
                         )
                         self.log(
                             f"🎯 [{pk} - Canh Vùng Giá AI {analysis_tf}{tight_tag}] AI báo {action} (SL: {sl_price:.2f}, TP: {tp_price:.2f}, cách SL {cur_sl_dist:.2f}$ > Max {effective_max_sl:.2f}$). "
-                            f"Python đang canh giá {scalp_tf}/Tick về vùng {cond_op} {limit_entry_price:.2f} để tự động vào lệnh!"
+                            f"Python đang canh giá {scalp_tf}/Tick về vùng {cond_op} {zone_show:.2f} để tự động vào lệnh!"
                         )
                     elif spread_usd > max_spread:
                         ctx["pending_pullback_order"] = zone_watch_order
-                        trade_msg = f"⚠️ Spread hiện tại cao ({spread_usd:.2f}$ > {max_spread}$) — Đang canh Spread hạ trong vùng {action} @ {limit_entry_price:.2f}"
+                        trade_msg = f"⚠️ Spread hiện tại cao ({spread_usd:.2f}$ > {max_spread}$) — Đang canh Spread hạ trong vùng {action} @ {zone_show:.2f}"
                         self.log(f"[{pk}] {trade_msg}")
                     elif is_auto_on and self._last_order_candle_ts.get(pk) == last_time:
                         ctx["pending_pullback_order"] = zone_watch_order
@@ -13494,7 +13714,7 @@ class KronosDesktopApp:
                             self.log(ord_msg)
                     else:
                         ctx["pending_pullback_order"] = zone_watch_order
-                        self.log(f"[{pk}] Có vùng tín hiệu {action} {symbol} @ {limit_entry_price:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Python tự canh giá vào lệnh.")
+                        self.log(f"[{pk}] Có vùng tín hiệu {action} {symbol} @ {zone_show:.2f} (SL: {sl_price:.2f} [-{cur_sl_dist:.2f} giá], TP: {tp_price:.2f}) — Gạt công tắc AUTO sang RUNNING để Python tự canh giá vào lệnh.")
                 else:
                     ctx["pending_pullback_order"] = None
                     if is_high_uncertainty:
@@ -14040,12 +14260,17 @@ class KronosDesktopApp:
             except (ValueError, TypeError):
                 max_sl_p = 5.0
             lim_entry = (float(p.get("sl_ai_price") or p["sl_price"]) + max_sl_p) if p["action"] == "BUY" else (float(p.get("sl_ai_price") or p["sl_price"]) - max_sl_p)  # neo SL AI gốc như cổng canh vùng
+            zone_why = f"SL≤{max_sl_p:.2f}$"
+            _zl = self._zone_entry_limit(p, self.active_profile_key)
+            if _zl:  # mức vào THẬT: qua cả cổng SL tối đa + RR, BUY đã trừ spread (biểu đồ theo Bid)
+                lim_entry = _zl["line"]
+                zone_why = (_zl["why"] + (", đã trừ spread" if p["action"] == "BUY" else "")) if _zl["ok"] else f"KHÔNG vào được: {_zl['why']}"
             op_sign = "<=" if p["action"] == "BUY" else ">="
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=0.85, alpha=0.80)
             tight_tag = " (RR≥2R)" if p.get("sl_tightened_for_2r") else ""
             t_wait = self.ax.text(
                 base_label_x, lim_entry,
-                f" 🎯 Vùng canh {p['action']}{tight_tag} {op_sign} {lim_entry:.2f} (SL≤{max_sl_p:.2f}$) ",
+                f" 🎯 Vùng canh {p['action']}{tight_tag} {op_sign} {lim_entry:.2f} ({zone_why}) ",
                 color=GOLD_ACCENT,
                 bbox=dict(boxstyle="square,pad=0.18", facecolor="#131722", edgecolor=GOLD_ACCENT, lw=0.8, alpha=0.88),
                 fontsize=7.2, fontweight="bold", va="center", clip_on=True

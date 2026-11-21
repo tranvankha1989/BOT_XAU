@@ -113,7 +113,8 @@ class TestTgResend(unittest.TestCase):
         self.assertLess(n, 50)
 
     def _ai_report(self, kind):
-        app = make_app(_generate_telegram_ai_report=lambda: "bao cao", _tg_capture_chart_png=lambda: b"png",
+        app = make_app(_tg_ai_brief=lambda pk: "bao cao", _tg_capture_chart_png=lambda: b"png",
+                       active_profile_key="XAUUSD", profile_ctx={"XAUUSD": {"auto_loop_running": True}, "BTCUSD": {}},
                        _get_telegram_inline_keyboard=lambda: {}, _tg_strip_icons_payload=lambda d: d)
         app._telegram_send_photo = mock.Mock(side_effect=lambda *a, **k: app._tg_tls_set(kind, kind))
         app._telegram_send_with_keyboard = mock.Mock()
