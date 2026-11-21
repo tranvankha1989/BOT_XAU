@@ -1814,8 +1814,18 @@ class KronosDesktopApp:
             SWP_NOZORDER = 0x0004
             ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             new_ex_style = (ex_style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
-            if ex_style != new_ex_style:
-                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
+            # Cửa sổ không viền mất cờ thu nhỏ -> bấm icon Taskbar lần 2 không thu nhỏ. Thêm lại WS_MINIMIZEBOX | WS_SYSMENU
+            # (không có WS_CAPTION nên không hiện lại thanh tiêu đề Windows) để Windows tự thu nhỏ / khôi phục khi bấm icon.
+            GWL_STYLE = -16
+            WS_MINIMIZEBOX = 0x00020000
+            WS_SYSMENU = 0x00080000
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+            new_style = style | WS_MINIMIZEBOX | WS_SYSMENU
+            if style != new_style:
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
+            if ex_style != new_ex_style or style != new_style:
+                if ex_style != new_ex_style:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
                 ctypes.windll.user32.SetWindowPos(
                     hwnd, 0, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
