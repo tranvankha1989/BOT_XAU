@@ -502,7 +502,7 @@ def run(argv=None) -> int:
     if args.config:
         _keys = ["tf", "analysis_tf", "lot", "consensus", "max_dispersion", "min_move", "sl_buffer", "max_sl_price", "rr",
                  "min_entry_spacing", "max_hold_mins", "max_hold_action", "trend_filter", "structure_conflict_mode",
-                 "confirm_entry_pa", "pa_min_confirmations", "pred_len"]
+                 "confirm_entry_pa", "pa_min_confirmations", "pred_len", "ai_temperature"]
         print("[*] Thông số chính   : " + ", ".join(f"{k}={cfg.get(k)}" for k in _keys))
         print(f"[*] Lot backtest     : {args.lot}")
     print(f"[*] Seed             : {args.seed}")

@@ -497,6 +497,11 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Số lượng cây nến tiếp theo mà AI sẽ vẽ đường dự báo trên biểu đồ.",
         "how_to_set": "- Mặc định: 6 nến (Trên khung M5 tương đương 30 phút, trên M15 tương đương 90 phút).\n- Khoảng cách 6 nến là tối ưu nhất để xác định đỉnh/đáy cho một nhịp Scalping."
     },
+    "ai_temperature": {
+        "title": "Nhiệt độ AI (T)",
+        "what_is_it": "Độ 'bay bổng' của AI khi vẽ các kịch bản. T thấp: các kịch bản giống nhau hơn (Đồng thuận dễ cao, Phân tán thấp). T cao: kịch bản đa dạng hơn (Đồng thuận khó đạt hơn). T không làm AI đoán đúng hơn, chỉ đổi độ giống nhau giữa các kịch bản.",
+        "how_to_set": "- 0 = Tự động (mặc định, như cũ): bot tự tính theo khung phân tích (M5 khoảng 0.65, giật mạnh giảm, đi ngang tăng nhẹ; trong khoảng 0.48 - 0.82).\n- Nhập số (ví dụ 0.6 - 0.9): dùng đúng số đó cho mọi lần phân tích, dòng tín hiệu ghi '(tự đặt)'.\n- 1.0 là mức tự nhiên của mô hình. Nên chạy Backtest/phát lại để so sánh trước khi đổi trên bot thật."
+    },
 
     # ─── MỤC 5: THÔNG BÁO & ĐIỀU KHIỂN TELEGRAM ───
     "telegram_enabled": {
@@ -595,6 +600,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "hf_token": "",
         "lookback": "450",
         "pred_len": "6",
+        "ai_temperature": "0",
         "realtime_chart": True,
         "telegram_enabled": False,
         "telegram_bot_token": "",
@@ -666,6 +672,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "hf_token": "",
         "lookback": "450",
         "pred_len": "6",
+        "ai_temperature": "0",
         "realtime_chart": True,
         "telegram_enabled": False,
         "telegram_bot_token": "",
@@ -2714,6 +2721,7 @@ class KronosDesktopApp:
         self.hf_token_var = self._add_labeled_entry(sec4.content, "HF Token (nếu có):", "", show="*", entry_width=18, help_key="hf_token")
         self.lookback_var = self._add_labeled_entry(sec4.content, "Số nến lịch sử AI (Lookback):", "450", help_key="lookback")
         self.pred_len_var = self._add_labeled_entry(sec4.content, "Số nến dự báo (6 = 30p):", "6", help_key="pred_len")
+        self.ai_temperature_var = self._add_labeled_entry(sec4.content, "Nhiệt độ AI (T, 0 = tự động):", "0", help_key="ai_temperature")
         self.debug_trace_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec4.content, "Ghi nhật ký debug theo nến (chỉ để chẩn đoán)", self.debug_trace_var, help_key="debug_trace")
         tk.Button(
@@ -5077,6 +5085,7 @@ class KronosDesktopApp:
             y_ts = pd.Series([x_ts.iloc[-1] + dt_step * (k + 1) for k in range(6)])
 
             dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(sub_df, ana_tf_str)
+            dyn_t, regime_tag = self._apply_ai_temperature(cfg, dyn_t, regime_tag)
             # Cache kịch bản AI thô: chỉ tools/run_backtest.py gắn vào (live/UI: None -> chạy AI như cũ)
             _sc_cache = getattr(self, "_bt_scenario_cache", None)
             scenarios = None
@@ -6330,6 +6339,7 @@ class KronosDesktopApp:
             "hf_token": self.hf_token_var,
             "lookback": self.lookback_var,
             "pred_len": self.pred_len_var,
+            "ai_temperature": self.ai_temperature_var,
             "realtime_chart": self.realtime_chart_var,
             "telegram_enabled": self.telegram_enabled_var,
             "telegram_bot_token": self.telegram_bot_token_var,
@@ -6417,6 +6427,7 @@ class KronosDesktopApp:
             str(cfg.get("engine", "")).strip(),
             str(cfg.get("lookback", "450")).strip(),
             str(cfg.get("pred_len", "6")).strip(),
+            str(cfg.get("ai_temperature", "0")).strip(),
             str(cfg.get("scenarios", "8")).strip(),
             str(cfg.get("consensus", "75")).strip(),
             str(cfg.get("max_dispersion", "2.5")).strip(),
@@ -6836,7 +6847,7 @@ class KronosDesktopApp:
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
         2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "halve_spacing_with_sl", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
         3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
-        4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "debug_trace"]),
+        4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "ai_temperature", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
     }
 
@@ -12257,6 +12268,17 @@ class KronosDesktopApp:
         """Nhiệt độ/top-p thích ứng của Kronos. Logic ở trading_modules/kronos_sampling.py."""
         return compute_adaptive_sampling_params(df_ai, analysis_tf)
 
+    @staticmethod
+    def _apply_ai_temperature(cfg: dict, dyn_t: float, regime_tag: str) -> tuple:
+        """Nhiệt độ AI người dùng đặt (ai_temperature > 0) thay T tự tính; 0 / trống / sai = tự động như cũ. Top-P vẫn tự động."""
+        try:
+            t_user = float(str(cfg.get("ai_temperature", 0) or 0).strip() or 0)
+        except (ValueError, TypeError):
+            t_user = 0.0
+        if t_user > 0.0:
+            return round(min(max(t_user, 0.1), 2.0), 2), f"{regime_tag} (tự đặt)"
+        return dyn_t, regime_tag
+
     def _analyze_scalping_micro_macro_context(self, df_ana: pd.DataFrame, df_scalp: pd.DataFrame, atr: float, profile_key: str = None) -> dict:
         """Cấu trúc thị trường (BOS/CHoCH, order-flow, râu nến). Logic nằm ở trading_modules/structure.py; hàm này chỉ đọc cấu hình rồi gọi module.
         profile_key: profile đang phân tích (đọc đúng structure_conflict_mode của profile đó, không lấy theo tab đang mở)."""
@@ -13164,6 +13186,7 @@ class KronosDesktopApp:
                 scenarios = None
                 used_engine = "GTX 1650 Local" if torch.cuda.is_available() else "CPU Local (KV-Cache)"
                 dyn_t, dyn_top_p, regime_tag = self._compute_adaptive_sampling_params(df_ai, analysis_tf)
+                dyn_t, regime_tag = self._apply_ai_temperature(cfg, dyn_t, regime_tag)
                 macro_ctx = self._analyze_scalping_micro_macro_context(df, df_scalp, atr, profile_key=pk)
 
                 if engine_mode.startswith("Ưu tiên Hugging Face") and HF_CLIENT_AVAILABLE and hf_space:
