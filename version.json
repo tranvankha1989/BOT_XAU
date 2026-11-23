@@ -1,6 +1,6 @@
 {
-  "version": "1.3.49",
+  "version": "1.3.50",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-24",
-  "description": "Phiên bản v1.3.49:\n- Chống treo app triệt để: khi luồng giao diện phải chờ kết nối MT5, nó vẫn xử lý giúp các yêu cầu giao diện của luồng nền, nên hai bên không thể chờ nhau mãi (đã gặp ở máy 2 ngày 19/11 và 23/11).\n- Thêm ô 'Tự chấm điểm AI' ở Mục 3 (mặc định TẮT, chưa khuyên bật): AI gần đây đoán sai nhiều thì tạm nghỉ vào lệnh mới."
+  "description": "Phiên bản v1.3.50:\n- Menu cài đặt bên trái cuộn được (thanh cuộn + con lăn chuột): màn hình thấp vẫn xem hết các ô của Mục dài.\n- Nút LƯU CÀI ĐẶT luôn cố định ở đáy menu, không bị khuất.\n- Lăn chuột trên ô chọn trong menu chỉ cuộn menu, không vô tình đổi giá trị cài đặt."
 }
