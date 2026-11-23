@@ -49,7 +49,7 @@ class TestStackHalfBe(unittest.TestCase):
         self.assertIn("stack_half_be", b.PARAM_HELP_GUIDE)
         src = open(os.path.join(ROOT, "mt5_scalping_bot.py"), encoding="utf-8").read()
         self.assertIn('"stack_half_be": self.stack_half_be_var', src)
-        self.assertIn('"recovery_close", "stack_half_be"]', src)
+        self.assertIn('"recovery_close", "stack_half_be"', src)
         self.assertIn('help_key="stack_half_be"', src)
 
     def test_3_lenh_buy_dca_thoat_lenh_gia_cao_nhat(self):

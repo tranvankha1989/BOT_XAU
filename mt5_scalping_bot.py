@@ -335,8 +335,13 @@ PARAM_HELP_GUIDE = {
     },
     "recovery_close": {
         "title": "Gỡ vốn (Recovery Close)",
-        "what_is_it": "Khi tổng lãi/lỗ ĐÃ CHỐT trong ngày đang âm, bot đóng 1 lệnh đang lãi (chưa dời BE) có lãi >= phần lỗ cần gỡ, để gỡ vốn trước khi giá quay lại hòa vốn. Mỗi lần đóng cách nhau tối thiểu 20 giây.",
-        "how_to_set": "- TẮT (Mặc định).\n- BẬT: ưu tiên gỡ vốn trong ngày; đổi lại có thể cắt sớm lệnh lẽ ra chạy tới TP. Mới kiểm thử phát lại 2 ngày, chưa đủ bằng chứng."
+        "what_is_it": "Khi tổng lãi/lỗ ĐÃ CHỐT trong ngày đang âm, bot dùng 1 lệnh đang lãi (chưa dời BE) có lãi >= phần lỗ cần gỡ để gỡ vốn trước khi giá quay lại hòa vốn. Cách gỡ chọn ở ô 'Cách gỡ vốn' bên dưới. Mỗi lần xử lý cách nhau tối thiểu 20 giây.",
+        "how_to_set": "- TẮT (Mặc định).\n- BẬT: ưu tiên gỡ vốn trong ngày. Mới kiểm thử phát lại 2 ngày, chưa đủ bằng chứng."
+    },
+    "recovery_mode": {
+        "title": "Cách gỡ vốn",
+        "what_is_it": "- 'Dời SL khóa lãi rồi gồng tiếp' (Mặc định): khi lệnh lãi đủ, bot dời SL lên mức khóa đúng phần lỗ cần gỡ + đệm nhỏ (= 'Giá lãi nhỏ cộng vào Entry khi BE+') để bù trượt giá. Giá quay đầu thì chạm SL vẫn gỡ đủ; giá đi tiếp thì lệnh chạy tới TP. Lệnh đã khóa được tính như lệnh đã BE (không còn rủi ro): không bị luật giữ lệnh tối đa xử lý, Trailing vẫn kéo SL lên tiếp.\n- 'Đóng lệnh ngay': đóng lệnh ngay khi lãi vừa đủ gỡ (cách cũ; lúc khớp có thể trượt giá nên tổng ngày còn âm nhẹ).",
+        "how_to_set": "- Bot chỉ dời SL khi lãi đã dư thêm 1 khoảng (đệm BE+ và khoảng cách dừng tối thiểu so với giá), nên phải chờ lãi cao hơn mức cần gỡ một chút.\n- Giá giật mạnh thì SL vẫn có thể trượt quá phần đệm."
     },
     "stack_half_be": {
         "title": "Nhồi lệnh: thoát nửa số lệnh giá xấu ở BE+",
@@ -570,6 +575,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "recovery_mode": "Dời SL khóa lãi rồi gồng tiếp",
         "stack_half_be": False,
         "structure_direction": False,
         "structure_conflict_mode": "neutral",
@@ -642,6 +648,7 @@ DEFAULT_PROFILE_SETTINGS = {
         "use_confidence_gate": False,
         "debug_trace": False,
         "recovery_close": False,
+        "recovery_mode": "Dời SL khóa lãi rồi gồng tiếp",
         "stack_half_be": False,
         "structure_direction": False,
         "structure_conflict_mode": "neutral",
@@ -2682,7 +2689,13 @@ class KronosDesktopApp:
         self.daily_tp_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lãi ngày ($, 0=Tắt):", "0", help_key="daily_tp_usd")
         self.daily_sl_usd_var = self._add_labeled_entry(sec3.content, "Dừng khi Lỗ ngày ($, 0=Tắt):", "0", help_key="daily_sl_usd")
         self.recovery_close_var = tk.BooleanVar(value=False)
-        self._add_checkbutton(sec3.content, "Gỡ vốn trong ngày (đóng lệnh lãi ≥ lỗ ròng)", self.recovery_close_var, help_key="recovery_close")
+        self._add_checkbutton(sec3.content, "Gỡ vốn trong ngày (lệnh lãi ≥ lỗ ròng)", self.recovery_close_var, help_key="recovery_close")
+        self.recovery_mode_var = self._add_labeled_combo(
+            sec3.content, "   Cách gỡ vốn:",
+            ["Dời SL khóa lãi rồi gồng tiếp", "Đóng lệnh ngay"],
+            "Dời SL khóa lãi rồi gồng tiếp",
+            help_key="recovery_mode"
+        )
         self.max_consec_loss_var = self._add_labeled_entry(sec3.content, "Thua liên tiếp nghỉ (lệnh, 0=Tắt):", "0", help_key="max_consec_loss")
         self.cooldown_mins_var = self._add_labeled_entry(sec3.content, "Thời gian tạm ngừng (phút):", "30", help_key="cooldown_mins")
         self.fast_sl_cooldown_candles_var = self._add_labeled_entry(sec3.content, "Nghỉ nếu SL nhanh (nến AI, 0=Tắt):", "1", help_key="fast_sl_cooldown_candles")
@@ -2706,6 +2719,7 @@ class KronosDesktopApp:
             self._bind_param_children(self.max_hold_mins_var, [self.max_hold_action_var], numeric=True)
             self._bind_param_children(self.max_consec_loss_var, [self.cooldown_mins_var], numeric=True)
             self._bind_param_children(self.fast_sl_cooldown_candles_var, [self.fast_sl_same_dir_var], numeric=True)
+            self._bind_param_children(self.recovery_close_var, [self.recovery_mode_var])
             self._bind_param_children(self.min_entry_spacing_var, [self.halve_spacing_with_sl_var], numeric=True)
             self._bind_param_children(self.confirm_entry_pa_var, [self.pa_min_confirmations_var, self.pa_fail_open_var])
         except Exception as _e:
@@ -6321,6 +6335,7 @@ class KronosDesktopApp:
             "use_confidence_gate": self.use_confidence_gate_var,
             "debug_trace": self.debug_trace_var,
             "recovery_close": self.recovery_close_var,
+            "recovery_mode": self.recovery_mode_var,
             "stack_half_be": self.stack_half_be_var,
             "structure_direction": self.structure_direction_var,
             "blocked_trading_windows": self.blocked_trading_windows_var,
@@ -6919,7 +6934,7 @@ class KronosDesktopApp:
     SETTINGS_SECTION_MAP = {
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
         2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "halve_spacing_with_sl", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
-        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be"]),
+        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be", "recovery_mode"]),
         4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "ai_temperature", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
     }
@@ -11475,24 +11490,62 @@ class KronosDesktopApp:
             return pos.sl <= (pos.price_open + eps_eq)
 
     def _recovery_close_step(self, pk: str, symbol: str, positions: list, cfg: dict):
-        """Gỡ vốn (khóa recovery_close, mặc định TẮT): nếu lỗ ròng đã chốt trong ngày > 0 thì đóng 1 lệnh đang lãi
-        có lãi >= phần lỗ cần gỡ và CHƯA dời BE. Không đổi các luật khác. Lỗi trong hàm không ảnh hưởng luồng chính."""
+        """Gỡ vốn (khóa recovery_close, mặc định TẮT): nếu lỗ ròng đã chốt trong ngày > 0 thì dùng 1 lệnh đang lãi
+        có lãi >= phần lỗ cần gỡ và CHƯA dời BE. recovery_mode: 'Đóng lệnh ngay' = đóng lệnh; còn lại (mặc định) = dời SL
+        khóa đúng phần lỗ cần gỡ + đệm be_plus_price rồi gồng tiếp (lệnh thành đã-BE). Lỗi trong hàm không ảnh hưởng luồng chính."""
         try:
             ctx = self.profile_ctx[pk]
             now_m = time.monotonic()
-            # Vừa đóng 1 lệnh gỡ vốn: chờ cache lãi/lỗ đã chốt (10s) cập nhật, tránh đóng đúp
+            # Vừa đóng/dời SL 1 lệnh gỡ vốn: chờ cache lãi/lỗ đã chốt (10s) cập nhật, tránh xử lý đúp
             if now_m - ctx.get("_recovery_last_ts", -1e9) < 20.0:
                 return
+            lock_mode = not str(cfg.get("recovery_mode", "Dời SL khóa lãi rồi gồng tiếp")).strip().startswith("Đóng")
+            tols = self._get_symbol_tolerances(symbol)
+            eps_eq = tols.get("eps_equal", 0.05)
+            locked = ctx.setdefault("_recovery_locked_tickets", set())
+            if lock_mode:
+                # Đã có lệnh khóa lãi gỡ vốn đang chạy (SL đã dời qua Entry) -> phần lỗ đã được bảo vệ, không khóa thêm lệnh khác
+                if any(p.ticket in locked and self._is_pos_at_be(p, eps_eq) for p in positions):
+                    return
+                locked.clear()  # lệnh khóa cũ đã đóng, hoặc dời SL thất bại -> cho thử lại
             with self._mt5_lock:
                 realized, _, _ = self._get_today_deals_stats(symbol=symbol, profile_key=pk)
             debt = -float(realized)
             if debt <= 0.05:
                 return
-            eps_eq = self._get_symbol_tolerances(symbol).get("eps_equal", 0.05)
             cands = [pos for pos in positions if float(pos.profit) >= debt and not self._is_pos_at_be(pos, eps_eq)]
             if not cands:
                 return
             pos = max(cands, key=lambda x: float(x.profit))
+            if lock_mode:
+                is_buy = (pos.type == getattr(mt5, "POSITION_TYPE_BUY", 0))
+                move = (float(pos.price_current) - float(pos.price_open)) if is_buy else (float(pos.price_open) - float(pos.price_current))
+                if move <= 0.0:
+                    return
+                usd_per_price = float(pos.profit) / move
+                try:
+                    be_plus = max(float(cfg.get("be_plus_price", 0.0) or 0.0), 0.0)
+                except (TypeError, ValueError):
+                    be_plus = 0.0
+                min_stop_d = float(tols.get("min_stop_dist", 0.0) or 0.0)
+                lock_dist = debt / usd_per_price + be_plus
+                lock_sl = (float(pos.price_open) + lock_dist) if is_buy else (float(pos.price_open) - lock_dist)
+                # SL phải cách giá hiện tại >= khoảng cách dừng tối thiểu; chưa đủ thì chờ lãi dư thêm
+                if (lock_sl > float(pos.price_current) - min_stop_d) if is_buy else (lock_sl < float(pos.price_current) + min_stop_d):
+                    return
+                ctx["_recovery_last_ts"] = now_m
+                locked.add(pos.ticket)
+                log_m = (f"🧩 [{pk} - Gỡ vốn] Lỗ ròng đã chốt hôm nay {realized:+.2f}$ -> lệnh #{pos.ticket} đang lãi {pos.profit:+.2f}$: "
+                         f"dời SL về {lock_sl:.2f} khóa ~{lock_dist * usd_per_price:+.2f}$ (gỡ vốn + đệm {be_plus:g}), gồng tiếp tới TP")
+                if bool(cfg.get("debug_trace", False)):
+                    self._write_trace(pk, {"event": "recovery_lock", "ticket": pos.ticket, "realized": round(realized, 2),
+                                           "debt": round(debt, 2), "pos_profit": round(float(pos.profit), 2),
+                                           "lock_sl": round(lock_sl, 5), "sl": pos.sl, "tp": pos.tp})
+                if threading.current_thread() is threading.main_thread():
+                    self._dispatch_pos_action_async(("RECOVERY_LOCK", pos.ticket), self._modify_position_sltp, pos, lock_sl, pos.tp, log_msg=log_m)
+                elif self._modify_position_sltp(pos, lock_sl, pos.tp):
+                    self.log(log_m)
+                return
             ctx["_recovery_last_ts"] = now_m
             self.log(f"🧩 [{pk} - Gỡ vốn] Lỗ ròng đã chốt hôm nay {realized:+.2f}$ -> đóng lệnh #{pos.ticket} đang lãi {pos.profit:+.2f}$ (chưa BE) để gỡ vốn")
             if bool(cfg.get("debug_trace", False)):
