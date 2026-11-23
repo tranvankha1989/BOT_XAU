@@ -465,6 +465,21 @@ PARAM_HELP_GUIDE = {
         "what_is_it": "Áp dụng cho 'Nghỉ nếu SL nhanh'. Khi BẬT: lệnh dính SL nhanh là BUY thì chỉ tạm ngừng vào BUY trong thời gian nghỉ; lệnh SELL nếu có tín hiệu vẫn vào bình thường (và ngược lại). Khi TẮT: nghỉ cả hai chiều như cũ.",
         "how_to_set": "- TẮT (Mặc định): nghỉ cả BUY lẫn SELL.\n- BẬT: chỉ nghỉ chiều vừa bị SL nhanh. Chưa có đủ phát lại để kết luận tốt hơn."
     },
+    "ai_selfcheck_n": {
+        "title": "Tự chấm điểm AI (số tín hiệu xét)",
+        "what_is_it": "Bot tự chấm AI đúng hay sai: mỗi tín hiệu BUY/SELL được ghi lại, chờ vài nến rồi xem giá có đi đúng hướng AI báo không. Nếu trong N tín hiệu gần nhất AI đúng ít hơn mức tối thiểu thì bot TẠM NGHỈ vào lệnh mới (lệnh đang mở vẫn quản lý bình thường). AI vẫn phân tích và vẫn được chấm điểm trong lúc nghỉ, đúng trở lại thì bot tự vào lệnh tiếp. Kết quả cũ hơn 3 giờ bị bỏ (sau đêm/cuối tuần bot giao dịch bình thường).",
+        "how_to_set": "- 0 = Tắt (Mặc định).\n- Gợi ý thử trên DEMO: 8 tín hiệu (nhạy). Xét nhiều hơn (15-20) lọc chắc hơn nhưng phản ứng chậm hơn.\n- Dữ liệu máy 2 (vàng M5, 18-23/11): sau giai đoạn AI đúng, tín hiệu kế tiếp đúng ~6/10; sau giai đoạn AI sai chỉ ~4.5/10. Mẫu mới ~5 ngày, chưa chắc chắn."
+    },
+    "ai_selfcheck_candles": {
+        "title": "Tự chấm điểm AI: chấm sau số nến",
+        "what_is_it": "Số nến THẬT của khung AI phân tích bot chờ sau khi AI ra tín hiệu rồi mới chấm (không phải số nến lịch sử hay số nến dự báo). Ví dụ AI khung M5, đặt 3: tín hiệu lúc 19:10 được chấm bằng giá đóng nến 19:25.",
+        "how_to_set": "- Mặc định 3 (với M5 là 15 phút): bot nhận ra AI đổi phong độ nhanh.\n- Tăng lên thì chấm chắc hơn nhưng biết AI sai muộn hơn."
+    },
+    "ai_selfcheck_min_pct": {
+        "title": "Tự chấm điểm AI: mức đúng tối thiểu (%)",
+        "what_is_it": "Trong các tín hiệu gần nhất đang xét, AI phải đúng ít nhất từng này phần trăm thì bot mới vào lệnh mới. Thấp hơn thì tạm nghỉ.",
+        "how_to_set": "- Mặc định 50% (đúng ít hơn một nửa thì nghỉ).\n- Tăng lên (vd 60%) thì nghỉ nhiều hơn, ít lệnh hơn."
+    },
     "fast_sl_cooldown_mins": {
         "title": "Nghỉ nếu dính SL nhanh (Số nến AI)",
         "what_is_it": "Nếu một lệnh vừa mở chưa đầy 1 cây nến AI đã bị quét cắn SL, chứng tỏ thị trường vừa có biến động giật mạnh bất thường. Bot sẽ tự ngắt tạm thời số cây nến AI tiếp theo để tránh bị quét liên hoàn.",
@@ -600,6 +615,9 @@ DEFAULT_PROFILE_SETTINGS = {
         "cooldown_mins": "30",
         "fast_sl_cooldown_candles": "1",
         "fast_sl_same_dir": False,
+        "ai_selfcheck_n": "0",
+        "ai_selfcheck_candles": "3",
+        "ai_selfcheck_min_pct": "50",
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -673,6 +691,9 @@ DEFAULT_PROFILE_SETTINGS = {
         "cooldown_mins": "30",
         "fast_sl_cooldown_candles": "1",
         "fast_sl_same_dir": False,
+        "ai_selfcheck_n": "0",
+        "ai_selfcheck_candles": "3",
+        "ai_selfcheck_min_pct": "50",
         "engine": "Chạy trực tiếp máy Local",
         "model": "AI-base (102.3M - Mạnh nhất)",
         "hf_space": "tranvankha2807/Kronos_Xau",
@@ -974,6 +995,7 @@ from trading_modules.scenario_scoring import score_scenarios
 from trading_modules.indicators import calculate_atr
 from trading_modules.kronos_sampling import compute_adaptive_sampling_params
 from trading_modules.backtest_report import _BT_WIN_EPS, build_backtest_report, format_backtest_report, export_backtest_csv
+from trading_modules.ai_selfcheck import selfcheck_step, new_state as selfcheck_new_state, clean_state as selfcheck_clean_state
 
 
 class _UiSafeRLock:
@@ -1047,6 +1069,7 @@ class KronosDesktopApp:
         self.initial_r_cache = {}  # Lưu khoảng cách 1R (|Entry - SL ban đầu|) theo từng ticket
         self._initial_r_saved = {}  # Bản đã ghi ra file gần nhất (A11): chỉ ghi lại khi cache thay đổi
         self._load_initial_r_cache()  # A11: nạp lại 1R của các lệnh còn mở sau khi khởi động lại
+        self._ai_selfcheck_persist = True  # Chỉ app thật lưu điểm tự chấm AI ra file (bộ phát lại/backtest không có cờ này)
         self.pending_be_exit_tickets = set()  # Lưu các ticket đang âm bị AI báo đảo chiều -> chờ hồi về Entry thoát
         self.pending_pullback_order = None  # Lưu tín hiệu chờ giá hồi về <= SL tối đa (1 giá = 10 pip) mới vào lệnh
         self.daily_limit_locked_date = None  # Ngày (YYYY-MM-DD) đã chạm mục tiêu Lãi/Lỗ ngày -> Dừng giao dịch hết ngày
@@ -2824,6 +2847,9 @@ class KronosDesktopApp:
         self.fast_sl_cooldown_mins_var = self.fast_sl_cooldown_candles_var
         self.fast_sl_same_dir_var = tk.BooleanVar(value=False)
         self._add_checkbutton(sec3.content, "   Chỉ nghỉ chiều vừa SL nhanh (chiều ngược vẫn vào)", self.fast_sl_same_dir_var, help_key="fast_sl_same_dir")
+        self.ai_selfcheck_n_var = self._add_labeled_entry(sec3.content, "Tự chấm điểm AI: số tín hiệu xét (0=Tắt):", "0", help_key="ai_selfcheck_n")
+        self.ai_selfcheck_candles_var = self._add_labeled_entry(sec3.content, "   Chấm sau số nến AI:", "3", help_key="ai_selfcheck_candles")
+        self.ai_selfcheck_min_pct_var = self._add_labeled_entry(sec3.content, "   Mức đúng tối thiểu (%):", "50", help_key="ai_selfcheck_min_pct")
         tk.Button(
             sec3.content, text="↺ Khôi phục mặc định Mục 3 (Quản lý lệnh & Chốt lời)", bg="#161e2e", fg="#94a3b8",
             activebackground="#25334c", activeforeground=GOLD_ACCENT,
@@ -2841,6 +2867,7 @@ class KronosDesktopApp:
             self._bind_param_children(self.max_hold_mins_var, [self.max_hold_action_var], numeric=True)
             self._bind_param_children(self.max_consec_loss_var, [self.cooldown_mins_var], numeric=True)
             self._bind_param_children(self.fast_sl_cooldown_candles_var, [self.fast_sl_same_dir_var], numeric=True)
+            self._bind_param_children(self.ai_selfcheck_n_var, [self.ai_selfcheck_candles_var, self.ai_selfcheck_min_pct_var], numeric=True)
             self._bind_param_children(self.recovery_close_var, [self.recovery_mode_var])
             self._bind_param_children(self.min_entry_spacing_var, [self.halve_spacing_with_sl_var], numeric=True)
             self._bind_param_children(self.confirm_entry_pa_var, [self.pa_min_confirmations_var, self.pa_fail_open_var])
@@ -6482,6 +6509,9 @@ class KronosDesktopApp:
             "fast_sl_cooldown_candles": self.fast_sl_cooldown_candles_var,
             "fast_sl_cooldown_mins": self.fast_sl_cooldown_candles_var,
             "fast_sl_same_dir": self.fast_sl_same_dir_var,
+            "ai_selfcheck_n": self.ai_selfcheck_n_var,
+            "ai_selfcheck_candles": self.ai_selfcheck_candles_var,
+            "ai_selfcheck_min_pct": self.ai_selfcheck_min_pct_var,
             "engine": self.engine_var,
             "model": self.model_var,
             "hf_space": self.hf_space_var,
@@ -7056,7 +7086,7 @@ class KronosDesktopApp:
     SETTINGS_SECTION_MAP = {
         1: ("Mục 1: Cài đặt cơ bản", ["symbol", "analysis_tf", "tf", "lot", "max_pos", "magic_number", "mt5_path", "ai_threads"]),
         2: ("Mục 2: Bộ lọc Entry & Nhồi lệnh", ["scenarios", "consensus", "max_dispersion", "min_move", "expected_move_k", "max_spread", "sl_atr", "sl_buffer", "max_sl_price", "rr", "min_real_rr", "min_entry_spacing", "halve_spacing_with_sl", "entry_mode", "allow_opposite_entry", "one_order_per_candle", "trend_filter", "confirm_entry_pa", "pa_fail_open", "pa_min_confirmations", "structure_conflict_mode", "use_confidence_gate", "blocked_trading_windows", "structure_direction"]),
-        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be", "recovery_mode"]),
+        3: ("Mục 3: Quản lý lệnh & Chốt lời", ["auto_be", "be_trigger_r", "auto_trail", "trail_dist_r", "auto_rev_close", "rev_consensus", "rev_be_consensus", "rev_min_move", "be_plus_price", "rev_loss_mode", "basket_tp_usd", "basket_cooldown_mins", "max_hold_mins", "max_hold_action", "daily_tp_usd", "daily_sl_usd", "max_consec_loss", "cooldown_mins", "fast_sl_cooldown_candles", "fast_sl_same_dir", "recovery_close", "stack_half_be", "recovery_mode", "ai_selfcheck_n", "ai_selfcheck_candles", "ai_selfcheck_min_pct"]),
         4: ("Mục 4: Phân tích AI & Mô hình", ["engine", "model", "hf_space", "hf_token", "lookback", "pred_len", "ai_temperature", "debug_trace"]),
         5: ("Mục 5: Thông báo & Điều khiển Telegram", ["telegram_enabled", "telegram_bot_token", "telegram_chat_id", "telegram_admin_ids", "telegram_notify_open", "telegram_notify_close"]),
     }
@@ -10560,6 +10590,81 @@ class KronosDesktopApp:
         """Đọc ô tích cấu hình (bool hoặc chuỗi 'True'/'1' từ file/--set); thiếu khóa = TẮT."""
         return str(cfg.get(key, False)).strip().lower() in ("1", "true", "yes", "on")
 
+    # ── Tự chấm điểm AI (khóa ai_selfcheck_n, mặc định TẮT; người dùng duyệt 24/11/2026) ──
+    _SELFCHECK_TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240}
+
+    def _ai_selfcheck_path(self) -> str:
+        return os.path.join(SETTINGS_DIR, "ai_selfcheck_state.json")
+
+    def _ai_selfcheck_state(self, pk: str) -> dict:
+        """Trạng thái chấm điểm của profile (ctx). App thật: lần đầu nạp từ file để tắt/mở app không mất điểm."""
+        ctx = self.profile_ctx[pk]
+        st = ctx.get("_ai_selfcheck")
+        if st is None:
+            st = selfcheck_new_state()
+            if self.__dict__.get("_ai_selfcheck_persist"):
+                try:
+                    with open(self._ai_selfcheck_path(), "r", encoding="utf-8") as f:
+                        st = selfcheck_clean_state(json.load(f).get(pk))
+                except Exception:
+                    st = selfcheck_new_state()
+            ctx["_ai_selfcheck"] = st
+        return st
+
+    def _ai_selfcheck_save(self):
+        if not self.__dict__.get("_ai_selfcheck_persist"):
+            return
+        try:
+            data = {pk: c.get("_ai_selfcheck") for pk, c in self.profile_ctx.items() if c.get("_ai_selfcheck") is not None}
+            path = self._ai_selfcheck_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, path)
+        except Exception as ex:
+            self._write_file_log(f"[AI_SELFCHECK] Không ghi được ai_selfcheck_state.json: {type(ex).__name__}", is_error=True)
+
+    def _ai_selfcheck_update(self, pk: str, cfg: dict, candle_time, close: float, action, analysis_tf: str):
+        """Gọi mỗi lần AI phân tích xong 1 nến: chấm các tín hiệu cũ, ghi tín hiệu lần này (luôn chấm kể cả khi tắt,
+        để bật lên là có sẵn điểm). Trả kết quả selfcheck_step; "paused" chỉ True khi ai_selfcheck_n > 0."""
+        try:
+            try:
+                n = max(int(float(cfg.get("ai_selfcheck_n", 0) or 0)), 0)
+            except (TypeError, ValueError):
+                n = 0
+            try:
+                wait_c = max(int(float(cfg.get("ai_selfcheck_candles", 3) or 3)), 1)
+            except (TypeError, ValueError):
+                wait_c = 3
+            try:
+                min_pct = min(max(float(cfg.get("ai_selfcheck_min_pct", 50) or 50), 1.0), 100.0)
+            except (TypeError, ValueError):
+                min_pct = 50.0
+            tf_min = self._SELFCHECK_TF_MINUTES.get(str(analysis_tf).strip().upper(), 5)
+            ctx = self.profile_ctx[pk]
+            res = selfcheck_step(self._ai_selfcheck_state(pk), candle_time, close, action, tf_min, n,
+                                 wait_candles=wait_c, min_pct=min_pct)
+            if res["changed"]:
+                self._ai_selfcheck_save()
+            was_paused = bool(ctx.get("_ai_selfcheck_paused", False))
+            if res["paused"]:
+                ctx["_ai_selfcheck_msg"] = (f"Tạm nghỉ: AI gần đây đúng {res['correct']}/{res['total']} tín hiệu "
+                                            f"(cần >= {min_pct:.0f}%) - tự chạy lại khi AI đúng trở lại")
+                if not was_paused:
+                    self.log(f"[{pk} - Tự chấm điểm AI] {res['total']} tín hiệu gần nhất AI chỉ đúng {res['correct']} "
+                             f"(< {min_pct:.0f}%) -> Tạm nghỉ vào lệnh mới; lệnh đang mở vẫn quản lý, AI vẫn được chấm điểm tiếp.")
+            else:
+                ctx["_ai_selfcheck_msg"] = ""
+                if was_paused:
+                    self.log(f"[{pk} - Tự chấm điểm AI] AI đúng trở lại ({res['correct']}/{res['total']} tín hiệu gần nhất) "
+                             f"-> Vào lệnh bình thường." if n > 0 else f"[{pk} - Tự chấm điểm AI] Đã tắt -> Vào lệnh bình thường.")
+            ctx["_ai_selfcheck_paused"] = bool(res["paused"])
+            return res
+        except Exception as e:
+            self.log_error(f"AI_SELFCHECK_{pk}", e, show_in_ui=False)
+            return None
+
     def _is_cooldown_active(self, profile_key: str = None, action: str = None) -> bool:
         """action ('BUY'/'SELL'): khi bật fast_sl_same_dir, tạm nghỉ SL nhanh chỉ chặn chiều vừa SL. action=None: mọi chiều (hiển thị)."""
         pk = profile_key or self.active_profile_key
@@ -13219,6 +13324,11 @@ class KronosDesktopApp:
             status_text = f"[{pk}] Tạm ngưng giao dịch do sau chốt chùm [{m:02d}p:{s:02d}s]"
             text_color = "#ffffff"
 
+        # 4.5. Tự chấm điểm AI: AI gần đây đoán sai nhiều -> tạm nghỉ vào lệnh mới (Cảnh báo -> Màu cam)
+        elif is_running and ctx.get("_ai_selfcheck_paused") and ctx.get("_ai_selfcheck_msg"):
+            status_text = f"[{pk}] {ctx.get('_ai_selfcheck_msg')}"
+            text_color = "#ff9800"
+
         # 5. Bot AUTO đang TẮT (Thủ công / Dừng bình thường -> Màu trắng)
         elif not is_running:
             status_text = f"[{pk}] Tạm ngưng giao dịch (Tắt tự động)"
@@ -13936,6 +14046,8 @@ class KronosDesktopApp:
                     except Exception:
                         pass
                 is_auto_on = self.auto_loop_running if pk == self.active_profile_key else bool(ctx.get("auto_loop_running", False))
+                # Tự chấm điểm AI (ai_selfcheck_n > 0 mới chặn, mặc định TẮT): chấm tín hiệu cũ + ghi tín hiệu lần này
+                selfcheck = self._ai_selfcheck_update(pk, cfg, ana_closed_time, last_close, action, analysis_tf)
 
                 trade_msg = self._get_live_bot_status_text(pk)
                 if action is not None:
@@ -13965,6 +14077,10 @@ class KronosDesktopApp:
                         ctx["pending_pullback_order"] = None
                         trade_msg = self._get_cooldown_remaining_str(pk)
                         self.log(f"[{pk}] {trade_msg}")
+                    elif selfcheck is not None and selfcheck.get("paused"):
+                        ctx["pending_pullback_order"] = None
+                        trade_msg = ctx.get("_ai_selfcheck_msg") or "Tạm nghỉ do AI gần đây đoán sai nhiều"
+                        self.log(f"[{pk} - Tự chấm điểm AI] Bỏ qua tín hiệu {action}: {trade_msg}")
                     elif has_losing_opposite_pos and not self._cfg_flag(cfg, "allow_opposite_entry"):
                         ctx["pending_pullback_order"] = zone_watch_order
                         trade_msg = f"⏳ Chờ lệnh ngược chiều hồi về Entry thoát (Canh vùng {action} <= {zone_show:.2f})"

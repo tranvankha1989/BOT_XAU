@@ -39,6 +39,9 @@ PARAM_NAMES = {
     "max_consec_loss": "Thua liên tiếp nghỉ (lệnh)",
     "cooldown_mins": "Thời gian tạm ngừng (phút)",
     "fast_sl_cooldown_candles": "Nghỉ nếu SL nhanh (nến)",
+    "ai_selfcheck_n": "Tự chấm điểm AI: số tín hiệu xét",
+    "ai_selfcheck_candles": "Tự chấm điểm AI: chấm sau số nến",
+    "ai_selfcheck_min_pct": "Tự chấm điểm AI: mức đúng tối thiểu (%)",
     "lookback": "Số nến lịch sử AI (Lookback)",
     "pred_len": "Số nến dự báo",
     "ai_temperature": "Nhiệt độ AI (T)",
@@ -76,6 +79,9 @@ NUMERIC_RULES = {
     "max_consec_loss": ("int", 0, True, None),
     "cooldown_mins": ("float", 0.0, True, None),
     "fast_sl_cooldown_candles": ("float", 0.0, True, None),
+    "ai_selfcheck_n": ("int", 0, True, None),
+    "ai_selfcheck_candles": ("int", 1, True, None),
+    "ai_selfcheck_min_pct": ("float", 0.0, False, 100.0),
     "lookback": ("int", 1, True, None),
     "pred_len": ("int", 1, True, None),
     "ai_temperature": ("float", 0.0, True, 2.0),  # 0 = tự động; bot kẹp trong 0.1 - 2.0 (_apply_ai_temperature)
@@ -93,8 +99,10 @@ PARENT_OF = {
     "rev_min_move": "auto_rev_close",
     "basket_cooldown_mins": "basket_tp_usd",
     "cooldown_mins": "max_consec_loss",
+    "ai_selfcheck_candles": "ai_selfcheck_n",
+    "ai_selfcheck_min_pct": "ai_selfcheck_n",
 }
-NUMERIC_PARENTS = frozenset({"basket_tp_usd", "max_consec_loss"})
+NUMERIC_PARENTS = frozenset({"basket_tp_usd", "max_consec_loss", "ai_selfcheck_n"})
 
 # Hằng số lấy theo code bot live (đổi code đó thì sửa ở đây):
 TRAIL_START_EXTRA_R = 0.3  # Trailing bắt đầu khi lãi >= Mức kích hoạt BE + 0.3R (_update_open_positions_and_manage)
