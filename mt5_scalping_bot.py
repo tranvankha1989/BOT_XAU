@@ -1090,8 +1090,8 @@ class KronosDesktopApp:
         self.last_fast_sl_deal_ticket = None
         self.is_basket_closing = False  # Khóa bảo vệ chống đóng lặp nhiều luồng khi chốt chùm
         self.left_menu_visible = False  # Mặc định thu gọn vào
-        self.drawer_width = 355
-        self.drawer_x = -350
+        self.drawer_width = 371  # 355 + chỗ cho thanh cuộn menu (24/11/2026)
+        self.drawer_x = -366
         self._drawer_anim_job = None
         self.auto_loop_running = False
         self.is_analyzing = False
@@ -2659,11 +2659,28 @@ class KronosDesktopApp:
         )
         self.mt5_status_lbl.pack(fill=tk.X, pady=(2, 2))
 
+        # VÙNG CUỘN CHỨA CÁC MỤC CÀI ĐẶT (24/11/2026, người dùng yêu cầu): màn hình thấp thì Mục dài bị khuất -> cuộn bằng
+        # thanh cuộn / con lăn chuột. Tiêu đề + ô Kết nối MT5 cố định ở trên; nút LƯU cố định ở đáy (vùng cuộn pack SAU save_card).
+        menu_scroll_outer = tk.Frame(left_panel, bg=PANEL_BG)
+        self.menu_scroll_canvas = tk.Canvas(menu_scroll_outer, bg=PANEL_BG, highlightthickness=0, bd=0, yscrollincrement=20)
+        menu_scroll_sb = ttk.Scrollbar(menu_scroll_outer, orient="vertical", command=self.menu_scroll_canvas.yview)
+        self.menu_scroll_canvas.configure(yscrollcommand=menu_scroll_sb.set)
+        menu_scroll_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.menu_scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        menu_body = tk.Frame(self.menu_scroll_canvas, bg=PANEL_BG)
+        self.menu_body = menu_body
+        _menu_body_id = self.menu_scroll_canvas.create_window((0, 0), window=menu_body, anchor="nw")
+        menu_body.bind("<Configure>", lambda e: self._menu_scroll_refresh())
+        self.menu_scroll_canvas.bind(
+            "<Configure>",
+            lambda e: (self.menu_scroll_canvas.itemconfigure(_menu_body_id, width=e.width), self._menu_scroll_refresh())
+        )
+
         self.accordion_sections = []
 
         # Mục 1: 1. Cài đặt cơ bản (Mặc định thu gọn)
         sec1 = CollapsibleSection(
-            left_panel, "1. Cài đặt cơ bản", initially_open=False,
+            menu_body, "1. Cài đặt cơ bản", initially_open=False,
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(1)
         )
@@ -2684,7 +2701,7 @@ class KronosDesktopApp:
 
         # Mục 2: 2. Bộ lọc Entry & Nhồi lệnh (Mặc định thu gọn)
         sec2 = CollapsibleSection(
-            left_panel, "2. Bộ lọc Entry & Nhồi lệnh", initially_open=False,
+            menu_body, "2. Bộ lọc Entry & Nhồi lệnh", initially_open=False,
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(2)
         )
@@ -2764,7 +2781,7 @@ class KronosDesktopApp:
 
         # Mục 3: 3. Quản lý lệnh & Chốt lời (Mặc định thu gọn)
         sec3 = CollapsibleSection(
-            left_panel, "3. Quản lý lệnh & Chốt lời", initially_open=False,
+            menu_body, "3. Quản lý lệnh & Chốt lời", initially_open=False,
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(3)
         )
@@ -2876,7 +2893,7 @@ class KronosDesktopApp:
 
         # Mục 4: 4. Phân tích AI & Mô hình (Mặc định thu gọn)
         sec4 = CollapsibleSection(
-            left_panel, "4. Phân tích AI & Mô hình", initially_open=False,
+            menu_body, "4. Phân tích AI & Mô hình", initially_open=False,
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(4)
         )
@@ -2908,7 +2925,7 @@ class KronosDesktopApp:
 
         # Mục 5: 5. Thông báo & Điều khiển Telegram (Mặc định thu gọn)
         sec5 = CollapsibleSection(
-            left_panel, "5. Thông báo Telegram", initially_open=False,
+            menu_body, "5. Thông báo Telegram", initially_open=False,
             group_list=self.accordion_sections,
             on_reset=lambda: self.reset_section_settings(5)
         )
@@ -2950,6 +2967,7 @@ class KronosDesktopApp:
         # KHỐI LƯU CÀI ĐẶT DUY NHẤT Ở ĐÁY CÙNG MENU TRÁI (DƯỚI CÙNG GIAO DIỆN)
         save_card = tk.Frame(left_panel, bg="#121722", padx=8, pady=6, highlightthickness=1, highlightbackground="#263147")
         save_card.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 4))
+        menu_scroll_outer.pack(fill=tk.BOTH, expand=True)  # pack sau nút Lưu để nút Lưu luôn hiện ở đáy
 
         self.save_settings_btn = tk.Button(
             save_card,
@@ -3038,7 +3056,7 @@ class KronosDesktopApp:
         self._apply_params_lock()  # khởi động ở trạng thái KHÓA
 
         # BẢNG THÔNG TIN PHIÊN & TÓM TẮT AI NẰM Ở GIỮA MENU TRÁI (CO GIÃN TỰ NHIÊN)
-        info_card = tk.Frame(left_panel, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
+        info_card = tk.Frame(menu_body, bg="#131822", padx=10, pady=8, highlightthickness=1, highlightbackground="#263147")
         info_card.pack(fill=tk.BOTH, expand=True, pady=(4, 4))
 
         info_top_row = tk.Frame(info_card, bg="#131822")
@@ -3070,6 +3088,7 @@ class KronosDesktopApp:
             bg="#131822", fg=TEXT_MAIN, font=("Consolas", 8), justify=tk.LEFT, anchor="nw"
         )
         self.quick_info_lbl.pack(fill=tk.BOTH, expand=True)
+        self._menu_bind_wheel(menu_scroll_outer)  # con lăn chuột ở bất kỳ đâu trong vùng cuộn -> cuộn menu
 
         # Hộp Tín hiệu bên Cột phải (Tích hợp nút Reload % bo tròn & Công tắc gạt START/STOP ở góc phải)
         sig_box = tk.Frame(right_panel, bg=PANEL_BG, padx=12, pady=6)
@@ -9620,6 +9639,36 @@ class KronosDesktopApp:
         except Exception:
             pass
         return cb
+
+    def _menu_scroll_refresh(self):
+        """Cập nhật vùng cuộn menu trái theo chiều cao thật của các Mục (mở/thu Mục, đổi cỡ cửa sổ)."""
+        try:
+            c = self.menu_scroll_canvas
+            c.configure(scrollregion=c.bbox("all"))
+            if c.yview() == (0.0, 1.0):
+                c.yview_moveto(0)
+        except Exception:
+            pass
+
+    def _on_menu_wheel(self, event):
+        """Con lăn chuột trong menu trái: cuộn menu. Trả "break" để ô chọn (combobox) không bị đổi giá trị khi lăn chuột."""
+        try:
+            c = self.menu_scroll_canvas
+            if c.yview() != (0.0, 1.0):
+                step = int(-event.delta / 120) or (-1 if event.delta > 0 else 1)
+                c.yview_scroll(step * 2, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _menu_bind_wheel(self, widget):
+        """Gắn con lăn chuột cho widget và mọi widget con (gọi 1 lần sau khi dựng xong menu)."""
+        try:
+            widget.bind("<MouseWheel>", self._on_menu_wheel, add="+")
+            for ch in widget.winfo_children():
+                self._menu_bind_wheel(ch)
+        except Exception:
+            pass
 
     def _add_labeled_entry(self, parent, label_text, default_val, show=None, entry_width=10, help_key=None):
         row = tk.Frame(parent, bg=PANEL_BG)
