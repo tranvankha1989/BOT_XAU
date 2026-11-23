@@ -5,6 +5,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -184,6 +185,98 @@ class TestUiWatchdog(unittest.TestCase):
                 mock.patch.object(b.time, "sleep", side_effect=fake_sleep):
             app._ui_freeze_watchdog_loop()
         app._write_file_log.assert_not_called()
+
+
+class TestUiSafeRLock(unittest.TestCase):
+    def test_luong_nen_va_khong_chan_giu_nguyen(self):
+        tk_getter = mock.Mock()
+        lk = b._UiSafeRLock(tk_getter)
+        self.assertTrue(lk.acquire(blocking=False))
+        got = []
+        _run_in_thread(lambda: got.append(lk.acquire(timeout=0.05))).join(2.0)
+        self.assertEqual(got, [False])
+        lk.release()
+        with lk:
+            with lk:  # lồng nhau như RLock
+                pass
+        tk_getter.assert_not_called()
+
+    def test_luong_giao_dien_cho_khoa_thi_phuc_vu_tk(self):
+        tkapp = mock.Mock()
+        lk = b._UiSafeRLock(lambda: tkapp)
+        held, release = threading.Event(), threading.Event()
+
+        def _w():
+            with lk:
+                held.set()
+                release.wait(2.0)
+        t = _run_in_thread(_w)
+        self.assertTrue(held.wait(2.0))
+        threading.Timer(0.15, release.set).start()
+        with lk:
+            pass
+        t.join(2.0)
+        self.assertGreater(tkapp.dooneevent.call_count, 0)
+        tkapp.dooneevent.assert_called_with(b._UiSafeRLock._SERVICE_FLAGS)
+
+    def test_tk_that_luong_nen_goi_tk_khi_giu_khoa_khong_ket(self):
+        """Tk thật: luồng nền giữ khóa rồi gọi root.after / var.get / config (như log, đọc ô Telegram);
+        luồng giao diện chờ khóa phải lấy được, hẹn giờ after đến hạn không được chạy chen giữa lúc chờ."""
+        import faulthandler
+        import tkinter as tk
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("không có Tk")
+        root.withdraw()
+        faulthandler.dump_traceback_later(30, exit=True)  # chốt an toàn nếu hồi quy gây treo
+        try:
+            lbl = tk.Label(root, text="x")
+            var = tk.BooleanVar(root, value=True)
+            lk = b._UiSafeRLock(lambda: root.tk)
+            res = {"in_wait": False, "timer_during_wait": False, "waits": []}
+
+            def early():
+                if res["in_wait"]:
+                    res["timer_during_wait"] = True
+
+            def worker(kind):
+                with lk:
+                    time.sleep(0.1)
+                    if kind == "after":
+                        root.after(0, lambda: None)
+                    elif kind == "var":
+                        res["var"] = var.get()
+                    else:
+                        lbl.config(text="y")
+
+            def main_cb():
+                try:
+                    for kind in ("after", "var", "config"):
+                        t = threading.Thread(target=worker, args=(kind,), daemon=True)
+                        t.start()
+                        time.sleep(0.05)
+                        root.after(1, early)
+                        time.sleep(0.01)
+                        res["in_wait"] = True
+                        t0 = time.monotonic()
+                        with lk:
+                            res["waits"].append(time.monotonic() - t0)
+                        res["in_wait"] = False
+                        t.join(2.0)
+                finally:
+                    root.after(50, root.quit)
+
+            root.after(20, main_cb)
+            root.mainloop()
+            self.assertEqual(len(res["waits"]), 3)
+            self.assertLess(max(res["waits"]), 2.0)
+            self.assertFalse(res["timer_during_wait"])
+            self.assertIs(res.get("var"), True)
+            self.assertEqual(lbl.cget("text"), "y")
+        finally:
+            faulthandler.cancel_dump_traceback_later()
+            root.destroy()
 
 
 if __name__ == "__main__":

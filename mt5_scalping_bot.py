@@ -976,6 +976,42 @@ from trading_modules.kronos_sampling import compute_adaptive_sampling_params
 from trading_modules.backtest_report import _BT_WIN_EPS, build_backtest_report, format_backtest_report, export_backtest_csv
 
 
+class _UiSafeRLock:
+    """RLock cho MT5 (chống treo app triệt để, 24/11/2026).
+    Luồng giao diện chờ khóa theo nhịp 20ms; giữa các nhịp CHỈ phục vụ lời gọi Tk mà luồng nền gửi sang
+    (không chạy hẹn giờ after, không chạy sự kiện cửa sổ). Nhờ vậy luồng nền đang giữ khóa mà gọi Tk (ghi log, đọc ô
+    cài đặt, dọn rác Python...) vẫn chạy xong và nhả khóa -> không còn cảnh hai bên chờ nhau mãi (log máy 2: 19/11 05:05,
+    23/11 06:08, 23/11 19:10). Luồng nền, lời gọi không chặn hoặc có timeout: giữ nguyên như RLock thường."""
+
+    _SERVICE_FLAGS = tk._tkinter.FILE_EVENTS | tk._tkinter.DONT_WAIT
+
+    def __init__(self, tk_getter):
+        self._lock = threading.RLock()
+        self._tk_getter = tk_getter
+
+    def acquire(self, blocking=True, timeout=-1):
+        if not blocking or timeout >= 0 or threading.current_thread() is not threading.main_thread():
+            return self._lock.acquire(blocking, timeout)
+        while not self._lock.acquire(timeout=0.02):
+            try:
+                tkapp = self._tk_getter()
+                if tkapp is not None:
+                    tkapp.dooneevent(self._SERVICE_FLAGS)
+            except Exception:
+                pass
+        return True
+
+    def release(self):
+        self._lock.release()
+
+    def __enter__(self):
+        return self.acquire()
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
 class KronosDesktopApp:
     def __init__(self, root: tk.Tk, lic_mgr=None):
         self.root = root
@@ -1092,7 +1128,7 @@ class KronosDesktopApp:
         self._logged_magic_fail_pids = set()
         self._ai_scan_lock = threading.Lock()
         self._ai_inference_lock = threading.RLock()
-        self._mt5_lock = threading.RLock()
+        self._mt5_lock = _UiSafeRLock(lambda: getattr(getattr(self, "root", None), "tk", None))
         self._log_file_lock = threading.Lock()
         self._order_guard_lock = threading.Lock()
         # Hàng đợi lời gọi giao diện từ luồng nền (chống treo app, 24/11/2026): xem _ui_after / _ui_queue_pump
