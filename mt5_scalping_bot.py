@@ -1095,6 +1095,9 @@ class KronosDesktopApp:
         self._mt5_lock = threading.RLock()
         self._log_file_lock = threading.Lock()
         self._order_guard_lock = threading.Lock()
+        # Hàng đợi lời gọi giao diện từ luồng nền (chống treo app, 24/11/2026): xem _ui_after / _ui_queue_pump
+        self._ui_call_queue = queue.SimpleQueue()
+        self._ui_hb_mono = None
         self._pos_action_in_flight = set()
         self._order_in_flight = {"XAUUSD": False, "BTCUSD": False}
         self._modify_fail_until = {}  # ticket -> mốc time.monotonic() được phép sửa SL/TP lại (backoff 15s)
@@ -1221,6 +1224,9 @@ class KronosDesktopApp:
         self.root.after(600, self._restore_auto_running_after_update)
         self.root.after(1000, self._realtime_tick_loop)
         self.root.after(2000, self._check_update_on_startup)
+        # Bơm hàng đợi giao diện của luồng nền + luồng canh treo giao diện (chỉ ghi log chẩn đoán)
+        self.root.after(30, self._ui_queue_pump)
+        threading.Thread(target=self._ui_freeze_watchdog_loop, daemon=True).start()
 
     def _restore_auto_running_after_update(self):
         """Khôi phục tự động trạng thái công tắc AUTO RUNNING của các Tab ngay sau khi ứng dụng tự khởi động lại từ bản cập nhật OTA."""
@@ -1282,14 +1288,94 @@ class KronosDesktopApp:
         }
 
     def _ui_after(self, delay_ms: int, fn, *args):
-        """Gọi hàm cập nhật giao diện an toàn từ mọi luồng (Thread-Safe)."""
+        """Gọi hàm cập nhật giao diện an toàn từ mọi luồng (Thread-Safe).
+        Luồng nền: chỉ bỏ vào _ui_call_queue rồi đi tiếp, luồng giao diện lấy ra chạy trong _ui_queue_pump (~30ms/lần).
+        Lý do (24/11/2026, app treo "Not responding" vĩnh viễn): root.after gọi từ luồng nền bắt luồng đó CHỜ luồng giao diện
+        xử lý; nếu luồng nền đang giữ _mt5_lock (vd _modify_position_sltp ghi log) mà luồng giao diện lại đang chờ _mt5_lock
+        trong vòng tick 1 giây -> hai bên chờ nhau mãi."""
         try:
-            if threading.current_thread() is threading.main_thread() and delay_ms == 0:
-                fn(*args)
+            if threading.current_thread() is threading.main_thread():
+                if delay_ms == 0:
+                    fn(*args)
+                else:
+                    self.root.after(delay_ms, fn, *args)
             else:
-                self.root.after(delay_ms, fn, *args)
+                q = getattr(self, "_ui_call_queue", None)
+                if q is not None:
+                    q.put((delay_ms, fn, args))
+                else:
+                    self.root.after(delay_ms, fn, *args)
         except Exception:
             pass
+
+    def _ui_queue_pump(self):
+        """Luồng giao diện: chạy các lời gọi do luồng nền gửi qua _ui_after (mỗi lần tối đa ~50ms để không đứng hình),
+        đồng thời đánh dấu nhịp sống cho _ui_freeze_watchdog_loop."""
+        self._ui_hb_mono = time.monotonic()
+        try:
+            q = self._ui_call_queue
+            deadline = time.monotonic() + 0.05
+            while True:
+                try:
+                    delay_ms, fn, args = q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    if delay_ms and delay_ms > 0:
+                        self.root.after(delay_ms, fn, *args)
+                    else:
+                        fn(*args)
+                except Exception:
+                    try:
+                        self.root.report_callback_exception(*sys.exc_info())
+                    except Exception:
+                        pass
+                if time.monotonic() >= deadline:
+                    break
+        except Exception:
+            pass
+        finally:
+            if not getattr(self, "_app_closing", False):
+                try:
+                    self.root.after(30, self._ui_queue_pump)
+                except Exception:
+                    pass
+
+    def _ui_freeze_watchdog_loop(self):
+        """Chẩn đoán (24/11/2026): luồng giao diện không phản hồi >= 15 giây -> ghi ngăn xếp của mọi luồng vào log lỗi,
+        1 lần mỗi đợt treo, để biết chính xác chỗ kẹt. Chỉ đọc và ghi file: không gọi Tk, không gọi MT5, không đụng lệnh."""
+        freeze_start = None
+        last_loop = baseline = time.monotonic()
+        while not getattr(self, "_app_closing", False):
+            time.sleep(2.0)
+            try:
+                now = time.monotonic()
+                if now - last_loop > 10.0:  # máy vừa ngủ/đứng cả tiến trình: bỏ qua quãng đó
+                    baseline = now
+                last_loop = now
+                hb = self._ui_hb_mono
+                if hb is None:  # bơm giao diện chưa chạy lần nào (app đang khởi động)
+                    continue
+                stall = now - max(hb, baseline)
+                if stall >= 15.0:
+                    if freeze_start is None:
+                        freeze_start = now - stall
+                        main_id = threading.main_thread().ident
+                        names = {t.ident: t.name for t in threading.enumerate()}
+                        frames = sys._current_frames()
+                        parts = []
+                        for tid in sorted(frames, key=lambda i: i != main_id):
+                            tag = " [LUỒNG GIAO DIỆN]" if tid == main_id else ""
+                            stack = "".join(traceback.format_stack(frames[tid], limit=30))
+                            parts.append(f"--- Luồng {names.get(tid, '?')} (id={tid}){tag}\n{stack}")
+                        self._write_file_log(
+                            f"🧊 [UI_WATCHDOG] Giao diện không phản hồi {stall:.0f} giây. Ngăn xếp các luồng:\n" + "\n".join(parts),
+                            is_error=True)
+                elif freeze_start is not None:
+                    self._write_file_log(f"✅ [UI_WATCHDOG] Giao diện hoạt động lại sau khoảng {now - freeze_start:.0f} giây.", is_error=True)
+                    freeze_start = None
+            except Exception:
+                pass
 
     def _get_symbol_tolerances(self, symbol: str, tick=None) -> dict:
         """
@@ -8199,6 +8285,11 @@ class KronosDesktopApp:
 
     def _telegram_notify_order_opened(self, ticket: int, symbol: str, action: str, lot: float, price: float, sl: float, tp: float, profile_key: str):
         """Gửi thông báo mở lệnh mới lên Telegram."""
+        # execute_mt5_order gọi hàm này khi còn giữ _mt5_lock: luồng nền không đọc ô Tk ở đây (chờ luồng giao diện -> có thể treo),
+        # chuyển sang luồng giao diện (24/11/2026)
+        if threading.current_thread() is not threading.main_thread():
+            self._ui_after(0, self._telegram_notify_order_opened, ticket, symbol, action, lot, price, sl, tp, profile_key)
+            return
         if not bool(getattr(self, "telegram_enabled_var", None) and self.telegram_enabled_var.get()):
             return
         if not bool(getattr(self, "telegram_notify_open_var", None) and self.telegram_notify_open_var.get()):

@@ -26,6 +26,9 @@ Magic riêng lấy bằng `self._get_profile_magic_number(pk)`.
 - Sửa tối thiểu (minimal diff). Không refactor, đổi tên, định dạng lại code không liên quan.
 - Giữ phong cách hiện có: comment và log tiếng Việt, log có emoji. `mt5_scalping_bot.py` dùng line ending CRLF: khi sửa bằng script phải giữ CRLF.
 - Mọi lời gọi `mt5.*` nằm trong `with self._mt5_lock:` (RLock).
+- Luồng nền KHÔNG gọi Tk trực tiếp (`root.after`, `*_var.get()`, `.config`, `winfo_*`): Tk bắt luồng nền chờ luồng giao diện, nếu đang giữ
+  `_mt5_lock` thì treo app vĩnh viễn (24/11). Dùng `self._ui_after` / `self.log` (luồng nền chỉ bỏ vào `_ui_call_queue`, `_ui_queue_pump` chạy).
+  Treo >= 15 giây: `_ui_freeze_watchdog_loop` ghi ngăn xếp mọi luồng vào `app_error.log` (dòng `[UI_WATCHDOG]`).
 - Không dùng `mt5.positions_get()` không có symbol; không lọc lệnh chỉ theo symbol. Dùng `_get_bot_positions` hoặc `_positions_get_checked`
   (kết quả None kèm `last_error()[0] == 1` nghĩa là danh sách rỗng, không phải lỗi; `_get_bot_positions` trả [] cả khi lỗi đọc).
 - Luôn lọc theo Magic Number của profile; với deals tra magic của position gốc qua `_resolve_position_magic`. Không đụng lệnh tay (magic khác).
