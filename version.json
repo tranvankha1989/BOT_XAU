@@ -1,6 +1,6 @@
 {
-  "version": "1.3.47",
+  "version": "1.3.48",
   "name": "Trading AI PRO by Kha Tran Design",
-  "release_date": "2026-11-23",
-  "description": "Phiên bản v1.3.47:\n- Gỡ vốn: thêm ô 'Cách gỡ vốn'. Mặc định 'Dời SL khóa lãi rồi gồng tiếp': khi lệnh lãi đủ, bot dời SL lên mức khóa đúng phần lỗ ròng trong ngày + đệm nhỏ (ô 'Giá lãi nhỏ cộng vào Entry khi BE+') để bù trượt giá, rồi để lệnh gồng tiếp tới TP như lệnh đã BE+.\n- Chọn 'Đóng lệnh ngay' để giữ cách cũ."
+  "release_date": "2026-11-24",
+  "description": "Phiên bản v1.3.48:\n- Sửa lỗi app thỉnh thoảng bị treo hẳn (Not responding) và ngừng quản lý lệnh: luồng nền không còn phải chờ giao diện khi đang giữ kết nối MT5.\n- Thông báo Telegram khi mở lệnh được xử lý ở luồng giao diện (tránh kẹt lúc vào lệnh).\n- Thêm bộ canh treo: nếu giao diện đứng quá 15 giây, app tự ghi vị trí kẹt vào app_error.log (dòng UI_WATCHDOG) để kiểm tra."
 }
