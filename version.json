@@ -1,6 +1,6 @@
 {
-  "version": "1.3.48",
+  "version": "1.3.49",
   "name": "Trading AI PRO by Kha Tran Design",
   "release_date": "2026-11-24",
-  "description": "Phiên bản v1.3.48:\n- Sửa lỗi app thỉnh thoảng bị treo hẳn (Not responding) và ngừng quản lý lệnh: luồng nền không còn phải chờ giao diện khi đang giữ kết nối MT5.\n- Thông báo Telegram khi mở lệnh được xử lý ở luồng giao diện (tránh kẹt lúc vào lệnh).\n- Thêm bộ canh treo: nếu giao diện đứng quá 15 giây, app tự ghi vị trí kẹt vào app_error.log (dòng UI_WATCHDOG) để kiểm tra."
+  "description": "Phiên bản v1.3.49:\n- Chống treo app triệt để: khi luồng giao diện phải chờ kết nối MT5, nó vẫn xử lý giúp các yêu cầu giao diện của luồng nền, nên hai bên không thể chờ nhau mãi (đã gặp ở máy 2 ngày 19/11 và 23/11).\n- Thêm ô 'Tự chấm điểm AI' ở Mục 3 (mặc định TẮT, chưa khuyên bật): AI gần đây đoán sai nhiều thì tạm nghỉ vào lệnh mới."
 }
