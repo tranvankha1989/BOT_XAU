@@ -89,7 +89,7 @@ class TestRecoveryClose(unittest.TestCase):
         self.assertIn("recovery_mode", b.PARAM_HELP_GUIDE)
         src = open(os.path.join(ROOT, "mt5_scalping_bot.py"), encoding="utf-8").read()
         self.assertIn('"recovery_mode": self.recovery_mode_var', src)
-        self.assertIn('"stack_half_be", "recovery_mode"]', src)
+        self.assertIn("recovery_mode", b.KronosDesktopApp.SETTINGS_SECTION_MAP[3][1])
         self.assertIn("self._bind_param_children(self.recovery_close_var, [self.recovery_mode_var])", src)
 
     def test_buy_du_lai_thi_doi_sl_khoa_no_cong_dem(self):
