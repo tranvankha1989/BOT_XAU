@@ -774,6 +774,86 @@ AI_MANAGED_STATE_ATTRS = frozenset({
 })
 
 
+class ThinScrollbar(tk.Canvas):
+    """Thanh cuộn dọc mảnh cho menu trái (24/11/2026, người dùng yêu cầu: thanh ttk to, lộ liễu).
+    Con trượt 3px màu tối gần nền; rê chuột vào thì nở 6px và sáng lên; nội dung vừa khung thì ẩn hẳn.
+    Kéo con trượt / bấm vào rãnh vẫn cuộn; con lăn chuột do nơi dùng tự gắn (_menu_bind_wheel)."""
+
+    def __init__(self, master, command, bg, thumb="#2c3648", thumb_hover="#55688a", width=6):
+        super().__init__(master, width=width, bg=bg, highlightthickness=0, bd=0)
+        self._command = command
+        self._thumb_colors = (thumb, thumb_hover)
+        self._first, self._last = 0.0, 1.0
+        self._hover = False
+        self._drag_y = None
+        self._drag_first = 0.0
+        self.bind("<Configure>", lambda e: self._redraw())
+        self.bind("<Enter>", lambda e: self._set_hover(True))
+        self.bind("<Leave>", lambda e: self._set_hover(False))
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<B1-Motion>", self._on_drag)
+        self.bind("<ButtonRelease-1>", self._on_release)
+
+    def set(self, first, last):
+        """Gọi bởi yscrollcommand của Canvas (giống ttk.Scrollbar.set)."""
+        try:
+            self._first, self._last = float(first), float(last)
+        except Exception:
+            return
+        self._redraw()
+
+    def _thumb_span(self):
+        h = max(1, self.winfo_height())
+        y1 = int(self._first * h)
+        y2 = max(y1 + 24, int(self._last * h))
+        if y2 > h:
+            y1, y2 = max(0, h - (y2 - y1)), h
+        return y1, y2, h
+
+    def _redraw(self):
+        try:
+            self.delete("thumb")
+            if self._first <= 0.0 and self._last >= 1.0:
+                return  # nội dung vừa khung: không cần cuộn -> ẩn
+            active = self._hover or self._drag_y is not None
+            y1, y2, _h = self._thumb_span()
+            w = max(1, self.winfo_width())
+            x1 = 0 if active else max(0, w - 3)
+            self.create_rectangle(x1, y1, w, y2, fill=self._thumb_colors[1 if active else 0], outline="", tags="thumb")
+        except Exception:
+            pass
+
+    def _set_hover(self, on):
+        self._hover = on
+        self._redraw()
+
+    def _on_press(self, event):
+        try:
+            if self._first <= 0.0 and self._last >= 1.0:
+                return
+            y1, y2, h = self._thumb_span()
+            if y1 <= event.y <= y2:
+                self._drag_y = event.y
+                self._drag_first = self._first
+            else:
+                # Bấm vào rãnh: nhảy con trượt về chỗ bấm
+                self._command("moveto", event.y / h - (self._last - self._first) / 2)
+        except Exception:
+            pass
+
+    def _on_drag(self, event):
+        try:
+            if self._drag_y is not None:
+                h = max(1, self.winfo_height())
+                self._command("moveto", self._drag_first + (event.y - self._drag_y) / h)
+        except Exception:
+            pass
+
+    def _on_release(self, event):
+        self._drag_y = None
+        self._redraw()
+
+
 class CollapsibleSection(tk.Frame):
     """Mục giao diện có thể thu gọn / sổ xuống theo kiểu Accordion (mặc định thu gọn)."""
     def __init__(self, parent, title: str, initially_open: bool = False, group_list: list = None, on_reset: callable = None):
@@ -2663,7 +2743,7 @@ class KronosDesktopApp:
         # thanh cuộn / con lăn chuột. Tiêu đề + ô Kết nối MT5 cố định ở trên; nút LƯU cố định ở đáy (vùng cuộn pack SAU save_card).
         menu_scroll_outer = tk.Frame(left_panel, bg=PANEL_BG)
         self.menu_scroll_canvas = tk.Canvas(menu_scroll_outer, bg=PANEL_BG, highlightthickness=0, bd=0, yscrollincrement=20)
-        menu_scroll_sb = ttk.Scrollbar(menu_scroll_outer, orient="vertical", command=self.menu_scroll_canvas.yview)
+        menu_scroll_sb = ThinScrollbar(menu_scroll_outer, command=self.menu_scroll_canvas.yview, bg=PANEL_BG)  # mảnh, gần ẩn (24/11)
         self.menu_scroll_canvas.configure(yscrollcommand=menu_scroll_sb.set)
         menu_scroll_sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.menu_scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
