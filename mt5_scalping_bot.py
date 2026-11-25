@@ -5844,11 +5844,13 @@ class KronosDesktopApp:
                 if active_bt_zone is not None:
                     z_sig = active_bt_zone["signal"]
                     z_sl = active_bt_zone["sl_price"]
-                    # Vùng vào neo theo SL AI gốc (= SL thật ± Giá an toàn); hủy vùng khi nến ĐÓNG CỬA vượt SL AI (khớp live)
+                    # Vùng vào neo theo SL AI gốc (= SL thật ± Giá an toàn); hủy vùng khi nến ĐÓNG CỬA vượt SL THẬT (khớp live 25/11)
                     z_ai = (z_sl + sl_buffer) if z_sig == "BUY" else (z_sl - sl_buffer)
                     limit_p = (z_ai + max_sl_price) if (z_sig == "BUY" and max_sl_price > 0) else ((z_ai - max_sl_price) if (z_sig == "SELL" and max_sl_price > 0) else cur_close)
-                    if (z_sig == "BUY" and cur_close <= z_ai) or (z_sig == "SELL" and cur_close >= z_ai):
+                    if (z_sig == "BUY" and cur_close <= z_sl) or (z_sig == "SELL" and cur_close >= z_sl):
                         active_bt_zone = None
+                    elif (z_sig == "BUY" and cur_close <= z_ai) or (z_sig == "SELL" and cur_close >= z_ai):
+                        pass  # đóng qua SL AI gốc nhưng chưa qua SL thật: giữ vùng, nến này chưa vào (live không vào khi giá vượt SL AI gốc)
                     elif z_sig == "BUY" and (max_sl_price <= 0.0 or cur_low <= limit_p):
                         signal = "BUY"
                         entry_price = min(cur_close, limit_p) if max_sl_price > 0.0 else cur_close
@@ -11214,7 +11216,8 @@ class KronosDesktopApp:
             return False, f"Lỗi kiểm tra Price Action ({e})"
 
     def _scalp_closed_beyond_sl_ai(self, symbol: str, action: str, sl_ai: float, scalp_tf: str, ctx: dict) -> bool:
-        """True nếu nến ĐÃ ĐÓNG gần nhất của khung scalp có giá đóng cửa vượt SL AI (BUY: close < SL AI; SELL: close > SL AI).
+        """True nếu nến ĐÃ ĐÓNG gần nhất của khung scalp có giá đóng cửa vượt mức SL truyền vào (BUY: close < SL; SELL: close > SL).
+        Từ 25/11 canh vùng truyền SL THẬT (SL AI gốc + Giá an toàn).
         Giới hạn 1 lần đọc nến / 3 giây (kết quả cache trong ctx). Lỗi đọc nến -> False (không hủy vì thiếu dữ liệu)."""
         try:
             now_m = time.monotonic()
@@ -11482,17 +11485,17 @@ class KronosDesktopApp:
         cur_sl_dist = (cur_price - sl_ref) if action == "BUY" else (sl_ref - cur_price)
 
         prev_bid_chk, prev_dt_ms = self._pb_note_check(pk, tick)
-        # 1. Kịch bản gãy -> hủy lệnh chờ hồi. Luật mới: nến khung scalp ĐÓNG CỬA vượt SL AI (râu đâm xuyên mà nến đóng trong vùng an toàn thì vẫn giữ);
-        #    luật cũ (lệnh chờ không có sl_ai_price): giá chạm/phá SL theo tick
+        # 1. Kịch bản gãy -> hủy lệnh chờ hồi. Luật mới: nến khung scalp ĐÓNG CỬA vượt SL THẬT (= SL AI gốc + Giá an toàn; người dùng yêu cầu 25/11);
+        #    đóng qua SL AI gốc nhưng chưa qua SL thật thì vẫn giữ vùng (chỉ chưa vào lệnh). Luật cũ (lệnh chờ không có sl_ai_price): giá chạm/phá SL theo tick
         if use_sl_ai:
-            if self._scalp_closed_beyond_sl_ai(symbol, action, sl_ref, str(cfg.get("tf", "M5")).strip() or "M5", ctx):
-                self.log(f"❌ [{pk} - Hủy Lệnh Chờ Hồi {action}] Nến {str(cfg.get('tf', 'M5')).strip() or 'M5'} đã ĐÓNG CỬA vượt SL AI ({sl_ref:.2f}) -> kịch bản gãy, hủy canh vùng.")
+            if self._scalp_closed_beyond_sl_ai(symbol, action, sl_price, str(cfg.get("tf", "M5")).strip() or "M5", ctx):
+                self.log(f"❌ [{pk} - Hủy Lệnh Chờ Hồi {action}] Nến {str(cfg.get('tf', 'M5')).strip() or 'M5'} đã ĐÓNG CỬA vượt SL thật ({sl_price:.2f}, gồm Giá an toàn) -> kịch bản gãy, hủy canh vùng.")
                 ctx["pending_pullback_order"] = None
                 if pk == self.active_profile_key:
                     self.pending_pullback_order = None
                 return
             if cur_sl_dist <= 0.0:
-                # Râu đang đâm xuyên SL AI nhưng nến chưa đóng: chưa hủy, chỉ chưa vào lệnh
+                # Giá đang vượt SL AI gốc (râu, hoặc nến đóng qua SL AI nhưng chưa qua SL thật): chưa hủy, chỉ chưa vào lệnh
                 self._pb_gate_log(pk, "gia_duoi_sl_ai", symbol, tick)
                 return
         elif cur_sl_dist <= tols["sl_break_tol"]:
@@ -14815,7 +14818,7 @@ class KronosDesktopApp:
                 zone_why = (_zl["why"] + (", đã trừ spread" if p["action"] == "BUY" and _zl.get("spread", 0) > 0 else "")) if _zl["ok"] else f"KHÔNG vào được: {_zl['why']}"
             op_sign = "<=" if p["action"] == "BUY" else ">="
             self.ax.axhline(y=lim_entry, color=GOLD_ACCENT, linestyle="--", linewidth=0.85, alpha=0.80)
-            # Đáy vùng = SL gốc AI (chỉ hiển thị): giá vượt qua mức này thì bot KHÔNG vào (nến khung vào lệnh đóng qua -> hủy vùng).
+            # Đáy vùng = SL gốc AI (chỉ hiển thị): giá vượt qua mức này thì bot KHÔNG vào (nến khung vào lệnh đóng qua SL THẬT = SL gốc + Giá an toàn -> hủy vùng).
             # Tô dải giữa đáy và mức vào để thấy vùng vào lệnh có 2 đầu, không phải "cứ dưới đường vàng là vào".
             try:
                 sl_root = float(p.get("sl_ai_price") or 0.0)
